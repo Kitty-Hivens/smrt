@@ -72,6 +72,17 @@ pub struct Display {
     pub category: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub incompatible_with: Vec<String>,
+    /// SPDX license identifier where known (e.g. "MIT", "LGPL-3.0-only",
+    /// "CC-BY-NC-SA-3.0"). Useful for a launcher to surface
+    /// non-redistributable mods to the user. Absent for proprietary mods
+    /// without an SPDX-compatible declaration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    /// Source / project / wiki URL. Used by a launcher's "Learn more"
+    /// affordance. Preferred order: mcmod.info url, Modrinth source_url,
+    /// CurseForge project page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
