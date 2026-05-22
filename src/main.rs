@@ -6,6 +6,9 @@ use tracing_subscriber::util::SubscriberInitExt;
 mod config;
 mod error;
 mod routes;
+mod state;
+mod storage;
+mod types;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -25,11 +28,13 @@ async fn main() -> anyhow::Result<()> {
         "smrt starting"
     );
 
+    let bind_addr = cfg.bind_addr;
+    let state = state::AppState::new(cfg);
     let app = Router::new()
-        .merge(routes::router())
+        .merge(routes::router(state))
         .layer(TraceLayer::new_for_http());
 
-    let listener = tokio::net::TcpListener::bind(cfg.bind_addr).await?;
+    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
 }
