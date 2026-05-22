@@ -1,0 +1,36 @@
+[Unit]
+Description=smrt mirror backend
+Documentation=https://github.com/Kitty-Hivens/smrt
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=smrt
+Group=smrt
+EnvironmentFile=/etc/smrt/env
+ExecStart=/usr/local/bin/smrt
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+ReadWritePaths=/var/lib/smrt
+
+[Install]
+WantedBy=multi-user.target
