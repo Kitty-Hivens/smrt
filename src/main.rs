@@ -1,14 +1,8 @@
 use axum::Router;
+use smrt::{config, routes, state};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-
-mod config;
-mod error;
-mod routes;
-mod state;
-mod storage;
-mod types;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
