@@ -594,14 +594,48 @@ fn static_asset_path(storage: &Path, pack_id: &str, rel_path: &str) -> Result<Pa
 }
 
 fn cache_url(base: &str, sha1: &str) -> String {
+    // sha1 is hex-only by construction (verified upstream); no encoding
+    // needed for path segments here.
     let prefix = &sha1[..2];
     let base = base.trim_end_matches('/');
     format!("{base}/v1/cache/{prefix}/{sha1}.jar")
 }
 
 fn static_url(base: &str, pack_id: &str, rel_path: &str) -> String {
+    // rel_path may contain spaces, parens, plus, comma (storage's
+    // validate_rel_path allows them since real resourcepack and
+    // shaderpack filenames carry such characters). Manifest URLs are
+    // consumed by strict HTTP clients (Java's URI, kotlinx ktor, Rust
+    // reqwest) that reject raw spaces with HTTP 400 from nginx or
+    // outright parse failures. Percent-encode every segment so the
+    // published URL is RFC 3986-compliant; segment boundaries (/)
+    // stay unencoded so the path structure survives.
     let base = base.trim_end_matches('/');
-    format!("{base}/v1/packs/{pack_id}/static/{rel_path}")
+    let pack_enc = url_encode_segment(pack_id);
+    let rel_enc = rel_path
+        .split('/')
+        .map(url_encode_segment)
+        .collect::<Vec<_>>()
+        .join("/");
+    format!("{base}/v1/packs/{pack_enc}/static/{rel_enc}")
+}
+
+/// Percent-encode a single path segment using the RFC 3986 unreserved
+/// + sub-delims minus the path-structural ones. Equivalent in scope to
+/// JavaScript's `encodeURIComponent` -- safe to drop into any URL
+/// position that holds a single segment.
+fn url_encode_segment(s: &str) -> String {
+    use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+    // RFC 3986: pchar = unreserved / pct-encoded / sub-delims / ":" / "@"
+    // We additionally encode "/", "?", "#", "[", "]", "&", "=" (would
+    // change URL meaning), space (must always encode), and "%" (would
+    // collide with already-encoded sequences).
+    const SET: &AsciiSet = &CONTROLS
+        .add(b' ').add(b'"').add(b'#').add(b'%').add(b'<').add(b'>')
+        .add(b'?').add(b'[').add(b'\\').add(b']').add(b'^').add(b'`')
+        .add(b'{').add(b'|').add(b'}')
+        .add(b'/').add(b'&').add(b'=').add(b'+');
+    utf8_percent_encode(s, SET).to_string()
 }
 
 // ── misc ───────────────────────────────────────────────────────────────────
@@ -670,6 +704,39 @@ mod tests {
         assert!(validate_canonical_pack_version("2026.05.22a").is_err());
         assert!(validate_canonical_pack_version("v1").is_err());
         assert!(validate_canonical_pack_version("").is_err());
+    }
+
+    #[test]
+    fn static_url_percent_encodes_spaces_and_special_chars() {
+        let url = static_url(
+            "https://smrt.hivens.dev",
+            "Industrial",
+            "shaderpacks/Chocapic13 V7.1 High.zip",
+        );
+        assert_eq!(
+            url,
+            "https://smrt.hivens.dev/v1/packs/Industrial/static/shaderpacks/Chocapic13%20V7.1%20High.zip"
+        );
+    }
+
+    #[test]
+    fn static_url_keeps_segment_boundaries_unencoded() {
+        // The "/" between segments stays as path separator, only the
+        // segments themselves get encoded. Catches a regression where
+        // someone naively percent-encodes the whole rel_path including
+        // its slashes.
+        let url = static_url("https://m.example", "pack", "a/b c/d.txt");
+        assert_eq!(url, "https://m.example/v1/packs/pack/static/a/b%20c/d.txt");
+    }
+
+    #[test]
+    fn static_url_encodes_parens_and_plus() {
+        let url = static_url("https://m.example", "p", "shaderpacks/BSL (v8+).zip");
+        // parens stay literal in this set (allowed by RFC 3986 sub-delims
+        // and ktor/reqwest parse them fine); plus encodes to %2B because
+        // it has special meaning in query strings and some parsers
+        // mistranslate it to space.
+        assert!(url.contains("BSL%20(v8%2B).zip"), "got {url}");
     }
 }
 
