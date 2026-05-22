@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 // ── Pack manifest ──────────────────────────────────────────────────────────
 
@@ -14,8 +14,8 @@ pub struct PackManifest {
     pub loader: LoaderSpec,
     pub java: JavaSpec,
     pub mods: Vec<ModEntry>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extras: Option<ExtrasRef>,
+    #[serde(default)]
+    pub assets: Vec<AssetEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,18 +36,28 @@ pub struct JavaSpec {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModEntry {
-    pub sha1: String,
     pub filename: String,
+    pub sha1: String,
     pub size_bytes: u64,
     #[serde(default = "default_true")]
     pub required: bool,
-    pub sources: Vec<ModSource>,
+    pub source: Source,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetEntry {
+    pub dest: String,
+    pub sha1: String,
+    pub size_bytes: u64,
+    #[serde(default = "default_true")]
+    pub required: bool,
+    pub source: Source,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
-pub enum ModSource {
+pub enum Source {
     Modrinth {
         project_id: String,
         version_id: String,
@@ -55,13 +65,9 @@ pub enum ModSource {
     SmrtCache {
         url: String,
     },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtrasRef {
-    pub url: String,
-    pub sha1: String,
-    pub size_bytes: u64,
+    SmrtStatic {
+        url: String,
+    },
 }
 
 fn default_true() -> bool { true }
@@ -161,4 +167,36 @@ pub struct Health {
     pub schema_version: u32,
     pub status: &'static str,
     pub version: &'static str,
+}
+
+// ── Pack version comparison ────────────────────────────────────────────────
+
+/// Numeric-tuple comparison of `YYYY.MM.DD[.N]` style version strings.
+/// String sort would order `2026.05.22.10` before `2026.05.22.2` -- this
+/// parses each `.`-segment as `u64` and compares element-wise so the latest
+/// version is always the chronologically newest.
+pub fn pack_version_tuple(version: &str) -> Vec<u64> {
+    version
+        .split('.')
+        .map(|seg| seg.parse::<u64>().unwrap_or(0))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_tuple_orders_two_digit_subversions_after_single_digit() {
+        let v2 = pack_version_tuple("2026.05.22.2");
+        let v10 = pack_version_tuple("2026.05.22.10");
+        assert!(v2 < v10);
+    }
+
+    #[test]
+    fn version_tuple_orders_dates_correctly() {
+        let earlier = pack_version_tuple("2026.05.22");
+        let later = pack_version_tuple("2026.05.23");
+        assert!(earlier < later);
+    }
 }

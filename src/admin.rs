@@ -17,6 +17,10 @@ pub fn router(state: AppState) -> Router {
             "/v1/admin/cache/:prefix/:filename",
             put(put_cache_jar).delete(delete_cache_jar),
         )
+        .route(
+            "/v1/admin/packs/:pack_id/static/*rel_path",
+            put(put_pack_static).delete(delete_pack_static),
+        )
         .route("/v1/admin/featured", post(save_featured))
         .layer(from_fn_with_state(state.clone(), require_admin_token))
         .with_state(state)
@@ -117,6 +121,34 @@ async fn delete_cache_jar(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn put_pack_static(
+    State(state): State<AppState>,
+    Path((pack_id, rel_path)): Path<(String, String)>,
+    body: Bytes,
+) -> Result<(StatusCode, Json<PutStaticResponse>), ApiError> {
+    state
+        .storage
+        .save_pack_static(&pack_id, &rel_path, &body)
+        .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(PutStaticResponse {
+            schema_version: SCHEMA_VERSION,
+            pack_id,
+            rel_path,
+            size_bytes: body.len() as u64,
+        }),
+    ))
+}
+
+async fn delete_pack_static(
+    State(state): State<AppState>,
+    Path((pack_id, rel_path)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    state.storage.delete_pack_static(&pack_id, &rel_path).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn save_featured(
     State(state): State<AppState>,
     Json(featured): Json<Featured>,
@@ -131,5 +163,13 @@ async fn save_featured(
 struct PutCacheResponse {
     schema_version: u32,
     sha1: String,
+    size_bytes: u64,
+}
+
+#[derive(serde::Serialize)]
+struct PutStaticResponse {
+    schema_version: u32,
+    pack_id: String,
+    rel_path: String,
     size_bytes: u64,
 }

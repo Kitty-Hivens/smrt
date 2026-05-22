@@ -20,7 +20,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/packs/:pack_id/manifest", get(get_latest_manifest))
         .route("/v1/packs/:pack_id/manifest/versions", get(list_manifest_versions))
         .route("/v1/packs/:pack_id/manifest/:version", get(get_manifest_version))
-        .route("/v1/packs/:pack_id/extras/:version_zip", get(get_pack_extras))
+        .route("/v1/packs/:pack_id/static/*rel_path", get(get_pack_static))
         .route("/v1/servers", get(list_servers))
         .route("/v1/servers/:server_id", get(get_server))
         .route("/v1/featured", get(get_featured))
@@ -83,15 +83,15 @@ async fn list_manifest_versions(
     }))
 }
 
-async fn get_pack_extras(
+async fn get_pack_static(
     State(state): State<AppState>,
-    Path((pack_id, version_zip)): Path<(String, String)>,
+    Path((pack_id, rel_path)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
-    let version = version_zip
-        .strip_suffix(".zip")
-        .ok_or_else(|| ApiError::BadRequest("extras path must end in .zip".into()))?;
-    let path = state.storage.pack_extras_path(&pack_id, version).await?;
-    serve_file(&path, "application/zip").await
+    let path = state.storage.pack_static_path(&pack_id, &rel_path)?;
+    if tokio::fs::metadata(&path).await.is_err() {
+        return Err(ApiError::NotFound);
+    }
+    serve_file(&path, content_type_for(&rel_path)).await
 }
 
 // ── /v1/servers ────────────────────────────────────────────────────────────
@@ -161,6 +161,24 @@ async fn serve_file(path: &std::path::Path, content_type: &str) -> Result<Respon
         body,
     )
         .into_response())
+}
+
+fn content_type_for(rel_path: &str) -> &'static str {
+    let lower = rel_path.to_ascii_lowercase();
+    let ext = lower.rsplit('.').next().unwrap_or("");
+    match ext {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "zip" => "application/zip",
+        "json" => "application/json",
+        "toml" => "application/toml",
+        "txt" | "cfg" | "properties" => "text/plain; charset=utf-8",
+        "md" => "text/markdown; charset=utf-8",
+        _ => "application/octet-stream",
+    }
 }
 
 fn now_rfc3339() -> String {

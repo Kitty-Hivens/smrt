@@ -29,9 +29,12 @@ hex = "0.4"
 name = "smrt"
 path = "src/main.rs"
 
-[[bin]]
-name = "smrt-ingest"
-path = "src/bin/smrt-ingest.rs"
+## smrt-ingest is the v1 SC-archive ingestor; superseded by smrt-pack in v2.
+## Disabled (not compiled) until the v2 CLI lands; v1 source kept on disk for
+## reference during the refactor.
+# [[bin]]
+# name = "smrt-ingest"
+# path = "src/bin/smrt-ingest.rs"
 
 [profile.release]
 opt-level = 3

@@ -94,25 +94,36 @@ impl Storage {
         Ok(out)
     }
 
-    pub async fn pack_extras_path(
+    /// Resolve a curated static asset path under the pack. Used by both the
+    /// public GET and the admin PUT/DELETE endpoints; existence is not
+    /// checked here so the same routine can produce destination paths for
+    /// uploads.
+    pub fn pack_static_path(&self, pack_id: &str, rel_path: &str) -> Result<PathBuf, ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        let safe = validate_rel_path(rel_path)?;
+        Ok(self.root.join("packs").join(pack_id).join("static").join(safe))
+    }
+
+    pub async fn save_pack_static(
         &self,
         pack_id: &str,
-        version: &str,
-    ) -> Result<PathBuf, ApiError> {
-        if !is_safe_version(version) {
-            return Err(ApiError::BadRequest("invalid version slug".into()));
-        }
-        let path = self
-            .root
-            .join("packs")
-            .join(pack_id)
-            .join("extras")
-            .join(format!("{version}.zip"));
-        if fs::metadata(&path).await.is_ok() {
-            Ok(path)
-        } else {
-            Err(ApiError::NotFound)
-        }
+        rel_path: &str,
+        bytes: &[u8],
+    ) -> Result<(), ApiError> {
+        let path = self.pack_static_path(pack_id, rel_path)?;
+        atomic_write(&path, bytes).await
+    }
+
+    pub async fn delete_pack_static(
+        &self,
+        pack_id: &str,
+        rel_path: &str,
+    ) -> Result<(), ApiError> {
+        let path = self.pack_static_path(pack_id, rel_path)?;
+        fs::remove_file(&path).await.map_err(|_| ApiError::NotFound)?;
+        Ok(())
     }
 
     // ── Servers ────────────────────────────────────────────────────────────
@@ -356,4 +367,28 @@ fn is_safe_id(s: &str) -> bool {
 
 fn is_safe_version(s: &str) -> bool {
     is_safe_id(s)
+}
+
+/// Reject path traversal and other surprises in user-supplied relative paths.
+/// Allows nested directories so curated assets like `_nexira/banner.png` work,
+/// but every segment must be a plain `is_safe_id`-style token and there must
+/// be no `..`, `.`, leading slashes, or empty segments.
+fn validate_rel_path(rel: &str) -> Result<&str, ApiError> {
+    if rel.is_empty() || rel.len() > 512 {
+        return Err(ApiError::BadRequest("invalid rel_path".into()));
+    }
+    if rel.starts_with('/') || rel.contains('\\') {
+        return Err(ApiError::BadRequest("invalid rel_path".into()));
+    }
+    for segment in rel.split('/') {
+        if segment.is_empty() || segment.starts_with('.') {
+            return Err(ApiError::BadRequest("invalid rel_path".into()));
+        }
+        if !segment.chars().all(|c| {
+            c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'
+        }) {
+            return Err(ApiError::BadRequest("invalid rel_path".into()));
+        }
+    }
+    Ok(rel)
 }
