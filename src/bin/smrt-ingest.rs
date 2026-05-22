@@ -4,6 +4,7 @@ use serde::Deserialize;
 use sha1::{Digest, Sha1};
 use smrt::types::*;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::PathBuf;
@@ -51,6 +52,29 @@ struct PackConfig {
     minecraft_version: String,
     loader: LoaderSpec,
     java_major: u32,
+
+    /// Filenames inside SC's mods/ that should be marked `required: false` in
+    /// the manifest. The user can opt out of installing these via the launcher
+    /// without breaking the SC handshake (server-check is modid-only and
+    /// optional mods either are not in SC's expected list or are tolerated).
+    #[serde(default)]
+    optional_mods: Vec<String>,
+
+    /// Mods to add to the manifest that are NOT in the SC archive. Always
+    /// marked `required: false`. Source is Modrinth (project + version).
+    /// Use for client-side performance / QoL additions layered on top of the
+    /// SC pack (Sodium / Embeddium / shaders / etc.).
+    #[serde(default)]
+    client_additions: Vec<ClientAddition>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ClientAddition {
+    filename: String,
+    sha1: String,
+    size_bytes: u64,
+    modrinth_project_id: String,
+    modrinth_version_id: String,
 }
 
 struct DiscoveredMod {
@@ -63,6 +87,10 @@ struct DiscoveredMod {
 struct ModrinthVersionFile {
     project_id: String,
     id: String, // version_id
+    #[serde(default)]
+    game_versions: Vec<String>,
+    #[serde(default)]
+    loaders: Vec<String>,
 }
 
 #[tokio::main]
@@ -98,16 +126,19 @@ async fn run(args: Args) -> Result<()> {
     }
 
     let modrinth_hits = modrinth_batch_lookup(&mods).await?;
-    let modrinth_count = modrinth_hits.len();
-    let cache_count = mods.len() - modrinth_count;
-    info!(modrinth = modrinth_count, smrt_cache = cache_count, "classified mods");
+    let optional_set: HashSet<&str> = pack_config
+        .optional_mods
+        .iter()
+        .map(String::as_str)
+        .collect();
 
-    let pack_version = args
-        .pack_version
-        .clone()
-        .unwrap_or_else(today_slug);
+    // ── classify each SC mod into modrinth / smrt_cache, validating that the
+    //    Modrinth hit actually targets our MC + loader; if not, fall through
+    //    to smrt_cache and log a warning (sha1 collision across MC versions
+    //    is rare but possible).
+    let mut modrinth_count = 0usize;
+    let mut cache_count = 0usize;
 
-    // ── filesystem layout ──────────────────────────────────────────────────
     let pack_dir = args.storage.join("packs").join(&pack_config.pack_id);
     let manifests_dir = pack_dir.join("manifests");
     let extras_dir = pack_dir.join("extras");
@@ -116,32 +147,59 @@ async fn run(args: Args) -> Result<()> {
     fs::create_dir_all(&extras_dir).context("creating extras dir")?;
     fs::create_dir_all(&cache_dir).context("creating cache dir")?;
 
-    // ── mod entries: modrinth source where matched, else copy into smrt_cache
-    let mut mod_entries: Vec<ModEntry> = Vec::with_capacity(mods.len());
+    let mut mod_entries: Vec<ModEntry> = Vec::with_capacity(mods.len() + pack_config.client_additions.len());
+
     for m in &mods {
-        let source = if let Some(hit) = modrinth_hits.get(&m.sha1) {
-            ModSource::Modrinth {
-                project_id: hit.project_id.clone(),
-                version_id: hit.id.clone(),
+        let required = !optional_set.contains(m.filename.as_str());
+        let source = match resolve_source(
+            m,
+            &modrinth_hits,
+            &pack_config.minecraft_version,
+            &pack_config.loader.name,
+            &args.mirror_base_url,
+            &cache_dir,
+        )? {
+            ResolvedSource::Modrinth(src) => {
+                modrinth_count += 1;
+                src
             }
-        } else {
-            write_to_cache(&cache_dir, &m.sha1, &m.bytes)?;
-            ModSource::SmrtCache {
-                url: cache_url(&args.mirror_base_url, &m.sha1),
+            ResolvedSource::Cached(src) => {
+                cache_count += 1;
+                src
             }
         };
         mod_entries.push(ModEntry {
             sha1: m.sha1.clone(),
             filename: m.filename.clone(),
             size_bytes: m.bytes.len() as u64,
-            required: true,
+            required,
             sources: vec![source],
         });
     }
-    // Stable order so manifest diffs across versions stay readable.
+
+    // ── client additions: layered on top of SC mod-set, always optional
+    for ca in &pack_config.client_additions {
+        mod_entries.push(ModEntry {
+            sha1: ca.sha1.clone(),
+            filename: ca.filename.clone(),
+            size_bytes: ca.size_bytes,
+            required: false,
+            sources: vec![ModSource::Modrinth {
+                project_id: ca.modrinth_project_id.clone(),
+                version_id: ca.modrinth_version_id.clone(),
+            }],
+        });
+    }
+
+    // Stable order so diffs across versions stay readable.
     mod_entries.sort_by(|a, b| a.filename.cmp(&b.filename));
 
-    // ── extras: copy SC's `extra.zip` if present
+    // ── extras (SC's `extra.zip` if present)
+    let pack_version = args
+        .pack_version
+        .clone()
+        .unwrap_or_else(today_slug);
+
     let extras_ref = if let Some(extra_zip_bytes) = extract_extra_zip(&archive_bytes)? {
         let extras_path = extras_dir.join(format!("{}.zip", pack_version));
         fs::write(&extras_path, &extra_zip_bytes).context("writing extras zip")?;
@@ -158,7 +216,6 @@ async fn run(args: Args) -> Result<()> {
         None
     };
 
-    // ── manifest
     let manifest = PackManifest {
         schema_version: SCHEMA_VERSION,
         pack_id: pack_config.pack_id.clone(),
@@ -189,7 +246,6 @@ async fn run(args: Args) -> Result<()> {
         .context("creating latest.tmp symlink")?;
     fs::rename(&latest_tmp, &latest_path).context("swapping latest symlink")?;
 
-    // ── summary
     let summary = PackSummary {
         pack_id: pack_config.pack_id.clone(),
         display_name: pack_config.display_name.clone(),
@@ -208,13 +264,59 @@ async fn run(args: Args) -> Result<()> {
     info!(
         pack_id = %pack_config.pack_id,
         pack_version = %pack_version,
-        mods_total = mods.len(),
+        sc_mods = mods.len(),
+        client_additions = pack_config.client_additions.len(),
+        optional_mods = pack_config.optional_mods.len(),
         modrinth_sourced = modrinth_count,
         smrt_cached = cache_count,
         extras_present = manifest.extras.is_some(),
         "ingest complete"
     );
     Ok(())
+}
+
+// ── source resolution ────────────────────────────────────────────────────
+
+enum ResolvedSource {
+    Modrinth(ModSource),
+    Cached(ModSource),
+}
+
+fn resolve_source(
+    m: &DiscoveredMod,
+    modrinth_hits: &HashMap<String, ModrinthVersionFile>,
+    expected_mc: &str,
+    expected_loader: &str,
+    mirror_base_url: &str,
+    cache_dir: &std::path::Path,
+) -> Result<ResolvedSource> {
+    if let Some(hit) = modrinth_hits.get(&m.sha1) {
+        let mc_ok = hit.game_versions.iter().any(|v| v == expected_mc);
+        let loader_ok = hit
+            .loaders
+            .iter()
+            .any(|l| l.eq_ignore_ascii_case(expected_loader));
+        if mc_ok && loader_ok {
+            return Ok(ResolvedSource::Modrinth(ModSource::Modrinth {
+                project_id: hit.project_id.clone(),
+                version_id: hit.id.clone(),
+            }));
+        }
+        warn!(
+            filename = %m.filename,
+            sha1 = %m.sha1,
+            project_id = %hit.project_id,
+            mc_expected = expected_mc,
+            mc_seen = ?hit.game_versions,
+            loader_expected = expected_loader,
+            loader_seen = ?hit.loaders,
+            "modrinth match has wrong MC version or loader; falling back to smrt_cache"
+        );
+    }
+    write_to_cache(cache_dir, &m.sha1, &m.bytes)?;
+    Ok(ResolvedSource::Cached(ModSource::SmrtCache {
+        url: cache_url(mirror_base_url, &m.sha1),
+    }))
 }
 
 // ── archive acquisition ───────────────────────────────────────────────────
@@ -246,7 +348,6 @@ fn extract_mods(archive_bytes: &[u8]) -> Result<Vec<DiscoveredMod>> {
             continue;
         }
         let name = entry.name().to_string();
-        // mods/X.jar OR mods/subdir/X.jar (some SC packs nest by MC version).
         let segments: Vec<&str> = name.split('/').collect();
         let is_mod_jar = segments.first() == Some(&"mods")
             && name.ends_with(".jar")
@@ -310,7 +411,6 @@ fn write_to_cache(cache_dir: &std::path::Path, sha1: &str, bytes: &[u8]) -> Resu
     let dir = cache_dir.join(prefix);
     fs::create_dir_all(&dir).context("creating cache prefix dir")?;
     let path = dir.join(format!("{sha1}.jar"));
-    // Skip rewrite if content already there (idempotent re-ingests).
     if path.exists() {
         return Ok(());
     }

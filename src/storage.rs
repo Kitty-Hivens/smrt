@@ -1,5 +1,6 @@
 use crate::error::ApiError;
 use crate::types::*;
+use sha1::{Digest, Sha1};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
@@ -201,6 +202,132 @@ impl Storage {
         out.sort_by(|a, b| a.sha1.cmp(&b.sha1));
         Ok(out)
     }
+
+    // ── Admin writes ───────────────────────────────────────────────────────
+
+    pub async fn save_server(&self, entry: &ServerEntry) -> Result<(), ApiError> {
+        if !is_safe_id(&entry.server_id) {
+            return Err(ApiError::BadRequest("invalid server id".into()));
+        }
+        let dir = self.root.join("servers");
+        fs::create_dir_all(&dir).await.map_err(io_err)?;
+        let path = dir.join(format!("{}.json", entry.server_id));
+        let bytes = serde_json::to_vec_pretty(entry)
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("server json encode: {e}")))?;
+        atomic_write(&path, &bytes).await
+    }
+
+    pub async fn delete_server(&self, server_id: &str) -> Result<(), ApiError> {
+        if !is_safe_id(server_id) {
+            return Err(ApiError::BadRequest("invalid server id".into()));
+        }
+        let path = self.root.join("servers").join(format!("{}.json", server_id));
+        fs::remove_file(&path).await.map_err(|_| ApiError::NotFound)?;
+        Ok(())
+    }
+
+    pub async fn save_cache_jar(&self, sha1: &str, bytes: &[u8]) -> Result<(), ApiError> {
+        if !is_hex(sha1) || sha1.len() != 40 {
+            return Err(ApiError::BadRequest("invalid sha1".into()));
+        }
+        // Content-addressed: verify body hashes to the claimed sha1 so a
+        // mis-uploaded jar fails loudly rather than corrupting the cache.
+        let actual = sha1_hex(bytes);
+        if actual != sha1 {
+            return Err(ApiError::BadRequest(format!(
+                "sha1 mismatch: url claims {sha1} but body hashes to {actual}"
+            )));
+        }
+        // removed.txt blocks re-ingestion of takedown'd jars; honor it on
+        // upload too so a takedown survives a retry.
+        if self.is_sha1_removed(sha1).await? {
+            return Err(ApiError::BadRequest(format!(
+                "sha1 {sha1} is on the removed-list and cannot be re-uploaded"
+            )));
+        }
+        let prefix = &sha1[..2];
+        let dir = self.root.join("cache").join(prefix);
+        fs::create_dir_all(&dir).await.map_err(io_err)?;
+        let path = dir.join(format!("{sha1}.jar"));
+        if fs::metadata(&path).await.is_ok() {
+            return Ok(());
+        }
+        atomic_write(&path, bytes).await
+    }
+
+    pub async fn delete_cache_jar(&self, sha1: &str) -> Result<(), ApiError> {
+        if !is_hex(sha1) || sha1.len() != 40 {
+            return Err(ApiError::BadRequest("invalid sha1".into()));
+        }
+        let prefix = &sha1[..2];
+        let path = self
+            .root
+            .join("cache")
+            .join(prefix)
+            .join(format!("{sha1}.jar"));
+        fs::remove_file(&path).await.map_err(|_| ApiError::NotFound)?;
+        self.record_removed(sha1).await?;
+        Ok(())
+    }
+
+    pub async fn save_featured(&self, featured: &Featured) -> Result<(), ApiError> {
+        let path = self.root.join("featured.json");
+        let bytes = serde_json::to_vec_pretty(featured)
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("featured json encode: {e}")))?;
+        atomic_write(&path, &bytes).await
+    }
+
+    async fn is_sha1_removed(&self, sha1: &str) -> Result<bool, ApiError> {
+        let path = self.root.join("removed.txt");
+        let content = match fs::read_to_string(&path).await {
+            Ok(c) => c,
+            Err(_) => return Ok(false),
+        };
+        Ok(content.lines().any(|line| line.trim() == sha1))
+    }
+
+    async fn record_removed(&self, sha1: &str) -> Result<(), ApiError> {
+        let path = self.root.join("removed.txt");
+        let mut content = fs::read_to_string(&path).await.unwrap_or_default();
+        if content.lines().any(|line| line.trim() == sha1) {
+            return Ok(());
+        }
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(sha1);
+        content.push('\n');
+        atomic_write(&path, content.as_bytes()).await
+    }
+}
+
+async fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ApiError> {
+    let parent = path.parent().ok_or_else(|| {
+        ApiError::Internal(anyhow::anyhow!("path {} has no parent", path.display()))
+    })?;
+    fs::create_dir_all(parent).await.map_err(io_err)?;
+    let mut tmp = path.to_path_buf();
+    let mut tmp_name = tmp
+        .file_name()
+        .map(|s| s.to_os_string())
+        .unwrap_or_default();
+    tmp_name.push(".tmp");
+    tmp.set_file_name(tmp_name);
+    fs::write(&tmp, bytes).await.map_err(io_err)?;
+    fs::rename(&tmp, path).await.map_err(io_err)?;
+    Ok(())
+}
+
+fn sha1_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let mut s = String::with_capacity(40);
+    for b in digest {
+        use std::fmt::Write;
+        let _ = write!(s, "{:02x}", b);
+    }
+    s
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
