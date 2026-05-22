@@ -181,6 +181,7 @@ async fn bootstrap(args: BootstrapArgs) -> Result<()> {
                         project_id: hit.project_id.clone(),
                         version_id: hit.id.clone(),
                     },
+                    display: None,
                     note: Some(format!("matched on Modrinth ({})", hit.version_number)),
                 }
             } else {
@@ -189,6 +190,7 @@ async fn bootstrap(args: BootstrapArgs) -> Result<()> {
                     filename: m.filename.clone(),
                     required: true,
                     source: SourceDecl::SmrtCache { sha1: m.sha1.clone() },
+                    display: None,
                     note: Some(format!(
                         "TODO: Modrinth hit exists but mc/loader mismatch (mc={:?}, loaders={:?}); review for substitution",
                         hit.game_versions, hit.loaders
@@ -201,6 +203,7 @@ async fn bootstrap(args: BootstrapArgs) -> Result<()> {
                 filename: m.filename.clone(),
                 required: true,
                 source: SourceDecl::SmrtCache { sha1: m.sha1.clone() },
+                display: None,
                 note: Some("TODO: no Modrinth match; check if a relabel of an upstream project".into()),
             }
         };
@@ -215,6 +218,7 @@ async fn bootstrap(args: BootstrapArgs) -> Result<()> {
             dest: a.rel_path.clone(),
             required: true,
             source: SourceDecl::SmrtStatic { rel_path: a.rel_path.clone() },
+            display: None,
             note: Some("TODO: review whether to keep SC default or curate replacement".into()),
         });
     }
@@ -403,6 +407,7 @@ async fn resolve_mod(
         size_bytes,
         required: decl.required,
         source,
+        display: decl.display.clone(),
     })
 }
 
@@ -449,6 +454,7 @@ async fn resolve_asset(
         size_bytes,
         required: decl.required,
         source,
+        display: decl.display.clone(),
     })
 }
 

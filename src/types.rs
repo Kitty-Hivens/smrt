@@ -42,6 +42,8 @@ pub struct ModEntry {
     #[serde(default = "default_true")]
     pub required: bool,
     pub source: Source,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<Display>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +54,24 @@ pub struct AssetEntry {
     #[serde(default = "default_true")]
     pub required: bool,
     pub source: Source,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<Display>,
+}
+
+/// Advisory display metadata for launcher UIs. Adding or removing this
+/// block on an existing manifest is forward-compatible -- the wire schema
+/// version stays at 2. Clients that don't recognise the block fall back
+/// to defaults derived from `filename` / `dest`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Display {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub incompatible_with: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -217,5 +237,60 @@ mod tests {
         assert_eq!(compare_pack_versions("2026.05.22", "2026.05.22.0"), Ordering::Equal);
         assert_eq!(compare_pack_versions("2026.05.22", "2026.05.22.1"), Ordering::Less);
         assert_eq!(compare_pack_versions("2026.05.22.0.0", "2026.05.22"), Ordering::Equal);
+    }
+
+    #[test]
+    fn mod_entry_serializes_without_display_block_when_absent() {
+        let m = ModEntry {
+            filename: "Quark.jar".into(),
+            sha1: "abc".into(),
+            size_bytes: 100,
+            required: true,
+            source: Source::SmrtCache { url: "u".into() },
+            display: None,
+        };
+        let s = serde_json::to_string(&m).unwrap();
+        assert!(!s.contains("display"),
+            "absent display block must not serialize (forward-compat for old clients): {s}");
+    }
+
+    #[test]
+    fn mod_entry_round_trips_display_block() {
+        let json = r#"{
+            "filename": "VoxelMap.jar",
+            "sha1": "deadbeef",
+            "size_bytes": 1024,
+            "required": false,
+            "source": {"type": "smrt_cache", "url": "https://example/v1/cache/de/deadbeef.jar"},
+            "display": {
+                "name": "VoxelMap",
+                "description": "Minimap with waypoints",
+                "category": "minimap",
+                "incompatible_with": ["XaerosMinimap.jar", "JourneyMap.jar"]
+            }
+        }"#;
+        let m: ModEntry = serde_json::from_str(json).unwrap();
+        let d = m.display.expect("display deserialized");
+        assert_eq!(d.name.as_deref(), Some("VoxelMap"));
+        assert_eq!(d.category.as_deref(), Some("minimap"));
+        assert_eq!(d.incompatible_with, vec!["XaerosMinimap.jar", "JourneyMap.jar"]);
+    }
+
+    #[test]
+    fn manifest_without_display_blocks_still_parses() {
+        let json = r#"{
+            "schema_version": 2,
+            "pack_id": "Old",
+            "pack_version": "2026.05.22",
+            "generated_at": "2026-05-22T00:00:00Z",
+            "minecraft": {"version": "1.12.2"},
+            "loader": {"name": "forge", "version": "14.23.5.2922"},
+            "java": {"major": 8},
+            "mods": [{"filename": "X.jar", "sha1": "a", "size_bytes": 1, "required": true,
+                "source": {"type": "smrt_cache", "url": "u"}}]
+        }"#;
+        let pm: PackManifest = serde_json::from_str(json).unwrap();
+        assert!(pm.mods[0].display.is_none(),
+            "manifests written before the display field landed must still parse");
     }
 }

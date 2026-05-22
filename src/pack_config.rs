@@ -1,4 +1,4 @@
-use crate::types::LoaderSpec;
+use crate::types::{Display, LoaderSpec};
 use serde::{Deserialize, Serialize};
 
 /// Admin-authored declaration of a pack. The build subcommand turns this into
@@ -30,6 +30,8 @@ pub struct DeclaredMod {
     pub required: bool,
     pub source: SourceDecl,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<Display>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
 
@@ -39,6 +41,8 @@ pub struct DeclaredAsset {
     #[serde(default = "default_true")]
     pub required: bool,
     pub source: SourceDecl,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<Display>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
