@@ -300,6 +300,7 @@ async fn build(
 ) -> Result<()> {
     let cfg: PackConfig = read_json(config_path)?;
     let pack_version = pack_version.map(str::to_string).unwrap_or_else(today_slug);
+    validate_canonical_pack_version(&pack_version)?;
     info!(
         pack_id = %cfg.pack_id,
         pack_version = %pack_version,
@@ -616,6 +617,54 @@ fn now_rfc3339() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}
+
+/// Enforce the spec's canonical-form rule for `pack_version`: no trailing
+/// `.0` segments. Equivalent strings under the comparator must also be
+/// byte-equal so clients can use string equality for "did the latest version
+/// change?" without re-running the comparator.
+fn validate_canonical_pack_version(v: &str) -> Result<()> {
+    if v.is_empty() {
+        bail!("pack_version must not be empty");
+    }
+    let segments: Vec<&str> = v.split('.').collect();
+    for seg in &segments {
+        if seg.is_empty() || !seg.chars().all(|c| c.is_ascii_digit()) {
+            bail!("pack_version segment {seg:?} is not a positive integer");
+        }
+    }
+    if segments.last().is_some_and(|s| *s == "0") && segments.len() > 1 {
+        bail!(
+            "pack_version {v} is not canonical: trailing .0 segments are forbidden \
+             (drop the trailing zero, e.g. write 2026.05.22 instead of 2026.05.22.0)"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_pack_version_accepts_typical_forms() {
+        validate_canonical_pack_version("2026.05.22").unwrap();
+        validate_canonical_pack_version("2026.05.22.1").unwrap();
+        validate_canonical_pack_version("2026.05.22.10").unwrap();
+    }
+
+    #[test]
+    fn canonical_pack_version_rejects_trailing_zero() {
+        assert!(validate_canonical_pack_version("2026.05.22.0").is_err());
+        assert!(validate_canonical_pack_version("2026.05.22.1.0").is_err());
+    }
+
+    #[test]
+    fn canonical_pack_version_rejects_non_numeric() {
+        assert!(validate_canonical_pack_version("2026.05.22a").is_err());
+        assert!(validate_canonical_pack_version("v1").is_err());
+        assert!(validate_canonical_pack_version("").is_err());
+    }
 }
 
 fn today_slug() -> String {
