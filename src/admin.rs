@@ -2,12 +2,18 @@ use crate::error::ApiError;
 use crate::state::AppState;
 use crate::types::*;
 use axum::body::Bytes;
-use axum::extract::{Path, Request, State};
+use axum::extract::{DefaultBodyLimit, Path, Request, State};
 use axum::http::{header, StatusCode};
 use axum::middleware::{from_fn_with_state, Next};
 use axum::response::Response;
 use axum::routing::{delete, post, put};
 use axum::{Json, Router};
+
+// Mod jars and curated assets routinely run 5-50 MB. Axum's 2 MiB default
+// trips every realistic upload; the nginx layer is already gated at 100 MB
+// and the admin token is the actual authorization boundary, so a generous
+// per-request cap here just avoids breaking legitimate uploads.
+const ADMIN_BODY_LIMIT: usize = 256 * 1024 * 1024;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -22,6 +28,7 @@ pub fn router(state: AppState) -> Router {
             put(put_pack_static).delete(delete_pack_static),
         )
         .route("/v1/admin/featured", post(save_featured))
+        .layer(DefaultBodyLimit::max(ADMIN_BODY_LIMIT))
         .layer(from_fn_with_state(state.clone(), require_admin_token))
         .with_state(state)
 }

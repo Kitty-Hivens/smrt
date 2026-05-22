@@ -384,8 +384,17 @@ fn validate_rel_path(rel: &str) -> Result<&str, ApiError> {
         if segment.is_empty() || segment.starts_with('.') {
             return Err(ApiError::BadRequest("invalid rel_path".into()));
         }
+        // Allow spaces and parens too -- real-world resourcepack and
+        // shaderpack filenames include them ("Chocapic13 V7.1 High.zip",
+        // "BSL (v8.2.04).zip"). The crucial constraint is no path
+        // traversal, no leading dot per segment, no NUL or path
+        // separators inside a segment. ASCII-only because non-ASCII
+        // filenames break some Forge launchers on Windows.
         if !segment.chars().all(|c| {
-            c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'
+            c.is_ascii_alphanumeric()
+                || c == '-' || c == '_' || c == '.'
+                || c == ' ' || c == '(' || c == ')'
+                || c == '+' || c == ','
         }) {
             return Err(ApiError::BadRequest("invalid rel_path".into()));
         }
