@@ -33,6 +33,8 @@ pub struct McModInfo {
     #[serde(default)]
     pub name: String,
     #[serde(default)]
+    pub version: String,
+    #[serde(default)]
     pub description: String,
     #[serde(default)]
     pub url: String,
@@ -250,6 +252,40 @@ pub struct Curator {
     pub extra_mods: Vec<ExtraMod>,
     #[serde(default)]
     pub extra_assets: Vec<ExtraAsset>,
+    #[serde(default)]
+    pub generate: GenerateConfig,
+}
+
+/// Auto-generated artefacts that land in the pack's static area as
+/// part of `apply-curator` and become regular `smrt_static` assets in
+/// the resulting manifest. Each generator is gated by a boolean so
+/// curator opts in per pack.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct GenerateConfig {
+    /// Emit `<static>/hidemymods-spoof.json` with the modid + version
+    /// list extracted from each mod's `mcmod.info`. Adds a matching
+    /// `smrt_static` asset entry so the launcher syncs the file into
+    /// `<clientDir>/hidemymods-spoof.json`. The hidemymods coremod
+    /// reads it at FML handshake time to spoof SC's required mod
+    /// list when the actual pack files diverge from SC canonical.
+    #[serde(default)]
+    pub hidemymods: bool,
+    /// Per-modid version overrides. Modders sometimes leave the
+    /// `mcmod.info.version` field as the literal `$version`
+    /// placeholder that their build script forgot to substitute;
+    /// SC happens to also send the placeholder on the wire, so the
+    /// spoof must reproduce it byte-for-byte. Map: `modid -> string`.
+    #[serde(default)]
+    pub hidemymods_overrides: HashMap<String, String>,
+    /// Filename inside the static dir. Default
+    /// `hidemymods-spoof.json` matches the launcher-side convention
+    /// the hidemymods coremod reads from `<clientDir>/`.
+    #[serde(default = "default_hidemymods_filename")]
+    pub hidemymods_filename: String,
+}
+
+fn default_hidemymods_filename() -> String {
+    "hidemymods-spoof.json".to_string()
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -596,6 +632,194 @@ fn slug_to_title(slug: &str) -> String {
         .join(" ")
 }
 
+// ── Pass 4: generate hidemymods spoof JSON ────────────────────────────────
+
+/// Per-mod entry emitted into the hidemymods spoof file. Wire shape
+/// is `{"id": "<lowercase_modid>", "version": "<string>"}`. Match
+/// SC's own format byte-for-byte so a curl-diff against the SC
+/// snapshot is a clean compare.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HidemymodsEntry {
+    pub id: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HidemymodsSpoof {
+    /// Underscore-prefixed so jq filters by `.mods` still work; the
+    /// note is documentation for whoever opens the file by hand,
+    /// not a schema field.
+    #[serde(rename = "_note")]
+    pub note: String,
+    pub mods: Vec<HidemymodsEntry>,
+}
+
+#[derive(Debug, Default)]
+pub struct HidemymodsReport {
+    pub entries_emitted: u32,
+    pub overrides_applied: u32,
+    pub mods_skipped_no_modid: u32,
+    pub modid_collisions: Vec<(String, String, String)>, // (modid, first_filename, dropped_filename)
+    pub asset_entry_added: bool,
+}
+
+/// Emits `<storage>/packs/<pack_id>/static/<filename>` listing every
+/// smrt_cache mod's lowercase modid + version pulled from its
+/// `mcmod.info`, with curator overrides applied on top. Also adds a
+/// matching `smrt_static` `DeclaredAsset` entry to the config so the
+/// launcher syncs the file into `<clientDir>/<filename>`. Modrinth-
+/// sourced mods are skipped (they're additive cozy adds, not part of
+/// the SC handshake contract that hidemymods spoofs against).
+///
+/// Idempotent: re-running over a config that already contains the
+/// asset entry does not duplicate it; the JSON file is rewritten.
+pub fn generate_hidemymods_spoof(
+    config: &mut PackConfig,
+    generate_cfg: &GenerateConfig,
+    storage: &Path,
+) -> Result<HidemymodsReport> {
+    let mut report = HidemymodsReport::default();
+    if !generate_cfg.hidemymods {
+        return Ok(report);
+    }
+
+    // First-write wins on modid collision; the file SC actually
+    // sends on the wire only carries one entry per modid, so a
+    // collision in our pack means the pack-maker is shadowing one
+    // jar's modid with another. Log it loud + keep the first.
+    let mut first_seen: HashMap<String, String> = HashMap::new();
+    let mut entries: Vec<HidemymodsEntry> = Vec::new();
+
+    for m in &config.mods {
+        let sha1 = match &m.source {
+            SourceDecl::SmrtCache { sha1 } => sha1.clone(),
+            // Modrinth + smrt_static sources are not part of SC's
+            // handshake contract; skip without counting as a miss.
+            _ => continue,
+        };
+        let jar_path = cache_jar_path(storage, &sha1)?;
+        let Ok(bytes) = fs::read(&jar_path) else {
+            continue;
+        };
+        let Some(info) = read_mcmod_info(&bytes)? else {
+            report.mods_skipped_no_modid += 1;
+            continue;
+        };
+        let modid_lc = info.modid.trim().to_lowercase();
+        if modid_lc.is_empty() {
+            report.mods_skipped_no_modid += 1;
+            continue;
+        }
+        if let Some(existing) = first_seen.get(&modid_lc) {
+            report
+                .modid_collisions
+                .push((modid_lc.clone(), existing.clone(), m.filename.clone()));
+            continue;
+        }
+        first_seen.insert(modid_lc.clone(), m.filename.clone());
+        entries.push(HidemymodsEntry {
+            id: modid_lc,
+            version: info.version.trim().to_string(),
+        });
+    }
+
+    // Overrides: replace the version field for any modid that
+    // matches. Inserts a new entry if the override modid is not
+    // already present (covers `nbtedit` literal-placeholder case
+    // when the jar itself failed to parse).
+    let mut by_id: HashMap<String, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.id.clone(), i))
+        .collect();
+    for (modid, version) in &generate_cfg.hidemymods_overrides {
+        let modid_lc = modid.trim().to_lowercase();
+        match by_id.get(&modid_lc) {
+            Some(&idx) => {
+                entries[idx].version = version.clone();
+                report.overrides_applied += 1;
+            }
+            None => {
+                let idx = entries.len();
+                entries.push(HidemymodsEntry {
+                    id: modid_lc.clone(),
+                    version: version.clone(),
+                });
+                by_id.insert(modid_lc, idx);
+                report.overrides_applied += 1;
+            }
+        }
+    }
+
+    // Stable ordering so diffs across runs are reviewable.
+    entries.sort_by(|a, b| a.id.cmp(&b.id));
+    report.entries_emitted = entries.len() as u32;
+
+    // Write the JSON file.
+    let spoof = HidemymodsSpoof {
+        note: "Auto-generated by smrt-pack apply-curator. Keys are lowercase Forge mod-IDs \
+               extracted from each smrt_cache jar's mcmod.info. Version values default to \
+               mcmod.info.version; curator overrides win. Hidemymods coremod reads this at \
+               FML handshake time and rewrites the wire ModList to match SC's required set."
+            .to_string(),
+        mods: entries,
+    };
+    let static_dir = storage.join("packs").join(&config.pack_id).join("static");
+    fs::create_dir_all(&static_dir)
+        .with_context(|| format!("creating static dir {}", static_dir.display()))?;
+    let out_path = static_dir.join(&generate_cfg.hidemymods_filename);
+    let tmp_path = out_path.with_extension("json.tmp");
+    let json = serde_json::to_string_pretty(&spoof)?;
+    fs::write(&tmp_path, json).with_context(|| format!("writing {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, &out_path)
+        .with_context(|| format!("renaming {} to {}", tmp_path.display(), out_path.display()))?;
+
+    // Add the asset entry if missing; rewrite source/display every
+    // time so curator-side renames or category changes propagate
+    // without manual cleanup.
+    let asset_already_present = config
+        .assets
+        .iter()
+        .any(|a| a.dest == generate_cfg.hidemymods_filename);
+    if !asset_already_present {
+        config.assets.push(crate::pack_config::DeclaredAsset {
+            dest: generate_cfg.hidemymods_filename.clone(),
+            required: true,
+            source: SourceDecl::SmrtStatic {
+                rel_path: generate_cfg.hidemymods_filename.clone(),
+            },
+            display: Some(Display {
+                name: Some("Hidemymods spoof".into()),
+                description: Some(
+                    "Auto-generated modid -> claimed-version map read by the hidemymods \
+                     coremod at FML handshake time. Lets the mirror pack diverge from SC \
+                     canonical without breaking the server-side mod-list check."
+                        .into(),
+                ),
+                category: Some("client-defaults".into()),
+                incompatible_with: Vec::new(),
+                license: None,
+                url: Some("https://github.com/Kitty-Hivens/hidemymods".into()),
+                icon_url: None,
+                role: None,
+                requires: Vec::new(),
+            }),
+            note: Some("generated by smrt-pack apply-curator's generate.hidemymods pass".into()),
+        });
+        report.asset_entry_added = true;
+    }
+
+    info!(
+        entries = report.entries_emitted,
+        overrides = report.overrides_applied,
+        skipped = report.mods_skipped_no_modid,
+        collisions = report.modid_collisions.len(),
+        new_asset = report.asset_entry_added,
+        "generate-hidemymods-spoof complete"
+    );
+    Ok(report)
+}
+
 // ── Orchestrator ──────────────────────────────────────────────────────────
 
 /// Runs the full curator chain on [config] in the canonical order:
@@ -630,6 +854,11 @@ pub async fn apply_curator(
     apply_mark_optional(config, &curator.mark_optional);
     apply_substitute(config, &curator.substitute);
     infer_requires_from_mcmod_info(config, storage)?;
+    // Hidemymods generation runs AFTER substitute so the spoof
+    // contains the modid/version of the post-substitute jar (e.g.
+    // open-smrt-network's mcmod.info, not the upstream Smarty stub
+    // that got swapped out).
+    generate_hidemymods_spoof(config, &curator.generate, storage)?;
     apply_extras(
         config,
         modrinth,
@@ -1144,6 +1373,200 @@ mod tests {
             cfg.mods[1].display.as_ref().unwrap().category.as_deref(),
             Some("already-set")
         );
+    }
+
+    #[test]
+    fn generate_hidemymods_disabled_is_noop() {
+        let dir = TempDir::new().unwrap();
+        let mut cfg = empty_config();
+        let g = GenerateConfig::default(); // hidemymods = false
+        let report = generate_hidemymods_spoof(&mut cfg, &g, dir.path()).unwrap();
+        assert_eq!(report.entries_emitted, 0);
+        assert!(!report.asset_entry_added);
+        assert!(cfg.assets.is_empty());
+        assert!(
+            !dir.path()
+                .join("packs/Test/static/hidemymods-spoof.json")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn generate_hidemymods_emits_entries_and_asset() {
+        let dir = TempDir::new().unwrap();
+        let sha_a = "1".repeat(40);
+        let sha_b = "2".repeat(40);
+        write_test_jar(
+            dir.path(),
+            &sha_a,
+            r#"[{"modid":"appliedenergistics2","name":"AE2","version":"rv6-stable-7"}]"#,
+        )
+        .unwrap();
+        write_test_jar(
+            dir.path(),
+            &sha_b,
+            r#"[{"modid":"buildcraftcore","name":"BC","version":"7.99.24.6"}]"#,
+        )
+        .unwrap();
+
+        let mut cfg = empty_config();
+        cfg.mods.push(DeclaredMod {
+            filename: "AE2.jar".into(),
+            required: true,
+            source: SourceDecl::SmrtCache { sha1: sha_a },
+            display: None,
+            note: None,
+        });
+        cfg.mods.push(DeclaredMod {
+            filename: "BC.jar".into(),
+            required: true,
+            source: SourceDecl::SmrtCache { sha1: sha_b },
+            display: None,
+            note: None,
+        });
+
+        let g = GenerateConfig {
+            hidemymods: true,
+            hidemymods_overrides: HashMap::new(),
+            hidemymods_filename: "hidemymods-spoof.json".into(),
+        };
+        let report = generate_hidemymods_spoof(&mut cfg, &g, dir.path()).unwrap();
+        assert_eq!(report.entries_emitted, 2);
+        assert!(report.asset_entry_added);
+        assert_eq!(cfg.assets.len(), 1);
+        assert_eq!(cfg.assets[0].dest, "hidemymods-spoof.json");
+
+        // Spoof file lands at the documented path and parses back to
+        // the snake-cased lowercase modids in sorted order.
+        let spoof_path = dir.path().join("packs/Test/static/hidemymods-spoof.json");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(spoof_path).unwrap()).unwrap();
+        let mods = parsed["mods"].as_array().unwrap();
+        assert_eq!(mods[0]["id"], "appliedenergistics2");
+        assert_eq!(mods[0]["version"], "rv6-stable-7");
+        assert_eq!(mods[1]["id"], "buildcraftcore");
+        assert_eq!(mods[1]["version"], "7.99.24.6");
+    }
+
+    #[test]
+    fn generate_hidemymods_overrides_replace_and_insert() {
+        let dir = TempDir::new().unwrap();
+        let sha = "f".repeat(40);
+        write_test_jar(
+            dir.path(),
+            &sha,
+            r#"[{"modid":"realmod","name":"R","version":"1.0"}]"#,
+        )
+        .unwrap();
+
+        let mut cfg = empty_config();
+        cfg.mods.push(DeclaredMod {
+            filename: "RealMod.jar".into(),
+            required: true,
+            source: SourceDecl::SmrtCache { sha1: sha },
+            display: None,
+            note: None,
+        });
+        let mut overrides = HashMap::new();
+        // existing modid -- version gets replaced
+        overrides.insert("realmod".into(), "1.0-spoofed".into());
+        // not-in-pack modid -- new entry inserted (covers the
+        // nbtedit '$version' literal-placeholder case where the
+        // jar's mcmod.info either has the placeholder unsubstituted
+        // or fails to parse and the curator hand-provides the value)
+        overrides.insert("nbtedit".into(), "$version".into());
+
+        let g = GenerateConfig {
+            hidemymods: true,
+            hidemymods_overrides: overrides,
+            hidemymods_filename: "hidemymods-spoof.json".into(),
+        };
+        let report = generate_hidemymods_spoof(&mut cfg, &g, dir.path()).unwrap();
+        assert_eq!(report.overrides_applied, 2);
+        assert_eq!(report.entries_emitted, 2);
+        let path = dir.path().join("packs/Test/static/hidemymods-spoof.json");
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        let mods = v["mods"].as_array().unwrap();
+        let nbt = mods.iter().find(|e| e["id"] == "nbtedit").unwrap();
+        assert_eq!(nbt["version"], "$version");
+        let real = mods.iter().find(|e| e["id"] == "realmod").unwrap();
+        assert_eq!(real["version"], "1.0-spoofed");
+    }
+
+    #[test]
+    fn generate_hidemymods_idempotent_no_duplicate_asset() {
+        let dir = TempDir::new().unwrap();
+        let sha = "9".repeat(40);
+        write_test_jar(dir.path(), &sha, r#"[{"modid":"x","version":"1"}]"#).unwrap();
+
+        let mut cfg = empty_config();
+        cfg.mods.push(DeclaredMod {
+            filename: "X.jar".into(),
+            required: true,
+            source: SourceDecl::SmrtCache { sha1: sha },
+            display: None,
+            note: None,
+        });
+        let g = GenerateConfig {
+            hidemymods: true,
+            hidemymods_overrides: HashMap::new(),
+            hidemymods_filename: "hidemymods-spoof.json".into(),
+        };
+
+        let r1 = generate_hidemymods_spoof(&mut cfg, &g, dir.path()).unwrap();
+        assert!(r1.asset_entry_added);
+        let r2 = generate_hidemymods_spoof(&mut cfg, &g, dir.path()).unwrap();
+        assert!(
+            !r2.asset_entry_added,
+            "second run must not duplicate the asset entry"
+        );
+        assert_eq!(cfg.assets.len(), 1);
+    }
+
+    #[test]
+    fn generate_hidemymods_collision_keeps_first() {
+        let dir = TempDir::new().unwrap();
+        let sha_a = "a".repeat(40);
+        let sha_b = "b".repeat(40);
+        // Two jars declaring the same modid -- intentional pack-maker
+        // shadowing or accidental duplicate. SC's wire ModList only
+        // carries one entry per modid; we mirror that and report the
+        // collision so the curator can investigate.
+        write_test_jar(dir.path(), &sha_a, r#"[{"modid":"dup","version":"first"}]"#).unwrap();
+        write_test_jar(
+            dir.path(),
+            &sha_b,
+            r#"[{"modid":"dup","version":"second"}]"#,
+        )
+        .unwrap();
+
+        let mut cfg = empty_config();
+        cfg.mods.push(DeclaredMod {
+            filename: "First.jar".into(),
+            required: true,
+            source: SourceDecl::SmrtCache { sha1: sha_a },
+            display: None,
+            note: None,
+        });
+        cfg.mods.push(DeclaredMod {
+            filename: "Second.jar".into(),
+            required: true,
+            source: SourceDecl::SmrtCache { sha1: sha_b },
+            display: None,
+            note: None,
+        });
+        let g = GenerateConfig {
+            hidemymods: true,
+            hidemymods_overrides: HashMap::new(),
+            hidemymods_filename: "hidemymods-spoof.json".into(),
+        };
+        let report = generate_hidemymods_spoof(&mut cfg, &g, dir.path()).unwrap();
+        assert_eq!(report.entries_emitted, 1);
+        assert_eq!(report.modid_collisions.len(), 1);
+        assert_eq!(report.modid_collisions[0].0, "dup");
+        assert_eq!(report.modid_collisions[0].1, "First.jar");
+        assert_eq!(report.modid_collisions[0].2, "Second.jar");
     }
 
     #[test]
