@@ -3,7 +3,7 @@ use crate::state::AppState;
 use crate::types::*;
 use axum::body::Body;
 use axum::extract::{Path, State};
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -18,8 +18,14 @@ pub fn router(state: AppState) -> Router {
         // matter for /manifest/versions vs /manifest/:version, but keeping
         // the more specific routes first matches the spec ordering.
         .route("/v1/packs/:pack_id/manifest", get(get_latest_manifest))
-        .route("/v1/packs/:pack_id/manifest/versions", get(list_manifest_versions))
-        .route("/v1/packs/:pack_id/manifest/:version", get(get_manifest_version))
+        .route(
+            "/v1/packs/:pack_id/manifest/versions",
+            get(list_manifest_versions),
+        )
+        .route(
+            "/v1/packs/:pack_id/manifest/:version",
+            get(get_manifest_version),
+        )
         .route("/v1/packs/:pack_id/static/*rel_path", get(get_pack_static))
         .route("/v1/servers", get(list_servers))
         .route("/v1/servers/:server_id", get(get_server))
@@ -68,7 +74,12 @@ async fn get_manifest_version(
     State(state): State<AppState>,
     Path((pack_id, version)): Path<(String, String)>,
 ) -> Result<Json<PackManifest>, ApiError> {
-    Ok(Json(state.storage.load_manifest_version(&pack_id, &version).await?))
+    Ok(Json(
+        state
+            .storage
+            .load_manifest_version(&pack_id, &version)
+            .await?,
+    ))
 }
 
 async fn list_manifest_versions(
@@ -148,8 +159,13 @@ async fn get_cache_inventory(
 // ── helpers ────────────────────────────────────────────────────────────────
 
 async fn serve_file(path: &std::path::Path, content_type: &str) -> Result<Response, ApiError> {
-    let file = tokio::fs::File::open(path).await.map_err(|_| ApiError::NotFound)?;
-    let meta = file.metadata().await.map_err(|e| ApiError::Internal(e.into()))?;
+    let file = tokio::fs::File::open(path)
+        .await
+        .map_err(|_| ApiError::NotFound)?;
+    let meta = file
+        .metadata()
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
     let stream = ReaderStream::new(file);
     let body = Body::from_stream(stream);
     Ok((

@@ -3,8 +3,8 @@ use crate::state::AppState;
 use crate::types::*;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, Request, State};
-use axum::http::{header, StatusCode};
-use axum::middleware::{from_fn_with_state, Next};
+use axum::http::{StatusCode, header};
+use axum::middleware::{Next, from_fn_with_state};
 use axum::response::Response;
 use axum::routing::{delete, post, put};
 use axum::{Json, Router};
@@ -152,7 +152,10 @@ async fn delete_pack_static(
     State(state): State<AppState>,
     Path((pack_id, rel_path)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    state.storage.delete_pack_static(&pack_id, &rel_path).await?;
+    state
+        .storage
+        .delete_pack_static(&pack_id, &rel_path)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

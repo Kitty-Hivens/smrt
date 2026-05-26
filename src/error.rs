@@ -1,6 +1,6 @@
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::Serialize;
 
 #[derive(Debug, thiserror::Error)]
@@ -37,7 +37,10 @@ impl IntoResponse for ApiError {
         };
         let body = ErrorBody {
             schema_version: 1,
-            error: ErrorPayload { code, message: self.to_string() },
+            error: ErrorPayload {
+                code,
+                message: self.to_string(),
+            },
         };
         (status, Json(body)).into_response()
     }
