@@ -104,9 +104,10 @@ filenames = [
 [substitute."Smarty-1.12.2.jar"]
 [substitute."Smarty-1.12.2.jar".source]
 type = "smrt_cache"
-# TODO: paste OSN jar sha1 here. The OSN jar must be uploaded into
-# the mirror cache before the manifest goes live (see upload-mods.sh).
-sha1 = "0000000000000000000000000000000000000000"
+# sha1 of the open-smrt-network forge-1.12.2 jar v0.1.0. Re-compute
+# when bumping OSN:
+#   sha1sum ~/open-smrt-network/forge-1.12.2/build/libs/*.jar
+sha1 = "ddaf68623b5902272a3486e4dd19d8c6eb0b64d6"
 
 [substitute."Smarty-1.12.2.jar".display]
 name        = "Open Smarty Network"
