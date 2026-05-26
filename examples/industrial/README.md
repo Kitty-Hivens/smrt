@@ -20,7 +20,7 @@ The whole chain wrapped as one script. Re-runnable, idempotent, picks up cleanly
 bash examples/industrial/full-pipeline.sh ~/IndustrialSC.zip
 ```
 
-Drives: bootstrap → upload-mods.sh → apply-curator (which now also generates `hidemymods-spoof.json` from each jar's `mcmod.info`) → upload-static → build → curl health probe. Reads `CURATOR_TOML`, `STORAGE`, `CLIENT_DIR`, `TOKEN_FILE` etc from env with sensible defaults — `--help`-like usage block at the top of the script lists the override knobs.
+Drives: bootstrap → upload-mods.sh → apply-curator (which also emits `hidemymods-spoof.json` from `curator.toml`'s `[generate.hidemymods_entries]` table -- SC's expected wire modlist, captured per SC update; not derived from our jars, because our pack is intentionally divergent) → upload-static → build → curl health probe. Reads `CURATOR_TOML`, `STORAGE`, `CLIENT_DIR`, `TOKEN_FILE` etc from env with sensible defaults -- `--help`-like usage block at the top of the script lists the override knobs.
 
 When the SC archive hasn't changed but the curator config has (tweaked role table, added a cozy mod), skip the long re-bootstrap:
 
