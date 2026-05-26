@@ -481,14 +481,27 @@ pub fn apply_substitute(
 
 #[derive(Debug, Default)]
 pub struct CategoryApplyReport {
+    /// Mods that gained a category from the table where none existed.
     pub applied: u32,
-    pub skipped_already_set: u32,
+    /// Mods whose existing category was OVERWRITTEN by the curator's
+    /// table entry. Surfaced separately from `applied` so the operator
+    /// can spot when an upstream-derived category (mcmod.info heuristic,
+    /// PackConfig literal, etc) is being replaced.
+    pub overrode: u32,
     pub unmatched_in_table: Vec<String>,
 }
 
-/// Writes `display.category` on every mod matched by the table.
-/// Existing categories win -- this only fills missing ones. Mirrors
-/// [`apply_role_table`] in shape.
+/// Writes `display.category` on every mod matched by the table. The
+/// curator's table is AUTHORITATIVE -- it always overrides any
+/// pre-existing category from the input PackConfig (bootstrap default,
+/// hand-edited literal, mcmod.info heuristic). This is the inverse of
+/// the original "skip if already set" rule: in practice the table IS
+/// the canonical human-curated assignment, and the bootstrap-derived
+/// values it was previously "protecting" turned out to be the wrong
+/// thing to preserve.
+///
+/// To opt out of overriding for a specific entry, the curator simply
+/// leaves it out of the table; the existing value stays.
 pub fn apply_category_table(
     config: &mut PackConfig,
     table: &HashMap<String, String>,
@@ -508,16 +521,20 @@ pub fn apply_category_table(
             continue;
         };
         let display = m.display.get_or_insert_with(default_display);
-        if display.category.is_some() {
-            report.skipped_already_set += 1;
+        if display.category.as_deref() == Some(cat.as_str()) {
+            // Already at the curator's value; nothing to do, no event.
             continue;
         }
+        if display.category.is_some() {
+            report.overrode += 1;
+        } else {
+            report.applied += 1;
+        }
         display.category = Some(cat.clone());
-        report.applied += 1;
     }
     info!(
         applied = report.applied,
-        skipped = report.skipped_already_set,
+        overrode = report.overrode,
         unmatched = report.unmatched_in_table.len(),
         "apply-category-table complete"
     );
@@ -1397,7 +1414,10 @@ mod tests {
     }
 
     #[test]
-    fn category_table_fills_missing_only() {
+    fn category_table_overrides_existing_and_fills_missing() {
+        // Three mods: one with no category (table fills), one with a
+        // category the table replaces (curator wins), one with a
+        // category the table happens to match (no-op, no event).
         let mut cfg = empty_config();
         cfg.mods.push(DeclaredMod {
             filename: "Modded.jar".into(),
@@ -1409,7 +1429,7 @@ mod tests {
             note: None,
         });
         cfg.mods.push(DeclaredMod {
-            filename: "WithCategory.jar".into(),
+            filename: "PreviouslyCore.jar".into(),
             required: true,
             source: SourceDecl::SmrtCache {
                 sha1: "a".repeat(40),
@@ -1417,7 +1437,26 @@ mod tests {
             display: Some(Display {
                 name: None,
                 description: None,
-                category: Some("already-set".into()),
+                category: Some("core".into()),
+                incompatible_with: Vec::new(),
+                license: None,
+                url: None,
+                icon_url: None,
+                role: None,
+                requires: Vec::new(),
+            }),
+            note: None,
+        });
+        cfg.mods.push(DeclaredMod {
+            filename: "AlreadyRight.jar".into(),
+            required: true,
+            source: SourceDecl::SmrtCache {
+                sha1: "a".repeat(40),
+            },
+            display: Some(Display {
+                name: None,
+                description: None,
+                category: Some("performance".into()),
                 incompatible_with: Vec::new(),
                 license: None,
                 url: None,
@@ -1429,17 +1468,27 @@ mod tests {
         });
         let mut table = HashMap::new();
         table.insert("Modded.jar".into(), "performance".into());
-        table.insert("WithCategory.jar".into(), "should-not-override".into());
+        table.insert("PreviouslyCore.jar".into(), "lib".into());
+        table.insert("AlreadyRight.jar".into(), "performance".into());
         let report = apply_category_table(&mut cfg, &table);
-        assert_eq!(report.applied, 1);
-        assert_eq!(report.skipped_already_set, 1);
+        assert_eq!(report.applied, 1, "Modded.jar got its first category");
+        assert_eq!(
+            report.overrode, 1,
+            "PreviouslyCore.jar core->lib counted as override"
+        );
+        // AlreadyRight.jar already matched the table; no event.
         assert_eq!(
             cfg.mods[0].display.as_ref().unwrap().category.as_deref(),
             Some("performance")
         );
         assert_eq!(
             cfg.mods[1].display.as_ref().unwrap().category.as_deref(),
-            Some("already-set")
+            Some("lib"),
+            "curator table wins over pre-existing 'core'",
+        );
+        assert_eq!(
+            cfg.mods[2].display.as_ref().unwrap().category.as_deref(),
+            Some("performance")
         );
     }
 

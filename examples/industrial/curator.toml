@@ -111,7 +111,12 @@ sha1 = "ddaf68623b5902272a3486e4dd19d8c6eb0b64d6"
 
 [substitute."Smarty-1.12.2.jar".display]
 name        = "Open Smarty Network"
-category    = "lib"
+# `interop` -- not a code library, not a game mod. OSN exists to
+# replicate SC's wire protocol so the SC server's handshake accepts
+# a Hivens-rework client, then steps out of the way. Same vocabulary
+# slot reserved for any future coremod whose sole job is upstream-
+# protocol compatibility.
+category    = "interop"
 description = "Clean-room replacement for SC's proprietary `Smarty` auth coremod. Wire-protocol only, no post-join client scan. Apache-2.0."
 license     = "Apache-2.0"
 url         = "https://github.com/Kitty-Hivens/open-smrt-network"
@@ -131,10 +136,10 @@ url         = "https://github.com/Kitty-Hivens/open-smrt-network"
 "XaerosWorldMap.jar"  = "world_map"
 
 # ── category_table ───────────────────────────────────────────────────────
-# Authoritative category-per-filename mapping for mods where
-# enrich-from-mcmod-info either can't infer a category or guesses
-# wrong. Existing display.category from mcmod.info wins -- this only
-# fills missing ones.
+# Authoritative category-per-filename mapping. The curator's table is
+# AUTHORITATIVE -- it always overrides any pre-existing category
+# (bootstrap default, hand-edited literal, mcmod.info heuristic). To
+# opt out for a specific mod, simply leave it out of the table.
 
 [category_table]
 "OptiFine.jar"               = "render"
@@ -170,11 +175,21 @@ url         = "https://github.com/Kitty-Hivens/open-smrt-network"
 "Hats.jar"                   = "cosmetic"
 "HatStand.jar"               = "cosmetic"
 "NBTEdit.jar"                = "admin-tool"
+# Libraries -- mods that ship code other mods depend on, no
+# user-facing content. The previous pipeline run incorrectly
+# tagged these as `core`; curator now wins.
 "AutoRegLib.jar"             = "lib"
 "bspkrsCore.jar"             = "lib"
+"BdLib.jar"                  = "lib"
+"BuildCraft.jar"             = "lib"
 "ChickenASM-1.12-1.0.2.7.jar" = "lib"
+"CodeChickenLib.jar"         = "lib"
+"CoFHCore.jar"               = "lib"
+"CoFHWorld.jar"              = "lib"
+"ForgeMultipart.jar"         = "lib"
 "iChunUtil.jar"              = "lib"
 "LunatriusCore.jar"          = "lib"
+"MrTJPCore.jar"              = "lib"
 
 # ── extra_mods ───────────────────────────────────────────────────────────
 # Modrinth-direct mods added on top of the SC-derived pack. The
