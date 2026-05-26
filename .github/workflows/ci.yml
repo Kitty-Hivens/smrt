@@ -1,0 +1,144 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  # Manual trigger for one-off deploys (e.g. emergency fix, re-deploy
+  # after a runner outage), gated through the GitHub UI on `main`.
+  workflow_dispatch:
+
+# Concurrency: one deploy at a time per ref. New push cancels the
+# previous one's deploy step but lets the test step finish so we
+# don't lose the test signal for the cancelled commit.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: cargo fmt + clippy + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Cache key includes the workflow file so a workflow-only
+          # change doesn't invalidate the deps cache; the dep tree
+          # is the actual invalidation source via Cargo.lock.
+          shared-key: smrt-stable
+
+      - name: cargo fmt -- --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        # Treat warnings as errors so a clippy regression fails CI
+        # at PR-time instead of accumulating noise on main.
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: cargo test
+        run: cargo test --all-features
+
+  deploy:
+    name: build + ship to VPS
+    needs: test
+    # Only deploy on push-to-main / manual trigger. PRs run the test
+    # job only -- no SSH credentials reach a PR-author-controlled
+    # workflow execution.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # Environment gate: the GitHub Environment "production" can be
+    # configured to require manual approval (Repo Settings ->
+    # Environments -> production -> Required reviewers) for an
+    # explicit human OK on every deploy. Without a reviewer it
+    # auto-proceeds; the gate is opt-in security.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: smrt-stable
+
+      - name: cargo build --release
+        run: cargo build --release --bin smrt --bin smrt-pack
+
+      - name: load deploy SSH key into agent
+        # webfactory/ssh-agent loads the secret into a per-job
+        # ssh-agent and tears it down at job exit. Far better than
+        # writing the key to ~/.ssh/id_ed25519 directly -- the key
+        # never lands on the runner filesystem.
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SMRT_DEPLOY_SSH_KEY }}
+
+      - name: pin VPS host key
+        # Avoid first-connect StrictHostKeyChecking prompt. The
+        # known_hosts entry is captured once by the operator
+        # (`ssh-keyscan -H <host> > known_hosts`) and pasted into
+        # the secret -- baking host identity into the workflow
+        # protects against MITM mid-deploy.
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.SMRT_DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: scp binary -> VPS
+        # SMRT_DEPLOY_HOST is `user@host[:port]`. Kept as a secret
+        # not because the host is sensitive (it isn't -- public DNS)
+        # but because secret-ifying it lets the operator rotate to a
+        # different deploy host without touching this file.
+        run: |
+          scp -o ServerAliveInterval=10 \
+              target/release/smrt \
+              "${{ secrets.SMRT_DEPLOY_HOST }}:/usr/local/bin/smrt.new"
+
+      - name: swap binary + restart service + verify
+        run: |
+          ssh "${{ secrets.SMRT_DEPLOY_HOST }}" 'bash -se' <<'REMOTE'
+            set -euo pipefail
+            mv /usr/local/bin/smrt.new /usr/local/bin/smrt
+            chmod +x /usr/local/bin/smrt
+            systemctl restart smrt
+            sleep 2
+            systemctl status smrt --no-pager -l | head -20
+            # Health probe: the binary should come up and answer the
+            # /v1/health endpoint within a couple of seconds. Fail
+            # the deploy if it doesn't so a broken commit doesn't
+            # silently leave the service in a flapping state.
+            for i in 1 2 3 4 5; do
+              if curl -fsS --max-time 3 http://127.0.0.1/v1/health > /dev/null; then
+                echo "health probe OK on try $i"
+                exit 0
+              fi
+              echo "health probe failed on try $i, retrying..."
+              sleep 2
+            done
+            echo "service did not become healthy after restart" >&2
+            journalctl -u smrt --no-pager -n 50
+            exit 1
+          REMOTE
+
+      - name: smrt-pack artifact (build only -- not deployed)
+        # The smrt-pack binary is curator-side tooling that runs from
+        # the local dev / VPS shell, not the always-on service. Keep
+        # the build as a downloadable artifact for the operator to
+        # grab when needed, but do not push it as part of the deploy
+        # step (no service depends on a newer smrt-pack to start).
+        uses: actions/upload-artifact@v4
+        with:
+          name: smrt-pack-${{ github.sha }}
+          path: target/release/smrt-pack
+          retention-days: 30
