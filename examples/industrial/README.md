@@ -59,7 +59,7 @@ SKIP_BOOTSTRAP=1 bash examples/industrial/full-pipeline.sh _
        --dir     ~/.local/share/nexira/clients/Industrial
    ```
 
-4. **Run the curator chain** -- one omnibus subcommand reads `curator.toml` and applies every per-pack mutation in canonical order: mcmod.info enrich, role table, category table, mark-optional, source substitution (Smarty -> OSN), requires inference, and finally the Modrinth-direct extras (cozy mods + RPs + shaders).
+4. **Run the curator chain** -- one omnibus subcommand reads `curator.toml` and applies every per-pack mutation in canonical order: mcmod.info enrich, role table, category table, mark-optional, source substitution (Smarty -> OSN), requires inference, `drop_assets` (strips mod-default configs SC ships but nobody tunes), hidemymods spoof generation, and finally the Modrinth-direct extras (cozy mods + RPs + shaders).
 
    ```bash
    smrt-pack apply-curator \
@@ -80,7 +80,7 @@ SKIP_BOOTSTRAP=1 bash examples/industrial/full-pipeline.sh _
 
 | File              | Purpose                                                                                                       |
 | ----------------- | ------------------------------------------------------------------------------------------------------------- |
-| `curator.toml`    | Omnibus per-pack curator decisions: pack metadata + mark-optional + substitute + role table + category table + extra mods + extra assets + `[generate]` hidemymods spoof toggle. Drives both `apply-curator` and `build --curator`. |
+| `curator.toml`    | Omnibus per-pack curator decisions: pack metadata + mark-optional + substitute + role table + category table + extra mods + extra assets + `[drop_assets]` (config files stripped from the manifest because they are mod defaults SC happens to ship) + `[generate]` hidemymods spoof toggle. Drives both `apply-curator` and `build --curator`. |
 | `full-pipeline.sh`| One-shot orchestrator: bootstrap -> upload-mods -> apply-curator -> upload-static -> build -> verify. Set `SKIP_BOOTSTRAP=1` to refresh without re-extracting the SC archive. |
 | `role-table.toml` | Standalone role-table example -- kept for reference. The `apply-role-table` subcommand still reads files in this shape if a curator prefers separate files; `curator.toml`'s `[role_table]` section subsumes the same data. |
 | `pack-meta.toml`  | Standalone pack-meta example -- same relationship as role-table.toml. `curator.toml`'s `[pack_meta]` section subsumes it. |
