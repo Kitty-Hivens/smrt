@@ -11,8 +11,8 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
-        let bind_addr = std::env::var("SMRT_BIND_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:9000".to_string());
+        let bind_addr =
+            std::env::var("SMRT_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:9000".to_string());
         let bind_addr = SocketAddr::from_str(&bind_addr)
             .map_err(|e| anyhow::anyhow!("invalid SMRT_BIND_ADDR '{bind_addr}': {e}"))?;
 
@@ -22,6 +22,10 @@ impl Config {
 
         let admin_token = std::env::var("SMRT_ADMIN_TOKEN").ok();
 
-        Ok(Self { bind_addr, storage_dir, admin_token })
+        Ok(Self {
+            bind_addr,
+            storage_dir,
+            admin_token,
+        })
     }
 }

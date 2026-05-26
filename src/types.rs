@@ -139,7 +139,9 @@ pub enum Source {
     },
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 // ── Pack summary / listing ─────────────────────────────────────────────────
 
@@ -289,19 +291,34 @@ mod tests {
 
     #[test]
     fn compare_orders_two_digit_subversions_after_single_digit() {
-        assert_eq!(compare_pack_versions("2026.05.22.2", "2026.05.22.10"), Ordering::Less);
+        assert_eq!(
+            compare_pack_versions("2026.05.22.2", "2026.05.22.10"),
+            Ordering::Less
+        );
     }
 
     #[test]
     fn compare_orders_dates_correctly() {
-        assert_eq!(compare_pack_versions("2026.05.22", "2026.05.23"), Ordering::Less);
+        assert_eq!(
+            compare_pack_versions("2026.05.22", "2026.05.23"),
+            Ordering::Less
+        );
     }
 
     #[test]
     fn compare_treats_missing_trailing_segment_as_zero() {
-        assert_eq!(compare_pack_versions("2026.05.22", "2026.05.22.0"), Ordering::Equal);
-        assert_eq!(compare_pack_versions("2026.05.22", "2026.05.22.1"), Ordering::Less);
-        assert_eq!(compare_pack_versions("2026.05.22.0.0", "2026.05.22"), Ordering::Equal);
+        assert_eq!(
+            compare_pack_versions("2026.05.22", "2026.05.22.0"),
+            Ordering::Equal
+        );
+        assert_eq!(
+            compare_pack_versions("2026.05.22", "2026.05.22.1"),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_pack_versions("2026.05.22.0.0", "2026.05.22"),
+            Ordering::Equal
+        );
     }
 
     #[test]
@@ -315,8 +332,10 @@ mod tests {
             display: None,
         };
         let s = serde_json::to_string(&m).unwrap();
-        assert!(!s.contains("display"),
-            "absent display block must not serialize (forward-compat for old clients): {s}");
+        assert!(
+            !s.contains("display"),
+            "absent display block must not serialize (forward-compat for old clients): {s}"
+        );
     }
 
     #[test]
@@ -338,7 +357,10 @@ mod tests {
         let d = m.display.expect("display deserialized");
         assert_eq!(d.name.as_deref(), Some("VoxelMap"));
         assert_eq!(d.category.as_deref(), Some("minimap"));
-        assert_eq!(d.incompatible_with, vec!["XaerosMinimap.jar", "JourneyMap.jar"]);
+        assert_eq!(
+            d.incompatible_with,
+            vec!["XaerosMinimap.jar", "JourneyMap.jar"]
+        );
     }
 
     #[test]
@@ -364,7 +386,10 @@ mod tests {
         }"#;
         let m: ModEntry = serde_json::from_str(json).unwrap();
         let d = m.display.expect("display deserialized");
-        assert_eq!(d.icon_url.as_deref(), Some("https://cdn.modrinth.com/data/EsAfCjCV/icon.png"));
+        assert_eq!(
+            d.icon_url.as_deref(),
+            Some("https://cdn.modrinth.com/data/EsAfCjCV/icon.png")
+        );
         assert_eq!(d.role.as_deref(), Some("info_overlay"));
         assert_eq!(d.requires.len(), 1);
         assert_eq!(d.requires[0].filename, "Mixinbooter.jar");
@@ -384,8 +409,14 @@ mod tests {
         assert!(!r.optional);
         // Round-trip preserves the omission shape.
         let s = serde_json::to_string(&r).unwrap();
-        assert!(!s.contains("version_range"), "absent version_range must not serialize: {s}");
-        assert!(s.contains("\"optional\":false"), "optional always serializes (no skip_if): {s}");
+        assert!(
+            !s.contains("version_range"),
+            "absent version_range must not serialize: {s}"
+        );
+        assert!(
+            s.contains("\"optional\":false"),
+            "optional always serializes (no skip_if): {s}"
+        );
     }
 
     #[test]
@@ -396,14 +427,20 @@ mod tests {
         // comparisons in client-side change detection.
         let d = Display {
             name: Some("X".into()),
-            description: None, category: None,
+            description: None,
+            category: None,
             incompatible_with: vec![],
-            license: None, url: None,
-            icon_url: None, role: None,
+            license: None,
+            url: None,
+            icon_url: None,
+            role: None,
             requires: vec![],
         };
         let s = serde_json::to_string(&d).unwrap();
-        assert!(!s.contains("requires"), "empty requires must not serialize: {s}");
+        assert!(
+            !s.contains("requires"),
+            "empty requires must not serialize: {s}"
+        );
     }
 
     #[test]
@@ -427,10 +464,21 @@ mod tests {
             "description_md": "# Industrial\n\nLong-form copy."
         }"##;
         let s: PackSummary = serde_json::from_str(json).unwrap();
-        assert_eq!(s.icon_url.as_deref(),    Some("https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/icon.png"));
-        assert_eq!(s.banner_url.as_deref(),  Some("https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/banner.png"));
+        assert_eq!(
+            s.icon_url.as_deref(),
+            Some("https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/icon.png")
+        );
+        assert_eq!(
+            s.banner_url.as_deref(),
+            Some("https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/banner.png")
+        );
         assert_eq!(s.gallery_urls.len(), 1);
-        assert!(s.description_md.as_deref().unwrap().starts_with("# Industrial"));
+        assert!(
+            s.description_md
+                .as_deref()
+                .unwrap()
+                .starts_with("# Industrial")
+        );
     }
 
     #[test]
@@ -466,7 +514,9 @@ mod tests {
                 "source": {"type": "smrt_cache", "url": "u"}}]
         }"#;
         let pm: PackManifest = serde_json::from_str(json).unwrap();
-        assert!(pm.mods[0].display.is_none(),
-            "manifests written before the display field landed must still parse");
+        assert!(
+            pm.mods[0].display.is_none(),
+            "manifests written before the display field landed must still parse"
+        );
     }
 }

@@ -1,16 +1,16 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
 use sha1::{Digest, Sha1};
 use smrt::enrich::{
-    apply_curator as enrich_apply_curator, apply_role_table as enrich_apply_role_table,
+    PackMeta, apply_curator as enrich_apply_curator, apply_role_table as enrich_apply_role_table,
     enrich_from_mcmod_info, infer_requires_from_mcmod_info, load_curator, load_pack_meta,
-    load_role_table, PackMeta,
+    load_role_table,
 };
 use smrt::modrinth::{Modrinth, Version as MrVersion};
 use smrt::pack_config::{DeclaredAsset, DeclaredMod, PackConfig, SourceDecl};
 use smrt::types::{
-    AssetEntry, JavaSpec, LoaderSpec, MinecraftSpec, ModEntry, PackManifest, PackSummary, Source,
-    SCHEMA_VERSION,
+    AssetEntry, JavaSpec, LoaderSpec, MinecraftSpec, ModEntry, PackManifest, PackSummary,
+    SCHEMA_VERSION, Source,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -202,16 +202,41 @@ async fn main() -> Result<()> {
             pack_version,
             mirror_base,
             pack_meta,
-        } => build(&config, &storage, pack_version.as_deref(), &mirror_base, pack_meta.as_deref()).await,
-        Cmd::EnrichMcmod { config, out, storage } => run_enrich_mcmod(&config, &out, &storage),
+        } => {
+            build(
+                &config,
+                &storage,
+                pack_version.as_deref(),
+                &mirror_base,
+                pack_meta.as_deref(),
+            )
+            .await
+        }
+        Cmd::EnrichMcmod {
+            config,
+            out,
+            storage,
+        } => run_enrich_mcmod(&config, &out, &storage),
         Cmd::ApplyRoleTable { config, table, out } => run_apply_role_table(&config, &table, &out),
-        Cmd::InferRequires { config, out, storage } => run_infer_requires(&config, &out, &storage),
-        Cmd::ApplyCurator { config, curator, out, storage, mc_version } => {
-            run_apply_curator(&config, &curator, &out, &storage, mc_version.as_deref()).await
-        }
-        Cmd::UploadStatic { pack_id, dir, mirror_base, token_file, skip } => {
-            run_upload_static(&pack_id, &dir, &mirror_base, &token_file, &skip).await
-        }
+        Cmd::InferRequires {
+            config,
+            out,
+            storage,
+        } => run_infer_requires(&config, &out, &storage),
+        Cmd::ApplyCurator {
+            config,
+            curator,
+            out,
+            storage,
+            mc_version,
+        } => run_apply_curator(&config, &curator, &out, &storage, mc_version.as_deref()).await,
+        Cmd::UploadStatic {
+            pack_id,
+            dir,
+            mirror_base,
+            token_file,
+            skip,
+        } => run_upload_static(&pack_id, &dir, &mirror_base, &token_file, &skip).await,
     }
 }
 
@@ -244,7 +269,11 @@ fn run_infer_requires(config_path: &Path, out_path: &Path, storage: &Path) -> Re
         warn!(
             "{} dependency edge(s) skipped -- modid not found among sibling mods (sample: {:?})",
             report.edges_skipped_unresolved.len(),
-            report.edges_skipped_unresolved.iter().take(5).collect::<Vec<_>>(),
+            report
+                .edges_skipped_unresolved
+                .iter()
+                .take(5)
+                .collect::<Vec<_>>(),
         );
     }
     write_pack_config(&cfg, out_path)
@@ -301,41 +330,55 @@ async fn run_upload_static(
     let mut skipped = 0usize;
     let mut failed: Vec<(String, String)> = Vec::new();
 
-    walk_files_for_upload(dir, dir, skip, &mut |rel_path, abs_path| {
-        // Path::join with leading separator on Linux silently drops
-        // the prefix; explicit format keeps the URL well-formed.
-        let url = static_upload_url(mirror_base, pack_id, &rel_path);
-        info!(rel = %rel_path, "uploading");
-        let body = fs::read(abs_path)
-            .with_context(|| format!("reading {}", abs_path.display()))?;
-        let resp = futures_block_on(async {
-            client
-                .put(&url)
-                .bearer_auth(&token)
-                .body(body)
-                .send()
-                .await
-        });
-        match resp {
-            Ok(r) if r.status().is_success() => {
-                uploaded += 1;
+    walk_files_for_upload(
+        dir,
+        dir,
+        skip,
+        &mut |rel_path, abs_path| {
+            // Path::join with leading separator on Linux silently drops
+            // the prefix; explicit format keeps the URL well-formed.
+            let url = static_upload_url(mirror_base, pack_id, &rel_path);
+            info!(rel = %rel_path, "uploading");
+            let body =
+                fs::read(abs_path).with_context(|| format!("reading {}", abs_path.display()))?;
+            let resp = futures_block_on(async {
+                client.put(&url).bearer_auth(&token).body(body).send().await
+            });
+            match resp {
+                Ok(r) if r.status().is_success() => {
+                    uploaded += 1;
+                }
+                Ok(r) => {
+                    failed.push((rel_path.clone(), format!("HTTP {}", r.status())));
+                }
+                Err(e) => {
+                    failed.push((rel_path.clone(), e.to_string()));
+                }
             }
-            Ok(r) => {
-                failed.push((rel_path.clone(), format!("HTTP {}", r.status())));
-            }
-            Err(e) => {
-                failed.push((rel_path.clone(), e.to_string()));
-            }
-        }
-        Ok(())
-    }, &mut skipped)?;
+            Ok(())
+        },
+        &mut skipped,
+    )?;
 
     if !failed.is_empty() {
-        warn!("{} upload(s) failed (sample: {:?})", failed.len(), failed.iter().take(5).collect::<Vec<_>>());
+        warn!(
+            "{} upload(s) failed (sample: {:?})",
+            failed.len(),
+            failed.iter().take(5).collect::<Vec<_>>()
+        );
     }
-    info!(uploaded, skipped, failed = failed.len(), "upload-static complete");
+    info!(
+        uploaded,
+        skipped,
+        failed = failed.len(),
+        "upload-static complete"
+    );
     if !failed.is_empty() {
-        bail!("{} of {} uploads failed", failed.len(), uploaded + failed.len());
+        bail!(
+            "{} of {} uploads failed",
+            failed.len(),
+            uploaded + failed.len()
+        );
     }
     Ok(())
 }
@@ -347,8 +390,7 @@ fn walk_files_for_upload(
     upload: &mut dyn FnMut(String, &Path) -> Result<()>,
     skipped: &mut usize,
 ) -> Result<()> {
-    let entries = fs::read_dir(here)
-        .with_context(|| format!("read_dir {}", here.display()))?;
+    let entries = fs::read_dir(here).with_context(|| format!("read_dir {}", here.display()))?;
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
@@ -360,10 +402,14 @@ fn walk_files_for_upload(
         if !metadata.is_file() {
             continue;
         }
-        let rel = path.strip_prefix(root)
-            .with_context(|| format!("relativizing {} against {}", path.display(), root.display()))?;
+        let rel = path.strip_prefix(root).with_context(|| {
+            format!("relativizing {} against {}", path.display(), root.display())
+        })?;
         let rel_str = rel.to_string_lossy().replace('\\', "/");
-        if skip.iter().any(|s| rel_str.starts_with(s) || rel_str.contains(s)) {
+        if skip
+            .iter()
+            .any(|s| rel_str.starts_with(s) || rel_str.contains(s))
+        {
             *skipped += 1;
             continue;
         }
@@ -373,12 +419,26 @@ fn walk_files_for_upload(
 }
 
 fn static_upload_url(base: &str, pack_id: &str, rel_path: &str) -> String {
-    use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+    use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
     const SET: &AsciiSet = &CONTROLS
-        .add(b' ').add(b'"').add(b'#').add(b'%').add(b'<').add(b'>')
-        .add(b'?').add(b'[').add(b'\\').add(b']').add(b'^').add(b'`')
-        .add(b'{').add(b'|').add(b'}')
-        .add(b'&').add(b'=').add(b'+');
+        .add(b' ')
+        .add(b'"')
+        .add(b'#')
+        .add(b'%')
+        .add(b'<')
+        .add(b'>')
+        .add(b'?')
+        .add(b'[')
+        .add(b'\\')
+        .add(b']')
+        .add(b'^')
+        .add(b'`')
+        .add(b'{')
+        .add(b'|')
+        .add(b'}')
+        .add(b'&')
+        .add(b'=')
+        .add(b'+');
     let base = base.trim_end_matches('/');
     let pack_enc = utf8_percent_encode(pack_id, SET).to_string();
     let rel_enc = rel_path
@@ -443,13 +503,23 @@ async fn bootstrap(args: BootstrapArgs) -> Result<()> {
     info!(matched = hits.len(), total = sha1s.len(), "modrinth lookup");
 
     let cache_dir = args.storage.join("cache");
-    let static_dir = args.storage.join("packs").join(&args.pack_id).join("static");
+    let static_dir = args
+        .storage
+        .join("packs")
+        .join(&args.pack_id)
+        .join("static");
 
     let mut declared_mods = Vec::with_capacity(mods.len());
     for m in &mods {
         let decl = if let Some(hit) = hits.get(&m.sha1) {
-            let mc_ok = hit.game_versions.iter().any(|v| v == &args.minecraft_version);
-            let loader_ok = hit.loaders.iter().any(|l| l.eq_ignore_ascii_case(&args.loader.name));
+            let mc_ok = hit
+                .game_versions
+                .iter()
+                .any(|v| v == &args.minecraft_version);
+            let loader_ok = hit
+                .loaders
+                .iter()
+                .any(|l| l.eq_ignore_ascii_case(&args.loader.name));
             if mc_ok && loader_ok {
                 DeclaredMod {
                     filename: m.filename.clone(),
@@ -466,7 +536,9 @@ async fn bootstrap(args: BootstrapArgs) -> Result<()> {
                 DeclaredMod {
                     filename: m.filename.clone(),
                     required: true,
-                    source: SourceDecl::SmrtCache { sha1: m.sha1.clone() },
+                    source: SourceDecl::SmrtCache {
+                        sha1: m.sha1.clone(),
+                    },
                     display: None,
                     note: Some(format!(
                         "TODO: Modrinth hit exists but mc/loader mismatch (mc={:?}, loaders={:?}); review for substitution",
@@ -479,9 +551,13 @@ async fn bootstrap(args: BootstrapArgs) -> Result<()> {
             DeclaredMod {
                 filename: m.filename.clone(),
                 required: true,
-                source: SourceDecl::SmrtCache { sha1: m.sha1.clone() },
+                source: SourceDecl::SmrtCache {
+                    sha1: m.sha1.clone(),
+                },
                 display: None,
-                note: Some("TODO: no Modrinth match; check if a relabel of an upstream project".into()),
+                note: Some(
+                    "TODO: no Modrinth match; check if a relabel of an upstream project".into(),
+                ),
             }
         };
         declared_mods.push(decl);
@@ -494,7 +570,9 @@ async fn bootstrap(args: BootstrapArgs) -> Result<()> {
         declared_assets.push(DeclaredAsset {
             dest: a.rel_path.clone(),
             required: true,
-            source: SourceDecl::SmrtStatic { rel_path: a.rel_path.clone() },
+            source: SourceDecl::SmrtStatic {
+                rel_path: a.rel_path.clone(),
+            },
             display: None,
             note: Some("TODO: review whether to keep SC default or curate replacement".into()),
         });
@@ -518,8 +596,7 @@ async fn bootstrap(args: BootstrapArgs) -> Result<()> {
     if let Some(parent) = args.out.parent() {
         fs::create_dir_all(parent).ok();
     }
-    fs::write(&args.out, pretty)
-        .with_context(|| format!("writing {}", args.out.display()))?;
+    fs::write(&args.out, pretty).with_context(|| format!("writing {}", args.out.display()))?;
     info!(
         path = %args.out.display(),
         mods = cfg.mods.len(),
@@ -545,7 +622,11 @@ fn validate(config_path: &Path, sc_archive_path: &Path) -> Result<()> {
     let matched = sc_filenames.intersection(&config_filenames).count();
 
     println!("SC archive: {} mods", sc_mods.len());
-    println!("PackConfig: {} mods declared, {} assets declared", cfg.mods.len(), cfg.assets.len());
+    println!(
+        "PackConfig: {} mods declared, {} assets declared",
+        cfg.mods.len(),
+        cfg.assets.len()
+    );
     println!("matched by filename: {}", matched);
 
     if !missing_in_config.is_empty() {
@@ -557,7 +638,9 @@ fn validate(config_path: &Path, sc_archive_path: &Path) -> Result<()> {
         }
     }
     if !extra_in_config.is_empty() {
-        println!("\nIn PackConfig but not in SC archive (client additions, expected if intentional):");
+        println!(
+            "\nIn PackConfig but not in SC archive (client additions, expected if intentional):"
+        );
         let mut sorted: Vec<&&&str> = extra_in_config.iter().collect();
         sorted.sort();
         for f in sorted {
@@ -566,7 +649,10 @@ fn validate(config_path: &Path, sc_archive_path: &Path) -> Result<()> {
     }
 
     if !missing_in_config.is_empty() {
-        bail!("{} SC mods missing from PackConfig", missing_in_config.len());
+        bail!(
+            "{} SC mods missing from PackConfig",
+            missing_in_config.len()
+        );
     }
     Ok(())
 }
@@ -607,7 +693,17 @@ async fn build(
 
     let mut asset_entries = Vec::with_capacity(cfg.assets.len());
     for a in &cfg.assets {
-        asset_entries.push(resolve_asset(a, &cfg.pack_id, storage, mirror_base, &modrinth, &modrinth_cache).await?);
+        asset_entries.push(
+            resolve_asset(
+                a,
+                &cfg.pack_id,
+                storage,
+                mirror_base,
+                &modrinth,
+                &modrinth_cache,
+            )
+            .await?,
+        );
     }
     asset_entries.sort_by(|a, b| a.dest.cmp(&b.dest));
 
@@ -616,9 +712,13 @@ async fn build(
         pack_id: cfg.pack_id.clone(),
         pack_version: pack_version.clone(),
         generated_at: now_rfc3339(),
-        minecraft: MinecraftSpec { version: cfg.minecraft_version.clone() },
+        minecraft: MinecraftSpec {
+            version: cfg.minecraft_version.clone(),
+        },
         loader: cfg.loader.clone(),
-        java: JavaSpec { major: cfg.java_major },
+        java: JavaSpec {
+            major: cfg.java_major,
+        },
         mods: mod_entries,
         assets: asset_entries,
     };
@@ -658,12 +758,17 @@ async fn resolve_mod(
     cache: &ModrinthCache,
 ) -> Result<ModEntry> {
     let (sha1, size_bytes, source) = match &decl.source {
-        SourceDecl::Modrinth { project_id, version_id } => {
-            let v = cache.get_or_fetch(modrinth, project_id, version_id).await
+        SourceDecl::Modrinth {
+            project_id,
+            version_id,
+        } => {
+            let v = cache
+                .get_or_fetch(modrinth, project_id, version_id)
+                .await
                 .with_context(|| format!("resolving Modrinth mod {}", decl.filename))?;
-            let f = v
-                .primary_file()
-                .ok_or_else(|| anyhow!("Modrinth version {project_id}/{version_id} has no files"))?;
+            let f = v.primary_file().ok_or_else(|| {
+                anyhow!("Modrinth version {project_id}/{version_id} has no files")
+            })?;
             (
                 f.hashes.sha1.clone(),
                 f.size,
@@ -675,12 +780,26 @@ async fn resolve_mod(
         }
         SourceDecl::SmrtCache { sha1 } => {
             let path = cache_jar_path(storage, sha1)?;
-            let meta = fs::metadata(&path)
-                .with_context(|| format!("cache jar {} not found for mod {}", path.display(), decl.filename))?;
-            (sha1.clone(), meta.len(), Source::SmrtCache { url: cache_url(mirror_base, sha1) })
+            let meta = fs::metadata(&path).with_context(|| {
+                format!(
+                    "cache jar {} not found for mod {}",
+                    path.display(),
+                    decl.filename
+                )
+            })?;
+            (
+                sha1.clone(),
+                meta.len(),
+                Source::SmrtCache {
+                    url: cache_url(mirror_base, sha1),
+                },
+            )
         }
         SourceDecl::SmrtStatic { .. } => {
-            bail!("mod {} uses smrt_static source -- mods must be modrinth or smrt_cache", decl.filename);
+            bail!(
+                "mod {} uses smrt_static source -- mods must be modrinth or smrt_cache",
+                decl.filename
+            );
         }
     };
 
@@ -703,12 +822,17 @@ async fn resolve_asset(
     cache: &ModrinthCache,
 ) -> Result<AssetEntry> {
     let (sha1, size_bytes, source) = match &decl.source {
-        SourceDecl::Modrinth { project_id, version_id } => {
-            let v = cache.get_or_fetch(modrinth, project_id, version_id).await
+        SourceDecl::Modrinth {
+            project_id,
+            version_id,
+        } => {
+            let v = cache
+                .get_or_fetch(modrinth, project_id, version_id)
+                .await
                 .with_context(|| format!("resolving Modrinth asset {}", decl.dest))?;
-            let f = v
-                .primary_file()
-                .ok_or_else(|| anyhow!("Modrinth version {project_id}/{version_id} has no files"))?;
+            let f = v.primary_file().ok_or_else(|| {
+                anyhow!("Modrinth version {project_id}/{version_id} has no files")
+            })?;
             (
                 f.hashes.sha1.clone(),
                 f.size,
@@ -720,14 +844,28 @@ async fn resolve_asset(
         }
         SourceDecl::SmrtStatic { rel_path } => {
             let path = static_asset_path(storage, pack_id, rel_path)?;
-            let bytes = fs::read(&path)
-                .with_context(|| format!("static asset {} not found for {}", path.display(), decl.dest))?;
+            let bytes = fs::read(&path).with_context(|| {
+                format!(
+                    "static asset {} not found for {}",
+                    path.display(),
+                    decl.dest
+                )
+            })?;
             let size = bytes.len() as u64;
             let sha = sha1_hex(&bytes);
-            (sha, size, Source::SmrtStatic { url: static_url(mirror_base, pack_id, rel_path) })
+            (
+                sha,
+                size,
+                Source::SmrtStatic {
+                    url: static_url(mirror_base, pack_id, rel_path),
+                },
+            )
         }
         SourceDecl::SmrtCache { .. } => {
-            bail!("asset {} uses smrt_cache source -- assets must be modrinth or smrt_static", decl.dest);
+            bail!(
+                "asset {} uses smrt_cache source -- assets must be modrinth or smrt_static",
+                decl.dest
+            );
         }
     };
 
@@ -778,8 +916,11 @@ fn write_manifest(
         gallery_urls: pack_meta.gallery_urls.clone(),
         description_md: pack_meta.description_md.clone(),
     };
-    fs::write(pack_dir.join("summary.json"), serde_json::to_string_pretty(&summary)?)
-        .context("writing summary")?;
+    fs::write(
+        pack_dir.join("summary.json"),
+        serde_json::to_string_pretty(&summary)?,
+    )
+    .context("writing summary")?;
     Ok(())
 }
 
@@ -804,9 +945,15 @@ fn extract_mods(archive_bytes: &[u8]) -> Result<Vec<DiscoveredMod>> {
         }
         let filename = segments.last().unwrap().to_string();
         let mut bytes = Vec::with_capacity(entry.size() as usize);
-        entry.read_to_end(&mut bytes).with_context(|| format!("reading {name}"))?;
+        entry
+            .read_to_end(&mut bytes)
+            .with_context(|| format!("reading {name}"))?;
         let sha1 = sha1_hex(&bytes);
-        out.push(DiscoveredMod { sha1, filename, bytes });
+        out.push(DiscoveredMod {
+            sha1,
+            filename,
+            bytes,
+        });
     }
     Ok(out)
 }
@@ -820,7 +967,9 @@ fn extract_extra_assets(archive_bytes: &[u8]) -> Result<Vec<DiscoveredAsset>> {
         entry.read_to_end(&mut buf).context("reading extra.zip")?;
         extra_zip_bytes = Some(buf);
     }
-    let Some(bytes) = extra_zip_bytes else { return Ok(Vec::new()); };
+    let Some(bytes) = extra_zip_bytes else {
+        return Ok(Vec::new());
+    };
 
     let mut inner = zip::ZipArchive::new(Cursor::new(bytes)).context("opening extra.zip")?;
     let mut out = Vec::new();
@@ -835,8 +984,13 @@ fn extract_extra_assets(archive_bytes: &[u8]) -> Result<Vec<DiscoveredAsset>> {
             continue;
         }
         let mut buf = Vec::with_capacity(entry.size() as usize);
-        entry.read_to_end(&mut buf).with_context(|| format!("reading extra entry {name}"))?;
-        out.push(DiscoveredAsset { rel_path: name, bytes: buf });
+        entry
+            .read_to_end(&mut buf)
+            .with_context(|| format!("reading extra entry {name}"))?;
+        out.push(DiscoveredAsset {
+            rel_path: name,
+            bytes: buf,
+        });
     }
     Ok(out)
 }
@@ -876,14 +1030,21 @@ fn cache_jar_path(storage: &Path, sha1: &str) -> Result<PathBuf> {
         bail!("invalid sha1: {sha1}");
     }
     let prefix = &sha1[..2];
-    Ok(storage.join("cache").join(prefix).join(format!("{sha1}.jar")))
+    Ok(storage
+        .join("cache")
+        .join(prefix)
+        .join(format!("{sha1}.jar")))
 }
 
 fn static_asset_path(storage: &Path, pack_id: &str, rel_path: &str) -> Result<PathBuf> {
     if rel_path.contains("..") || rel_path.starts_with('/') {
         bail!("invalid static rel_path: {rel_path}");
     }
-    Ok(storage.join("packs").join(pack_id).join("static").join(rel_path))
+    Ok(storage
+        .join("packs")
+        .join(pack_id)
+        .join("static")
+        .join(rel_path))
 }
 
 fn cache_url(base: &str, sha1: &str) -> String {
@@ -914,20 +1075,35 @@ fn static_url(base: &str, pack_id: &str, rel_path: &str) -> String {
 }
 
 /// Percent-encode a single path segment using the RFC 3986 unreserved
-/// + sub-delims minus the path-structural ones. Equivalent in scope to
-/// JavaScript's `encodeURIComponent` -- safe to drop into any URL
-/// position that holds a single segment.
+/// set plus sub-delims, minus the path-structural ones. Equivalent in
+/// scope to JavaScript's `encodeURIComponent` -- safe to drop into any
+/// URL position that holds a single segment.
 fn url_encode_segment(s: &str) -> String {
-    use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+    use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
     // RFC 3986: pchar = unreserved / pct-encoded / sub-delims / ":" / "@"
     // We additionally encode "/", "?", "#", "[", "]", "&", "=" (would
     // change URL meaning), space (must always encode), and "%" (would
     // collide with already-encoded sequences).
     const SET: &AsciiSet = &CONTROLS
-        .add(b' ').add(b'"').add(b'#').add(b'%').add(b'<').add(b'>')
-        .add(b'?').add(b'[').add(b'\\').add(b']').add(b'^').add(b'`')
-        .add(b'{').add(b'|').add(b'}')
-        .add(b'/').add(b'&').add(b'=').add(b'+');
+        .add(b' ')
+        .add(b'"')
+        .add(b'#')
+        .add(b'%')
+        .add(b'<')
+        .add(b'>')
+        .add(b'?')
+        .add(b'[')
+        .add(b'\\')
+        .add(b']')
+        .add(b'^')
+        .add(b'`')
+        .add(b'{')
+        .add(b'|')
+        .add(b'}')
+        .add(b'/')
+        .add(b'&')
+        .add(b'=')
+        .add(b'+');
     utf8_percent_encode(s, SET).to_string()
 }
 
@@ -945,8 +1121,8 @@ fn sha1_hex(bytes: &[u8]) -> String {
 }
 
 fn now_rfc3339() -> String {
-    use time::format_description::well_known::Rfc3339;
     use time::OffsetDateTime;
+    use time::format_description::well_known::Rfc3339;
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
@@ -973,6 +1149,17 @@ fn validate_canonical_pack_version(v: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn today_slug() -> String {
+    use time::OffsetDateTime;
+    let now = OffsetDateTime::now_utc();
+    format!(
+        "{:04}.{:02}.{:02}",
+        now.year(),
+        u8::from(now.month()),
+        now.day()
+    )
 }
 
 #[cfg(test)]
@@ -1031,10 +1218,4 @@ mod tests {
         // mistranslate it to space.
         assert!(url.contains("BSL%20(v8%2B).zip"), "got {url}");
     }
-}
-
-fn today_slug() -> String {
-    use time::OffsetDateTime;
-    let now = OffsetDateTime::now_utc();
-    format!("{:04}.{:02}.{:02}", now.year(), u8::from(now.month()), now.day())
 }

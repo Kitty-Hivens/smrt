@@ -53,7 +53,12 @@ impl Storage {
     }
 
     pub async fn load_latest_manifest(&self, pack_id: &str) -> Result<PackManifest, ApiError> {
-        let path = self.root.join("packs").join(pack_id).join("manifests").join("latest");
+        let path = self
+            .root
+            .join("packs")
+            .join(pack_id)
+            .join("manifests")
+            .join("latest");
         let bytes = fs::read(&path).await.map_err(|_| ApiError::NotFound)?;
         serde_json::from_slice(&bytes).map_err(json_err)
     }
@@ -103,7 +108,12 @@ impl Storage {
             return Err(ApiError::BadRequest("invalid pack id".into()));
         }
         let safe = validate_rel_path(rel_path)?;
-        Ok(self.root.join("packs").join(pack_id).join("static").join(safe))
+        Ok(self
+            .root
+            .join("packs")
+            .join(pack_id)
+            .join("static")
+            .join(safe))
     }
 
     pub async fn save_pack_static(
@@ -116,13 +126,11 @@ impl Storage {
         atomic_write(&path, bytes).await
     }
 
-    pub async fn delete_pack_static(
-        &self,
-        pack_id: &str,
-        rel_path: &str,
-    ) -> Result<(), ApiError> {
+    pub async fn delete_pack_static(&self, pack_id: &str, rel_path: &str) -> Result<(), ApiError> {
         let path = self.pack_static_path(pack_id, rel_path)?;
-        fs::remove_file(&path).await.map_err(|_| ApiError::NotFound)?;
+        fs::remove_file(&path)
+            .await
+            .map_err(|_| ApiError::NotFound)?;
         Ok(())
     }
 
@@ -144,7 +152,9 @@ impl Storage {
             if let Ok(bytes) = fs::read(entry.path()).await {
                 match serde_json::from_slice::<ServerEntry>(&bytes) {
                     Ok(s) => out.push(s),
-                    Err(e) => tracing::warn!(file = %name, error = %e, "skipping invalid server entry"),
+                    Err(e) => {
+                        tracing::warn!(file = %name, error = %e, "skipping invalid server entry")
+                    }
                 }
             }
         }
@@ -181,7 +191,11 @@ impl Storage {
         if !sha1.starts_with(prefix) {
             return Err(ApiError::BadRequest("prefix does not match sha1".into()));
         }
-        Ok(self.root.join("cache").join(prefix).join(format!("{sha1}.jar")))
+        Ok(self
+            .root
+            .join("cache")
+            .join(prefix)
+            .join(format!("{sha1}.jar")))
     }
 
     pub async fn list_cache_inventory(&self) -> Result<Vec<CacheInventoryEntry>, ApiError> {
@@ -199,14 +213,15 @@ impl Storage {
             while let Some(jar) = jars.next_entry().await.map_err(io_err)? {
                 let name = jar.file_name();
                 let name = name.to_string_lossy();
-                if let Some(sha1) = name.strip_suffix(".jar") {
-                    if is_hex(sha1) && sha1.len() == 40 {
-                        let meta = jar.metadata().await.map_err(io_err)?;
-                        out.push(CacheInventoryEntry {
-                            sha1: sha1.to_string(),
-                            size_bytes: meta.len(),
-                        });
-                    }
+                if let Some(sha1) = name.strip_suffix(".jar")
+                    && is_hex(sha1)
+                    && sha1.len() == 40
+                {
+                    let meta = jar.metadata().await.map_err(io_err)?;
+                    out.push(CacheInventoryEntry {
+                        sha1: sha1.to_string(),
+                        size_bytes: meta.len(),
+                    });
                 }
             }
         }
@@ -232,8 +247,13 @@ impl Storage {
         if !is_safe_id(server_id) {
             return Err(ApiError::BadRequest("invalid server id".into()));
         }
-        let path = self.root.join("servers").join(format!("{}.json", server_id));
-        fs::remove_file(&path).await.map_err(|_| ApiError::NotFound)?;
+        let path = self
+            .root
+            .join("servers")
+            .join(format!("{}.json", server_id));
+        fs::remove_file(&path)
+            .await
+            .map_err(|_| ApiError::NotFound)?;
         Ok(())
     }
 
@@ -276,7 +296,9 @@ impl Storage {
             .join("cache")
             .join(prefix)
             .join(format!("{sha1}.jar"));
-        fs::remove_file(&path).await.map_err(|_| ApiError::NotFound)?;
+        fs::remove_file(&path)
+            .await
+            .map_err(|_| ApiError::NotFound)?;
         self.record_removed(sha1).await?;
         Ok(())
     }
@@ -362,7 +384,8 @@ fn is_safe_id(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 64
         && !s.starts_with('.')
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
 fn is_safe_version(s: &str) -> bool {
@@ -392,9 +415,14 @@ fn validate_rel_path(rel: &str) -> Result<&str, ApiError> {
         // filenames break some Forge launchers on Windows.
         if !segment.chars().all(|c| {
             c.is_ascii_alphanumeric()
-                || c == '-' || c == '_' || c == '.'
-                || c == ' ' || c == '(' || c == ')'
-                || c == '+' || c == ','
+                || c == '-'
+                || c == '_'
+                || c == '.'
+                || c == ' '
+                || c == '('
+                || c == ')'
+                || c == '+'
+                || c == ','
         }) {
             return Err(ApiError::BadRequest("invalid rel_path".into()));
         }

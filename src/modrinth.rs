@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -52,11 +52,7 @@ impl Modrinth {
         Ok(out)
     }
 
-    pub async fn project_version(
-        &self,
-        project_id: &str,
-        version_id: &str,
-    ) -> Result<Version> {
+    pub async fn project_version(&self, project_id: &str, version_id: &str) -> Result<Version> {
         let resp = self
             .http
             .get(format!(
@@ -70,7 +66,7 @@ impl Modrinth {
             let body = resp.text().await.unwrap_or_default();
             return Err(anyhow!("modrinth project version HTTP {status}: {body}"));
         }
-        Ok(resp.json().await.context("decode")?)
+        resp.json().await.context("decode")
     }
 
     /// Lists all published versions of [slug_or_id], newest first.
@@ -90,20 +86,23 @@ impl Modrinth {
             // query param, then percent-encoded. `["1.12.2"]` becomes
             // `%5B%221.12.2%22%5D`.
             let encoded = format!("[\"{mc}\"]");
-            let qp = percent_encoding::utf8_percent_encode(
-                &encoded,
-                percent_encoding::NON_ALPHANUMERIC,
-            );
+            let qp =
+                percent_encoding::utf8_percent_encode(&encoded, percent_encoding::NON_ALPHANUMERIC);
             url.push_str("?game_versions=");
             url.push_str(&qp.to_string());
         }
-        let resp = self.http.get(&url).send().await.context("project versions get")?;
+        let resp = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .context("project versions get")?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
             return Err(anyhow!("modrinth project versions HTTP {status}: {body}"));
         }
-        Ok(resp.json().await.context("decode")?)
+        resp.json().await.context("decode")
     }
 }
 

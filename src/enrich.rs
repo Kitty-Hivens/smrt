@@ -63,7 +63,9 @@ pub fn read_mcmod_info(jar_bytes: &[u8]) -> Result<Option<McModInfo>> {
         Err(_) => return Ok(None),
     };
     let mut raw = Vec::with_capacity(entry.size() as usize);
-    entry.read_to_end(&mut raw).context("reading mcmod.info from zip")?;
+    entry
+        .read_to_end(&mut raw)
+        .context("reading mcmod.info from zip")?;
 
     // mcmod.info comes from many authors over many years. Lossy UTF-8
     // decode handles the occasional ISO-8859-1 file. BOM strip handles
@@ -109,7 +111,10 @@ pub struct McModEnrichReport {
 /// Modrinth-sourced mods are skipped here; their display metadata
 /// comes from the Modrinth project API and lands via a separate pass
 /// (not yet implemented in this module).
-pub fn enrich_from_mcmod_info(config: &mut PackConfig, storage: &Path) -> Result<McModEnrichReport> {
+pub fn enrich_from_mcmod_info(
+    config: &mut PackConfig,
+    storage: &Path,
+) -> Result<McModEnrichReport> {
     let mut report = McModEnrichReport::default();
     for m in config.mods.iter_mut() {
         let sha1 = match &m.source {
@@ -131,7 +136,12 @@ pub fn enrich_from_mcmod_info(config: &mut PackConfig, storage: &Path) -> Result
         let bytes = match fs::read(&jar_path) {
             Ok(b) => b,
             Err(e) => {
-                warn!("cache jar {} not readable for {}: {}", jar_path.display(), m.filename, e);
+                warn!(
+                    "cache jar {} not readable for {}: {}",
+                    jar_path.display(),
+                    m.filename,
+                    e
+                );
                 continue;
             }
         };
@@ -162,11 +172,11 @@ pub fn enrich_from_mcmod_info(config: &mut PackConfig, storage: &Path) -> Result
         }
     }
     info!(
-        with_info     = report.mods_with_info,
-        filled        = report.mods_filled,
-        skipped_mr    = report.mods_skipped_modrinth,
+        with_info = report.mods_with_info,
+        filled = report.mods_filled,
+        skipped_mr = report.mods_skipped_modrinth,
         skipped_noinf = report.mods_skipped_no_info,
-        skipped_full  = report.mods_skipped_already_complete,
+        skipped_full = report.mods_skipped_already_complete,
         "enrich-from-mcmod-info complete"
     );
     Ok(report)
@@ -305,13 +315,15 @@ impl ExtraAssetKind {
     fn modrinth_url_prefix(self) -> &'static str {
         match self {
             ExtraAssetKind::Resourcepack => "https://modrinth.com/resourcepack",
-            ExtraAssetKind::Shader      => "https://modrinth.com/shader",
-            ExtraAssetKind::Datapack    => "https://modrinth.com/datapack",
+            ExtraAssetKind::Shader => "https://modrinth.com/shader",
+            ExtraAssetKind::Datapack => "https://modrinth.com/datapack",
         }
     }
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 pub fn load_curator(path: &Path) -> Result<Curator> {
     let raw = fs::read_to_string(path)
@@ -332,7 +344,8 @@ pub struct MarkOptionalReport {
 /// any mod so the curator can spot typos.
 pub fn apply_mark_optional(config: &mut PackConfig, mark: &MarkOptional) -> MarkOptionalReport {
     let mut report = MarkOptionalReport::default();
-    let names: std::collections::HashSet<&str> = mark.filenames.iter().map(|s| s.as_str()).collect();
+    let names: std::collections::HashSet<&str> =
+        mark.filenames.iter().map(|s| s.as_str()).collect();
     let mut hit: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for m in config.mods.iter_mut() {
         if names.contains(m.filename.as_str()) {
@@ -349,7 +362,11 @@ pub fn apply_mark_optional(config: &mut PackConfig, mark: &MarkOptional) -> Mark
         }
     }
     report.not_found.sort();
-    info!(flipped = report.flipped, not_found = report.not_found.len(), "mark-optional applied");
+    info!(
+        flipped = report.flipped,
+        not_found = report.not_found.len(),
+        "mark-optional applied"
+    );
     report
 }
 
@@ -386,7 +403,11 @@ pub fn apply_substitute(
         }
     }
     report.not_found.sort();
-    info!(applied = report.applied, not_found = report.not_found.len(), "substitute applied");
+    info!(
+        applied = report.applied,
+        not_found = report.not_found.len(),
+        "substitute applied"
+    );
     report
 }
 
@@ -415,7 +436,9 @@ pub fn apply_category_table(
     report.unmatched_in_table.sort();
 
     for m in config.mods.iter_mut() {
-        let Some(cat) = table.get(&m.filename) else { continue };
+        let Some(cat) = table.get(&m.filename) else {
+            continue;
+        };
         let display = m.display.get_or_insert_with(default_display);
         if display.category.is_some() {
             report.skipped_already_set += 1;
@@ -425,8 +448,8 @@ pub fn apply_category_table(
         report.applied += 1;
     }
     info!(
-        applied  = report.applied,
-        skipped  = report.skipped_already_set,
+        applied = report.applied,
+        skipped = report.skipped_already_set,
         unmatched = report.unmatched_in_table.len(),
         "apply-category-table complete"
     );
@@ -439,7 +462,7 @@ pub fn apply_category_table(
 pub struct ExtraAddReport {
     pub mods_added: u32,
     pub assets_added: u32,
-    pub mods_failed: Vec<(String, String)>,  // (slug, error)
+    pub mods_failed: Vec<(String, String)>, // (slug, error)
     pub assets_failed: Vec<(String, String)>,
 }
 
@@ -477,7 +500,10 @@ pub async fn apply_extras(
                 config.mods.push(crate::pack_config::DeclaredMod {
                     filename,
                     required: em.required,
-                    source: crate::pack_config::SourceDecl::Modrinth { project_id, version_id },
+                    source: crate::pack_config::SourceDecl::Modrinth {
+                        project_id,
+                        version_id,
+                    },
                     display,
                     note: Some(format!("added via curator extras: {}", em.slug)),
                 });
@@ -498,7 +524,11 @@ pub async fn apply_extras(
                     category: ea.category.clone(),
                     incompatible_with: Vec::new(),
                     license: None,
-                    url: Some(format!("{}/{}", ea.modrinth_kind.modrinth_url_prefix(), ea.slug)),
+                    url: Some(format!(
+                        "{}/{}",
+                        ea.modrinth_kind.modrinth_url_prefix(),
+                        ea.slug
+                    )),
                     icon_url: None,
                     role: None,
                     requires: Vec::new(),
@@ -507,7 +537,10 @@ pub async fn apply_extras(
                 config.assets.push(crate::pack_config::DeclaredAsset {
                     dest,
                     required: ea.required,
-                    source: crate::pack_config::SourceDecl::Modrinth { project_id, version_id },
+                    source: crate::pack_config::SourceDecl::Modrinth {
+                        project_id,
+                        version_id,
+                    },
                     display,
                     note: Some(format!("added via curator extras: {}", ea.slug)),
                 });
@@ -517,9 +550,9 @@ pub async fn apply_extras(
         }
     }
     info!(
-        mods_added    = report.mods_added,
-        assets_added  = report.assets_added,
-        mods_failed   = report.mods_failed.len(),
+        mods_added = report.mods_added,
+        assets_added = report.assets_added,
+        mods_failed = report.mods_failed.len(),
         assets_failed = report.assets_failed.len(),
         "extras applied"
     );
@@ -535,11 +568,16 @@ async fn resolve_modrinth_latest_for_mc(
     slug: &str,
     mc_version: &str,
 ) -> Result<(String, String, String)> {
-    let versions = modrinth.project_versions(slug, Some(mc_version)).await
+    let versions = modrinth
+        .project_versions(slug, Some(mc_version))
+        .await
         .with_context(|| format!("listing Modrinth versions for {slug}"))?;
-    let v = versions.into_iter().next()
+    let v = versions
+        .into_iter()
+        .next()
         .ok_or_else(|| anyhow::anyhow!("no Modrinth version of {slug} matches mc={mc_version}"))?;
-    let f = v.primary_file()
+    let f = v
+        .primary_file()
         .ok_or_else(|| anyhow::anyhow!("Modrinth version {} of {slug} has no files", v.id))?
         .clone();
     Ok((v.project_id, v.id, f.filename))
@@ -582,12 +620,24 @@ pub async fn apply_curator(
     mc_version: &str,
 ) -> Result<()> {
     enrich_from_mcmod_info(config, storage)?;
-    apply_role_table(config, &RoleTable { roles: curator.role_table.clone() })?;
+    apply_role_table(
+        config,
+        &RoleTable {
+            roles: curator.role_table.clone(),
+        },
+    )?;
     apply_category_table(config, &curator.category_table);
     apply_mark_optional(config, &curator.mark_optional);
     apply_substitute(config, &curator.substitute);
     infer_requires_from_mcmod_info(config, storage)?;
-    apply_extras(config, modrinth, &curator.extra_mods, &curator.extra_assets, mc_version).await;
+    apply_extras(
+        config,
+        modrinth,
+        &curator.extra_mods,
+        &curator.extra_assets,
+        mc_version,
+    )
+    .await;
     Ok(())
 }
 
@@ -615,7 +665,9 @@ pub fn apply_role_table(config: &mut PackConfig, table: &RoleTable) -> Result<Ro
     report.unmatched_in_table.sort();
 
     for m in config.mods.iter_mut() {
-        let Some(role) = table.roles.get(&m.filename) else { continue };
+        let Some(role) = table.roles.get(&m.filename) else {
+            continue;
+        };
         let display = m.display.get_or_insert_with(default_display);
         if display.role.is_some() {
             report.skipped_already_set += 1;
@@ -625,8 +677,8 @@ pub fn apply_role_table(config: &mut PackConfig, table: &RoleTable) -> Result<Ro
         report.applied += 1;
     }
     info!(
-        applied  = report.applied,
-        skipped  = report.skipped_already_set,
+        applied = report.applied,
+        skipped = report.skipped_already_set,
         unmatched = report.unmatched_in_table.len(),
         "apply-role-table complete"
     );
@@ -663,8 +715,12 @@ pub fn infer_requires_from_mcmod_info(
             _ => continue,
         };
         let jar_path = cache_jar_path(storage, &sha1)?;
-        let Ok(bytes) = fs::read(&jar_path) else { continue };
-        let Some(info) = read_mcmod_info(&bytes)? else { continue };
+        let Ok(bytes) = fs::read(&jar_path) else {
+            continue;
+        };
+        let Some(info) = read_mcmod_info(&bytes)? else {
+            continue;
+        };
         if info.modid.is_empty() {
             continue;
         }
@@ -679,7 +735,10 @@ pub fn infer_requires_from_mcmod_info(
         }
         modid_to_filename.insert(info.modid.clone(), m.filename.clone());
     }
-    debug!(modids = modid_to_filename.len(), "built modid->filename map");
+    debug!(
+        modids = modid_to_filename.len(),
+        "built modid->filename map"
+    );
 
     // Second pass: emit display.requires for each mod whose mcmod.info
     // declares dependencies that resolve against the map.
@@ -690,14 +749,18 @@ pub fn infer_requires_from_mcmod_info(
             SourceDecl::SmrtCache { sha1 } => sha1.clone(),
             _ => continue,
         };
-        if let Some(d) = &m.display {
-            if !d.requires.is_empty() {
-                continue;
-            }
+        if let Some(d) = &m.display
+            && !d.requires.is_empty()
+        {
+            continue;
         }
         let jar_path = cache_jar_path(storage, &sha1)?;
-        let Ok(bytes) = fs::read(&jar_path) else { continue };
-        let Some(info) = read_mcmod_info(&bytes)? else { continue };
+        let Ok(bytes) = fs::read(&jar_path) else {
+            continue;
+        };
+        let Some(info) = read_mcmod_info(&bytes)? else {
+            continue;
+        };
         if info.dependencies.is_empty() {
             continue;
         }
@@ -726,8 +789,8 @@ pub fn infer_requires_from_mcmod_info(
         }
     }
     info!(
-        with_deps  = report.mods_with_deps,
-        edges      = report.edges_added,
+        with_deps = report.mods_with_deps,
+        edges = report.edges_added,
         unresolved = report.edges_skipped_unresolved.len(),
         "infer-requires-from-mcmod-info complete"
     );
@@ -755,7 +818,10 @@ fn cache_jar_path(storage: &Path, sha1: &str) -> Result<PathBuf> {
         anyhow::bail!("invalid sha1: {sha1}");
     }
     let prefix = &sha1[..2];
-    Ok(storage.join("cache").join(prefix).join(format!("{sha1}.jar")))
+    Ok(storage
+        .join("cache")
+        .join(prefix)
+        .join(format!("{sha1}.jar")))
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────
@@ -775,7 +841,10 @@ mod tests {
             display_name: "Test".into(),
             tagline: String::new(),
             minecraft_version: "1.12.2".into(),
-            loader: LoaderSpec { name: "forge".into(), version: "14.23.5.2922".into() },
+            loader: LoaderSpec {
+                name: "forge".into(),
+                version: "14.23.5.2922".into(),
+            },
             java_major: 8,
             tags: Vec::new(),
             featured: false,
@@ -828,7 +897,7 @@ mod tests {
 
     #[test]
     fn read_mcmod_info_tolerates_bom_and_whitespace() {
-        let blob = format!("\u{FEFF}  [{{\"modid\":\"bom_mod\"}}]  ");
+        let blob = "\u{FEFF}  [{\"modid\":\"bom_mod\"}]  ".to_string();
         let bytes = build_jar_bytes(&blob);
         let info = read_mcmod_info(&bytes).unwrap().unwrap();
         assert_eq!(info.modid, "bom_mod");
@@ -878,31 +947,51 @@ mod tests {
             cfg.mods.push(DeclaredMod {
                 filename: fname.into(),
                 required: true,
-                source: SourceDecl::SmrtCache { sha1: "a".repeat(40) },
+                source: SourceDecl::SmrtCache {
+                    sha1: "a".repeat(40),
+                },
                 display: if fname == "AlreadyHasRole.jar" {
                     Some(Display {
                         role: Some("custom".into()),
-                        name: None, description: None, category: None,
-                        incompatible_with: Vec::new(), license: None,
-                        url: None, icon_url: None, requires: Vec::new(),
+                        name: None,
+                        description: None,
+                        category: None,
+                        incompatible_with: Vec::new(),
+                        license: None,
+                        url: None,
+                        icon_url: None,
+                        requires: Vec::new(),
                     })
-                } else { None },
+                } else {
+                    None
+                },
                 note: None,
             });
         }
         let mut table = RoleTable::default();
         table.roles.insert("JEI.jar".into(), "recipe_viewer".into());
         table.roles.insert("Xaero.jar".into(), "minimap".into());
-        table.roles.insert("AlreadyHasRole.jar".into(), "overridden".into());
+        table
+            .roles
+            .insert("AlreadyHasRole.jar".into(), "overridden".into());
         table.roles.insert("Typo.jar".into(), "ignored".into());
 
         let r = apply_role_table(&mut cfg, &table).unwrap();
         assert_eq!(r.applied, 2);
         assert_eq!(r.skipped_already_set, 1);
         assert_eq!(r.unmatched_in_table, vec!["Typo.jar".to_string()]);
-        assert_eq!(cfg.mods[0].display.as_ref().unwrap().role.as_deref(), Some("recipe_viewer"));
-        assert_eq!(cfg.mods[1].display.as_ref().unwrap().role.as_deref(), Some("minimap"));
-        assert_eq!(cfg.mods[2].display.as_ref().unwrap().role.as_deref(), Some("custom"));
+        assert_eq!(
+            cfg.mods[0].display.as_ref().unwrap().role.as_deref(),
+            Some("recipe_viewer")
+        );
+        assert_eq!(
+            cfg.mods[1].display.as_ref().unwrap().role.as_deref(),
+            Some("minimap")
+        );
+        assert_eq!(
+            cfg.mods[2].display.as_ref().unwrap().role.as_deref(),
+            Some("custom")
+        );
     }
 
     #[test]
@@ -910,27 +999,28 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let sha_jei = "1".repeat(40);
         let sha_addon = "2".repeat(40);
+        write_test_jar(dir.path(), &sha_jei, r#"[{"modid":"jei","name":"JEI"}]"#).unwrap();
         write_test_jar(
-            dir.path(), &sha_jei,
-            r#"[{"modid":"jei","name":"JEI"}]"#,
-        ).unwrap();
-        write_test_jar(
-            dir.path(), &sha_addon,
+            dir.path(),
+            &sha_addon,
             r#"[{"modid":"jeiaddon","name":"JEI Addon","dependencies":["jei"]}]"#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut cfg = empty_config();
         cfg.mods.push(DeclaredMod {
             filename: "JEI.jar".into(),
             required: true,
             source: SourceDecl::SmrtCache { sha1: sha_jei },
-            display: None, note: None,
+            display: None,
+            note: None,
         });
         cfg.mods.push(DeclaredMod {
             filename: "JEIAddon.jar".into(),
             required: true,
             source: SourceDecl::SmrtCache { sha1: sha_addon },
-            display: None, note: None,
+            display: None,
+            note: None,
         });
 
         let report = infer_requires_from_mcmod_info(&mut cfg, dir.path()).unwrap();
@@ -947,8 +1037,11 @@ mod tests {
             cfg.mods.push(DeclaredMod {
                 filename: fname.into(),
                 required: true,
-                source: SourceDecl::SmrtCache { sha1: "a".repeat(40) },
-                display: None, note: None,
+                source: SourceDecl::SmrtCache {
+                    sha1: "a".repeat(40),
+                },
+                display: None,
+                note: None,
             });
         }
         let mark = MarkOptional {
@@ -957,8 +1050,8 @@ mod tests {
         let report = apply_mark_optional(&mut cfg, &mark);
         assert_eq!(report.flipped, 1);
         assert_eq!(report.not_found, vec!["Typo.jar".to_string()]);
-        assert!(!cfg.mods[0].required);   // BetterChat flipped
-        assert!(cfg.mods[1].required);    // AlwaysRequired untouched
+        assert!(!cfg.mods[0].required); // BetterChat flipped
+        assert!(cfg.mods[1].required); // AlwaysRequired untouched
     }
 
     #[test]
@@ -967,19 +1060,28 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "Smarty-1.12.2.jar".into(),
             required: true,
-            source: SourceDecl::SmrtCache { sha1: "0".repeat(40) },
-            display: None, note: None,
+            source: SourceDecl::SmrtCache {
+                sha1: "0".repeat(40),
+            },
+            display: None,
+            note: None,
         });
         let mut substitute: HashMap<String, SubstituteEntry> = HashMap::new();
         substitute.insert(
             "Smarty-1.12.2.jar".into(),
             SubstituteEntry {
-                source: SourceDecl::SmrtCache { sha1: "f".repeat(40) },
+                source: SourceDecl::SmrtCache {
+                    sha1: "f".repeat(40),
+                },
                 display: Some(Display {
                     name: Some("Open Smarty Network".into()),
-                    description: None, category: Some("lib".into()),
-                    incompatible_with: Vec::new(), license: Some("Apache-2.0".into()),
-                    url: None, icon_url: None, role: None,
+                    description: None,
+                    category: Some("lib".into()),
+                    incompatible_with: Vec::new(),
+                    license: Some("Apache-2.0".into()),
+                    url: None,
+                    icon_url: None,
+                    role: None,
                     requires: Vec::new(),
                 }),
             },
@@ -991,7 +1093,10 @@ mod tests {
             SourceDecl::SmrtCache { sha1 } => assert_eq!(sha1, &"f".repeat(40)),
             other => panic!("expected SmrtCache after substitute, got {other:?}"),
         }
-        assert_eq!(cfg.mods[0].display.as_ref().unwrap().name.as_deref(), Some("Open Smarty Network"));
+        assert_eq!(
+            cfg.mods[0].display.as_ref().unwrap().name.as_deref(),
+            Some("Open Smarty Network")
+        );
     }
 
     #[test]
@@ -1000,18 +1105,27 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "Modded.jar".into(),
             required: true,
-            source: SourceDecl::SmrtCache { sha1: "a".repeat(40) },
-            display: None, note: None,
+            source: SourceDecl::SmrtCache {
+                sha1: "a".repeat(40),
+            },
+            display: None,
+            note: None,
         });
         cfg.mods.push(DeclaredMod {
             filename: "WithCategory.jar".into(),
             required: true,
-            source: SourceDecl::SmrtCache { sha1: "a".repeat(40) },
+            source: SourceDecl::SmrtCache {
+                sha1: "a".repeat(40),
+            },
             display: Some(Display {
-                name: None, description: None,
+                name: None,
+                description: None,
                 category: Some("already-set".into()),
-                incompatible_with: Vec::new(), license: None,
-                url: None, icon_url: None, role: None,
+                incompatible_with: Vec::new(),
+                license: None,
+                url: None,
+                icon_url: None,
+                role: None,
                 requires: Vec::new(),
             }),
             note: None,
@@ -1022,8 +1136,14 @@ mod tests {
         let report = apply_category_table(&mut cfg, &table);
         assert_eq!(report.applied, 1);
         assert_eq!(report.skipped_already_set, 1);
-        assert_eq!(cfg.mods[0].display.as_ref().unwrap().category.as_deref(), Some("performance"));
-        assert_eq!(cfg.mods[1].display.as_ref().unwrap().category.as_deref(), Some("already-set"));
+        assert_eq!(
+            cfg.mods[0].display.as_ref().unwrap().category.as_deref(),
+            Some("performance")
+        );
+        assert_eq!(
+            cfg.mods[1].display.as_ref().unwrap().category.as_deref(),
+            Some("already-set")
+        );
     }
 
     #[test]
@@ -1039,27 +1159,34 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let sha = "3".repeat(40);
         write_test_jar(
-            dir.path(), &sha,
+            dir.path(),
+            &sha,
             r#"[{"modid":"lonely","dependencies":["ghost"]}]"#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut cfg = empty_config();
         cfg.mods.push(DeclaredMod {
             filename: "Lonely.jar".into(),
             required: true,
             source: SourceDecl::SmrtCache { sha1: sha },
-            display: None, note: None,
+            display: None,
+            note: None,
         });
 
         let report = infer_requires_from_mcmod_info(&mut cfg, dir.path()).unwrap();
         assert_eq!(report.edges_added, 0);
-        assert_eq!(report.edges_skipped_unresolved, vec![("Lonely.jar".into(), "ghost".into())]);
+        assert_eq!(
+            report.edges_skipped_unresolved,
+            vec![("Lonely.jar".into(), "ghost".into())]
+        );
     }
 
     fn build_jar_bytes(mcmod_json: &str) -> Vec<u8> {
         let buf = Cursor::new(Vec::new());
         let mut zw = zip::ZipWriter::new(buf);
-        zw.start_file("mcmod.info", SimpleFileOptions::default()).unwrap();
+        zw.start_file("mcmod.info", SimpleFileOptions::default())
+            .unwrap();
         zw.write_all(mcmod_json.as_bytes()).unwrap();
         zw.finish().unwrap().into_inner()
     }
@@ -1067,7 +1194,8 @@ mod tests {
     fn build_jar_bytes_without_mcmod() -> Vec<u8> {
         let buf = Cursor::new(Vec::new());
         let mut zw = zip::ZipWriter::new(buf);
-        zw.start_file("META-INF/MANIFEST.MF", SimpleFileOptions::default()).unwrap();
+        zw.start_file("META-INF/MANIFEST.MF", SimpleFileOptions::default())
+            .unwrap();
         zw.write_all(b"Manifest-Version: 1.0\n").unwrap();
         zw.finish().unwrap().into_inner()
     }
