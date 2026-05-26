@@ -253,7 +253,31 @@ pub struct Curator {
     #[serde(default)]
     pub extra_assets: Vec<ExtraAsset>,
     #[serde(default)]
+    pub drop_assets: DropAssets,
+    #[serde(default)]
     pub generate: GenerateConfig,
+}
+
+/// Asset destinations the curator wants stripped from the
+/// emitted manifest. Use case: SC's archive ships ~80 mod-default
+/// config files (foamfix.cfg, chisel.cfg, AE2's items.csv dump,
+/// stale CoFH world JSONs, etc) that every Forge mod regenerates
+/// from its own jar resources on first launch. Shipping the
+/// defaults pre-baked locks every install into "SC's choice =
+/// mod default" and means mod updates that introduce new config
+/// fields cannot evolve cleanly. The drop pass runs in
+/// `apply-curator` and removes matching entries from
+/// [`PackConfig::assets`] before [`build`] writes the manifest.
+///
+/// Paths match the asset `dest` field byte-for-byte (no glob, no
+/// regex). One entry per file. Modrinth-sourced assets (extra
+/// shaderpacks, resourcepacks) are never matched even if their
+/// dest accidentally collides -- the filter keys on
+/// `source.type == "smrt_static"` to keep curator extras safe.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct DropAssets {
+    #[serde(default)]
+    pub paths: Vec<String>,
 }
 
 /// Auto-generated artefacts that land in the pack's static area as
@@ -785,13 +809,18 @@ pub fn generate_hidemymods_spoof(
 ///   4. mark optional               (sync)
 ///   5. substitute sources          (sync)
 ///   6. infer requires from mcmod   (sync, file IO)
-///   7. add extras (mods + assets)  (async, Modrinth)
+///   7. drop curator-rejected smrt_static assets (sync)
+///   8. generate hidemymods spoof   (sync)
+///   9. add extras (mods + assets)  (async, Modrinth)
 ///
 /// Order matters: substitutes happen BEFORE infer_requires so the
 /// substituted jar's mcmod.info (open-smrt-network's, not the
-/// upstream proprietary jar's) feeds the dep graph. Extras land last
-/// so their display.category does not leak into category_table
-/// resolution against SC-derived mods.
+/// upstream proprietary jar's) feeds the dep graph. The drop pass
+/// runs AFTER substitute / mark-optional / category-table so a
+/// dropped entry cannot accidentally short-circuit those mutations
+/// for a sibling file. Extras land last so their display.category
+/// does not leak into category_table resolution against SC-derived
+/// mods.
 pub async fn apply_curator(
     config: &mut PackConfig,
     curator: &Curator,
@@ -810,10 +839,14 @@ pub async fn apply_curator(
     apply_mark_optional(config, &curator.mark_optional);
     apply_substitute(config, &curator.substitute);
     infer_requires_from_mcmod_info(config, storage)?;
-    // Hidemymods generation runs AFTER substitute so the spoof
-    // contains the modid/version of the post-substitute jar (e.g.
-    // open-smrt-network's mcmod.info, not the upstream Smarty stub
-    // that got swapped out).
+    apply_drop_assets(config, &curator.drop_assets);
+    // Hidemymods generation runs AFTER drop_assets so a hand-curated
+    // spoof filename that was previously generated and then declared
+    // unwanted via drop_assets still gets re-emitted (the generator
+    // re-adds the asset entry every run). Conversely, generating
+    // BEFORE drop_assets would let a stale drop_assets entry strip
+    // the spoof we just produced -- the opposite of what curator
+    // wants.
     generate_hidemymods_spoof(config, &curator.generate, storage)?;
     apply_extras(
         config,
@@ -824,6 +857,85 @@ pub async fn apply_curator(
     )
     .await;
     Ok(())
+}
+
+#[derive(Debug, Default)]
+pub struct DropAssetsReport {
+    /// Number of asset entries actually removed.
+    pub dropped: u32,
+    /// Curator-declared paths that did not match any asset entry --
+    /// surfaced so the curator can spot typos / stale drop lists
+    /// after a bootstrap layout change.
+    pub not_found: Vec<String>,
+    /// Curator-declared paths that matched a non-smrt_static asset
+    /// (Modrinth-sourced extra, etc) and were intentionally skipped.
+    /// Reported so the curator notices when a drop entry hits an
+    /// unexpected source type.
+    pub skipped_non_static: Vec<String>,
+}
+
+/// Strips `smrt_static` asset entries whose `dest` appears in
+/// [`DropAssets::paths`]. Modrinth-sourced and smrt_cache-sourced
+/// assets are NEVER removed even if their dest collides -- the
+/// filter is intentionally narrow because extras (resource packs,
+/// shaders added via curator's `extra_assets`) live in the same
+/// `assets[]` array and a too-broad filter could nuke them by
+/// accident.
+///
+/// Idempotent: re-running with the same drop list against a
+/// post-drop config simply reports `dropped=0`. Safe to call from
+/// the orchestrator on every apply-curator run.
+pub fn apply_drop_assets(config: &mut PackConfig, drop: &DropAssets) -> DropAssetsReport {
+    let mut report = DropAssetsReport::default();
+    if drop.paths.is_empty() {
+        return report;
+    }
+    let drop_set: std::collections::HashSet<&str> = drop.paths.iter().map(|s| s.as_str()).collect();
+
+    // First pass: figure out which declared paths are present and
+    // under which source type. Used for the not_found / skipped
+    // reports so the operator sees both classes of mismatch.
+    let mut hit_static: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut hit_non_static: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for a in &config.assets {
+        if let Some(s) = drop_set.get(a.dest.as_str()) {
+            match &a.source {
+                SourceDecl::SmrtStatic { .. } => {
+                    hit_static.insert(*s);
+                }
+                _ => {
+                    hit_non_static.insert(*s);
+                }
+            }
+        }
+    }
+
+    let before = config.assets.len();
+    config.assets.retain(|a| match &a.source {
+        SourceDecl::SmrtStatic { .. } => !drop_set.contains(a.dest.as_str()),
+        _ => true,
+    });
+    report.dropped = (before - config.assets.len()) as u32;
+
+    for p in &drop.paths {
+        if !hit_static.contains(p.as_str()) {
+            if hit_non_static.contains(p.as_str()) {
+                report.skipped_non_static.push(p.clone());
+            } else {
+                report.not_found.push(p.clone());
+            }
+        }
+    }
+    report.not_found.sort();
+    report.skipped_non_static.sort();
+
+    info!(
+        dropped = report.dropped,
+        not_found = report.not_found.len(),
+        skipped_non_static = report.skipped_non_static.len(),
+        "apply-drop-assets complete"
+    );
+    report
 }
 
 #[derive(Debug, Default)]
@@ -1454,6 +1566,121 @@ mod tests {
     }
 
     #[test]
+    fn drop_assets_strips_only_smrt_static_matches() {
+        // Three assets, all with `config/foo.cfg` shape -- one
+        // smrt_static, one Modrinth, one smrt_cache. Only the
+        // smrt_static one must disappear.
+        let mut cfg = empty_config();
+        cfg.assets.push(crate::pack_config::DeclaredAsset {
+            dest: "config/foamfix.cfg".into(),
+            required: true,
+            source: SourceDecl::SmrtStatic {
+                rel_path: "config/foamfix.cfg".into(),
+            },
+            display: None,
+            note: None,
+        });
+        cfg.assets.push(crate::pack_config::DeclaredAsset {
+            dest: "config/quark.cfg".into(),
+            required: true,
+            source: SourceDecl::SmrtStatic {
+                rel_path: "config/quark.cfg".into(),
+            },
+            display: None,
+            note: None,
+        });
+        cfg.assets.push(crate::pack_config::DeclaredAsset {
+            dest: "resourcepacks/Better-Farm-Animals.zip".into(),
+            required: false,
+            source: SourceDecl::Modrinth {
+                project_id: "abc".into(),
+                version_id: "xyz".into(),
+            },
+            display: None,
+            note: None,
+        });
+        cfg.assets.push(crate::pack_config::DeclaredAsset {
+            dest: "shaderpacks/mellow.zip".into(),
+            required: false,
+            source: SourceDecl::SmrtCache {
+                sha1: "f".repeat(40),
+            },
+            display: None,
+            note: None,
+        });
+
+        let drop = DropAssets {
+            paths: vec![
+                "config/foamfix.cfg".into(),                    // hits smrt_static
+                "resourcepacks/Better-Farm-Animals.zip".into(), // hits Modrinth, must be skipped
+                "shaderpacks/mellow.zip".into(),                // hits smrt_cache, must be skipped
+                "config/never-existed.cfg".into(),              // not_found
+            ],
+        };
+        let report = apply_drop_assets(&mut cfg, &drop);
+        assert_eq!(report.dropped, 1);
+        assert_eq!(
+            cfg.assets.len(),
+            3,
+            "only the smrt_static entry must disappear"
+        );
+        assert!(
+            cfg.assets.iter().all(|a| a.dest != "config/foamfix.cfg"),
+            "foamfix.cfg should be gone",
+        );
+        assert_eq!(
+            report.skipped_non_static,
+            vec![
+                "resourcepacks/Better-Farm-Animals.zip".to_string(),
+                "shaderpacks/mellow.zip".to_string(),
+            ],
+        );
+        assert_eq!(
+            report.not_found,
+            vec!["config/never-existed.cfg".to_string()]
+        );
+    }
+
+    #[test]
+    fn drop_assets_is_idempotent() {
+        let mut cfg = empty_config();
+        cfg.assets.push(crate::pack_config::DeclaredAsset {
+            dest: "config/foamfix.cfg".into(),
+            required: true,
+            source: SourceDecl::SmrtStatic {
+                rel_path: "config/foamfix.cfg".into(),
+            },
+            display: None,
+            note: None,
+        });
+        let drop = DropAssets {
+            paths: vec!["config/foamfix.cfg".into()],
+        };
+        let r1 = apply_drop_assets(&mut cfg, &drop);
+        assert_eq!(r1.dropped, 1);
+        let r2 = apply_drop_assets(&mut cfg, &drop);
+        assert_eq!(r2.dropped, 0);
+        assert_eq!(r2.not_found, vec!["config/foamfix.cfg".to_string()]);
+    }
+
+    #[test]
+    fn drop_assets_empty_list_is_noop() {
+        let mut cfg = empty_config();
+        cfg.assets.push(crate::pack_config::DeclaredAsset {
+            dest: "config/whatever.cfg".into(),
+            required: true,
+            source: SourceDecl::SmrtStatic {
+                rel_path: "config/whatever.cfg".into(),
+            },
+            display: None,
+            note: None,
+        });
+        let report = apply_drop_assets(&mut cfg, &DropAssets::default());
+        assert_eq!(report.dropped, 0);
+        assert_eq!(cfg.assets.len(), 1);
+    }
+
+    #[test]
     fn industrial_curator_parses_with_full_hidemymods_table() {
         // Worked-example file in examples/industrial/curator.toml is
         // the canonical reference for curator authors. Catch shape
@@ -1495,6 +1722,34 @@ mod tests {
                 .hidemymods_entries
                 .get("appliedenergistics2"),
             Some(&"rv6-stable-7".to_string())
+        );
+        // drop_assets list -- 76 paths as of the 2026-05-26 sweep.
+        // Bump this expectation when the curator extends the drop
+        // table; assertion is a "did anything fall off the worked
+        // example" guard, not a magic number.
+        assert_eq!(
+            curator.drop_assets.paths.len(),
+            76,
+            "expected the full Industrial drop_assets table in the worked example",
+        );
+        assert!(
+            curator
+                .drop_assets
+                .paths
+                .contains(&"config/Smarty.cfg".to_string()),
+            "Smarty.cfg must be in drops -- OSN replaces Smarty and ignores this config",
+        );
+        assert!(
+            curator
+                .drop_assets
+                .paths
+                .contains(&"config/AppliedEnergistics2/items.csv".to_string()),
+        );
+        assert!(
+            curator
+                .drop_assets
+                .paths
+                .contains(&"config/jeresources/world-gen.json".to_string()),
         );
     }
 
