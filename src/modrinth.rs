@@ -72,6 +72,39 @@ impl Modrinth {
         }
         Ok(resp.json().await.context("decode")?)
     }
+
+    /// Lists all published versions of [slug_or_id], newest first.
+    /// When [mc_filter] is Some, narrows to versions whose
+    /// `game_versions` array contains that exact MC string.
+    ///
+    /// Slug or numeric project id both work as the URL segment per
+    /// the Modrinth API spec.
+    pub async fn project_versions(
+        &self,
+        slug_or_id: &str,
+        mc_filter: Option<&str>,
+    ) -> Result<Vec<Version>> {
+        let mut url = format!("{MODRINTH_BASE}/v2/project/{slug_or_id}/version");
+        if let Some(mc) = mc_filter {
+            // The Modrinth API expects a JSON-encoded array in this
+            // query param, then percent-encoded. `["1.12.2"]` becomes
+            // `%5B%221.12.2%22%5D`.
+            let encoded = format!("[\"{mc}\"]");
+            let qp = percent_encoding::utf8_percent_encode(
+                &encoded,
+                percent_encoding::NON_ALPHANUMERIC,
+            );
+            url.push_str("?game_versions=");
+            url.push_str(&qp.to_string());
+        }
+        let resp = self.http.get(&url).send().await.context("project versions get")?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("modrinth project versions HTTP {status}: {body}"));
+        }
+        Ok(resp.json().await.context("decode")?)
+    }
 }
 
 #[derive(Serialize)]

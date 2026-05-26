@@ -1,0 +1,48 @@
+# Industrial pack -- mod role table.
+#
+# Maps mod filename -> role string. Applied to display.role by:
+#   smrt-pack apply-role-table \
+#       --config Industrial.json \
+#       --table  examples/industrial/role-table.toml \
+#       --out    Industrial.enriched.json
+#
+# Role is a launcher UX hint, NOT a category. Mods sharing the same
+# role render as a single selectable slot in the Library PackDetail
+# Content tab, with alternatives in a dropdown ("Recipe viewer: JEI
+# [v]" with REI / EMI / JER as options). Mods without a role render
+# as plain rows in the main mod list. Most mods do NOT need a role
+# -- pick a role only when there's a real interchangeable alternative
+# or you want to leave a slot defined for a future alternative.
+#
+# Canonical role identifiers in use across Hivens packs:
+#   - recipe_viewer    (JEI / REI / EMI; in 1.12 also NEI/JER variants)
+#   - minimap          (Xaero / JourneyMap / VoxelMap)
+#   - block_info       (waila / hwyla / jade family)
+#   - world_map        (full-screen map -- distinct from minimap)
+#   - inventory_search (NEI's inventory ext, AE2 search bridges, ...)
+#   - performance      (optimization mods; rarely interchangeable but
+#                       useful for grouping under one section)
+#
+# When adding a new role: pick a snake_case identifier, document the
+# semantic above, and add an i18n entry in client-ui's AppStrings.kt
+# (`contentTabRole<Name>`) so the launcher renders a human label
+# instead of the raw key. Unknown roles render with a Title-Cased
+# version of the key, which is a fine fallback for one-off cases.
+
+[roles]
+# Recipe viewer. JEI is the only one in Industrial today; the slot
+# is documented now so future REI/EMI additions land cleanly.
+"JEI.jar" = "recipe_viewer"
+
+# Minimap. Two real alternatives in the pack -- VoxelMap vs Xaero's
+# Minimap. User picks one in the launcher to avoid duplicate UI.
+"VoxelMap.jar"      = "minimap"
+"XaerosMinimap.jar" = "minimap"
+
+# Block info / waila family. Only HWYLA in Industrial today; left
+# documented for future addons like Jade.
+"HWYLA.jar" = "block_info"
+
+# Full-screen world map. Distinct from minimap; renders as its own
+# slot so the user can keep both minimap + world map enabled.
+"XaerosWorldMap.jar" = "world_map"

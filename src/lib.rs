@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod config;
+pub mod enrich;
 pub mod error;
 pub mod modrinth;
 pub mod pack_config;
