@@ -327,6 +327,28 @@ required      = false
 category      = "resource-pack"
 description   = "Warm-tone vanilla overlay."
 
+# ── generate: hidemymods spoof file ─────────────────────────────────────
+# Emits <storage>/packs/Industrial/static/hidemymods-spoof.json with
+# the modid + version map extracted from every smrt_cache mod's
+# mcmod.info, plus the overrides below. apply-curator adds a
+# matching smrt_static asset entry so the launcher syncs the file
+# into <clientDir>/hidemymods-spoof.json. The hidemymods coremod
+# reads it at FML handshake time and rewrites the wire ModList
+# to match SC's required set when our pack files diverge.
+
+[generate]
+hidemymods          = true
+hidemymods_filename = "hidemymods-spoof.json"
+
+[generate.hidemymods_overrides]
+# SC's own pack-config leaves nbtedit's mcmod.info version field
+# as the literal "$version" placeholder unsubstituted, and SC also
+# sends the literal placeholder on the wire. Spoof must reproduce
+# the placeholder byte-for-byte; otherwise the handshake check
+# would compare a substituted-version client to a placeholder
+# server and reject.
+"nbtedit" = "$version"
+
 # ── extra_assets: shaders ───────────────────────────────────────────────
 
 [[extra_assets]]
