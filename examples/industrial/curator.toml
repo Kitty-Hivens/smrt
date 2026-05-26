@@ -1,0 +1,345 @@
+# Industrial pack -- single omnibus curator config.
+#
+# Drives every per-pack curation decision for `smrt-pack apply-curator`
+# and the rich pack-meta merge inside `smrt-pack build --curator`.
+#
+# Canonical authoring pipeline for Industrial:
+#
+#   # one-time: pre-upload SC-archive mods + open-smrt-network jar
+#   #           into the mirror cache via upload-mods.sh
+#   bash examples/industrial/upload-mods.sh
+#
+#   # one-time per-day: assemble the wire manifest
+#   smrt-pack bootstrap \
+#       --sc-archive ~/IndustrialSC.zip \
+#       --pack-id Industrial \
+#       --display-name Industrial \
+#       --minecraft-version 1.12.2 \
+#       --loader-version 14.23.5.2922 \
+#       --out /tmp/Industrial.bootstrap.json
+#
+#   smrt-pack apply-curator \
+#       --config  /tmp/Industrial.bootstrap.json \
+#       --curator examples/industrial/curator.toml \
+#       --out     /tmp/Industrial.curated.json
+#
+#   smrt-pack upload-static \
+#       --pack-id Industrial \
+#       --dir     ~/IndustrialClient
+#
+#   smrt-pack build \
+#       --config  /tmp/Industrial.curated.json \
+#       --curator examples/industrial/curator.toml
+
+# ── Pack-level rich metadata ─────────────────────────────────────────────
+
+[pack_meta]
+icon_url   = "https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/icon.png"
+banner_url = "https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/banner.png"
+gallery_urls = []
+description_md = """
+# Industrial
+
+SmartyCraft's `Industrial` pack delivered via the Hivens mirror. Heavy
+industrial automation built on IndustrialCraft 2, Applied Energistics
+2, BuildCraft, and the Thermal series. Eight years of accumulated
+server progression behind it.
+
+## Why mirror
+
+SmartyCraft authenticates per asset operation; with 2FA on, that's
+3-10 round-trips per session. The mirror absorbs the read-only ops,
+so the user authenticates once at game-join. SC's proprietary
+`Smarty-1.12.2.jar` coremod is replaced with the clean-room
+`open-smrt-network` -- same wire protocol, no post-join surveillance.
+
+## Tech baseline
+
+- Minecraft 1.12.2 + Forge 14.23.5.2922
+- Java 8 (BellSoft Liberica bundled by Nexira)
+- ~90 mods, ~131 assets
+"""
+
+# ── mark_optional ────────────────────────────────────────────────────────
+# Mods that the SC pack lists as required (in the top-level mods/ dir)
+# but that the launcher should let the user toggle off. Mostly QoL UI
+# layer and visual-style mods that don't affect server-side protocol.
+
+[mark_optional]
+filenames = [
+    "BetterChat.jar",
+    "ServerTabInfo.jar",
+    "XaerosMinimap.jar",
+    "MoreOverlays.jar",
+    "FoamFix.jar",
+    "VoxelMap.jar",
+    "ToroHealth.jar",
+    "XaerosWorldMap.jar",
+    "ReplayMod.jar",
+    "Phosphor.jar",
+    "WailaHarvestability.jar",
+    "TexFix.jar",
+    "MouseTweaks.jar",
+    "SoundFilters.jar",
+    "DamageIndicators.jar",
+    "Schematica.jar",
+    "NoRecipeBook.jar",
+    "DiscordRP.jar",
+    "InventoryTweaks.jar",
+    # OptiFine ships in SC but is opt-in -- the cozy shader stack
+    # below expects it but some users prefer vanilla render path.
+    "OptiFine.jar",
+]
+
+# ── substitute ───────────────────────────────────────────────────────────
+# Drop-in source replacements. SC's proprietary Smarty-1.12.2.jar runs
+# a post-join client scan -- open-smrt-network is the clean-room
+# wire-protocol-only replacement.
+#
+# The sha1 below is the sha1 of the open-smrt-network jar bytes after
+# build. Update when bumping OSN:
+#   sha1sum /home/haru/open-smrt-network/forge-1.12.2/build/libs/*.jar
+# Then re-paste here and re-run apply-curator.
+
+[substitute."Smarty-1.12.2.jar"]
+[substitute."Smarty-1.12.2.jar".source]
+type = "smrt_cache"
+# TODO: paste OSN jar sha1 here. The OSN jar must be uploaded into
+# the mirror cache before the manifest goes live (see upload-mods.sh).
+sha1 = "0000000000000000000000000000000000000000"
+
+[substitute."Smarty-1.12.2.jar".display]
+name        = "Open Smarty Network"
+category    = "lib"
+description = "Clean-room replacement for SC's proprietary `Smarty` auth coremod. Wire-protocol only, no post-join client scan. Apache-2.0."
+license     = "Apache-2.0"
+url         = "https://github.com/Kitty-Hivens/open-smrt-network"
+
+# ── role_table ───────────────────────────────────────────────────────────
+# Maps mod filename to a role identifier for the launcher's slot UI.
+# Mods sharing a role render in a single dropdown ("Recipe viewer: JEI
+# [v]" with REI / EMI / JER alternatives). Skip mods that have no
+# interchangeable alternative -- their role stays null and they
+# render as plain rows.
+
+[role_table]
+"JEI.jar"             = "recipe_viewer"
+"VoxelMap.jar"        = "minimap"
+"XaerosMinimap.jar"   = "minimap"
+"HWYLA.jar"           = "block_info"
+"XaerosWorldMap.jar"  = "world_map"
+
+# ── category_table ───────────────────────────────────────────────────────
+# Authoritative category-per-filename mapping for mods where
+# enrich-from-mcmod-info either can't infer a category or guesses
+# wrong. Existing display.category from mcmod.info wins -- this only
+# fills missing ones.
+
+[category_table]
+"OptiFine.jar"               = "render"
+"Phosphor.jar"               = "render"
+"XaerosMinimap.jar"          = "minimap"
+"VoxelMap.jar"               = "minimap"
+"XaerosWorldMap.jar"         = "world-map"
+"HWYLA.jar"                  = "tooltip"
+"WailaHarvestability.jar"    = "tooltip"
+"JEI.jar"                    = "recipe-viewer"
+"JER.jar"                    = "recipe-viewer"
+"JEIBees.jar"                = "recipe-viewer"
+"InventoryTweaks.jar"        = "inventory"
+"MouseTweaks.jar"            = "inventory"
+"DamageIndicators.jar"       = "info-overlay"
+"ToroHealth.jar"             = "info-overlay"
+"MoreOverlays.jar"           = "info-overlay"
+"ServerTabInfo.jar"          = "info-overlay"
+"SoundFilters.jar"           = "audio"
+"WorldEditCUI.jar"           = "world-tools"
+"Schematica.jar"             = "world-tools"
+"FoamFix.jar"                = "performance"
+"TexFix.jar"                 = "performance"
+"BetterChat.jar"             = "chat"
+"NoRecipeBook.jar"           = "misc"
+"DiscordRP.jar"              = "misc"
+"ReplayMod.jar"              = "misc"
+"Quark.jar"                  = "content"
+"CustomNPCs.jar"             = "content"
+"VariedCommodities.jar"      = "content"
+"TreeCapitator.jar"          = "content"
+"PotionCore.jar"             = "content"
+"Hats.jar"                   = "cosmetic"
+"HatStand.jar"               = "cosmetic"
+"NBTEdit.jar"                = "admin-tool"
+"AutoRegLib.jar"             = "lib"
+"bspkrsCore.jar"             = "lib"
+"ChickenASM-1.12-1.0.2.7.jar" = "lib"
+"iChunUtil.jar"              = "lib"
+"LunatriusCore.jar"          = "lib"
+
+# ── extra_mods ───────────────────────────────────────────────────────────
+# Modrinth-direct mods added on top of the SC-derived pack. The
+# apply-curator step does the Modrinth API lookup at apply time and
+# appends the resolved entries.
+
+[[extra_mods]]
+slug         = "appleskin"
+required     = true
+category     = "performance"
+description  = "Hunger and saturation visualization."
+
+[[extra_mods]]
+slug         = "ambientsounds"
+required     = true
+category     = "audio"
+description  = "Biome-contextual ambient sound (wind, water, cave echo)."
+
+[[extra_mods]]
+slug         = "clumps"
+required     = true
+category     = "performance"
+description  = "XP orbs merge to reduce TPS lag from large drops."
+
+[[extra_mods]]
+slug         = "entityculling"
+required     = true
+category     = "performance"
+description  = "Cull off-screen entities for FPS gains."
+
+[[extra_mods]]
+slug         = "armorhud"
+required     = false
+category     = "info-overlay"
+description  = "Armor durability HUD."
+
+[[extra_mods]]
+slug         = "carry-on"
+required     = false
+category     = "content"
+description  = "Pick up blocks intact."
+
+[[extra_mods]]
+slug         = "controlling"
+required     = false
+category     = "misc"
+description  = "Keybinds search UI."
+
+[[extra_mods]]
+slug         = "crafting-tweaks"
+required     = false
+category     = "inventory"
+description  = "Extra crafting-table buttons (clear, rotate, balance)."
+
+[[extra_mods]]
+slug         = "tips"
+required     = false
+category     = "misc"
+description  = "Loading-screen tip messages."
+
+[[extra_mods]]
+slug         = "ksyxis"
+required     = false
+category     = "performance"
+description  = "World load speedup by skipping unneeded chunks."
+
+[[extra_mods]]
+slug         = "born-in-a-barn"
+required     = false
+category     = "performance"
+description  = "Fixes village mob-spawn lag."
+
+[[extra_mods]]
+slug         = "music-triggers"
+required     = false
+category     = "audio"
+description  = "Context-aware music switching by biome / dimension / state."
+
+# ── extra_assets: resource packs ────────────────────────────────────────
+
+[[extra_assets]]
+slug          = "better-farm-animals"
+dest_dir      = "resourcepacks"
+modrinth_kind = "resourcepack"
+required      = true
+category      = "resource-pack"
+description   = "Stardew-style 3D farm critters (cows, pigs, chickens)."
+
+[[extra_assets]]
+slug          = "farm-3d"
+dest_dir      = "resourcepacks"
+modrinth_kind = "resourcepack"
+required      = true
+category      = "resource-pack"
+description   = "3D farm tools and crops."
+
+[[extra_assets]]
+slug          = "mellowed"
+dest_dir      = "resourcepacks"
+modrinth_kind = "resourcepack"
+required      = true
+category      = "resource-pack"
+description   = "Soft palette overlay."
+
+[[extra_assets]]
+slug          = "comforts-modernized"
+dest_dir      = "resourcepacks"
+modrinth_kind = "resourcepack"
+required      = false
+category      = "resource-pack"
+description   = "Sleeping bag / hammock textures (mod-specific)."
+
+[[extra_assets]]
+slug          = "pixel-perfection-fidelity"
+dest_dir      = "resourcepacks"
+modrinth_kind = "resourcepack"
+required      = false
+category      = "resource-pack"
+description   = "Vanilla++ pixel-faithful textures."
+
+[[extra_assets]]
+slug          = "new-default-plus"
+dest_dir      = "resourcepacks"
+modrinth_kind = "resourcepack"
+required      = false
+category      = "resource-pack"
+description   = "Vanilla++ default."
+
+[[extra_assets]]
+slug          = "soft-bits"
+dest_dir      = "resourcepacks"
+modrinth_kind = "resourcepack"
+required      = false
+category      = "resource-pack"
+description   = "Soft palette pack."
+
+[[extra_assets]]
+slug          = "bare-bones"
+dest_dir      = "resourcepacks"
+modrinth_kind = "resourcepack"
+required      = false
+category      = "resource-pack"
+description   = "Minimalist simplified textures."
+
+[[extra_assets]]
+slug          = "lively-by-alexio"
+dest_dir      = "resourcepacks"
+modrinth_kind = "resourcepack"
+required      = false
+category      = "resource-pack"
+description   = "Warm-tone vanilla overlay."
+
+# ── extra_assets: shaders ───────────────────────────────────────────────
+
+[[extra_assets]]
+slug          = "mellow"
+dest_dir      = "shaderpacks"
+modrinth_kind = "shader"
+required      = false
+category      = "shader"
+description   = "Soft palette shader (MIT)."
+
+[[extra_assets]]
+slug          = "pastel-shaders"
+dest_dir      = "shaderpacks"
+modrinth_kind = "shader"
+required      = false
+category      = "shader"
+description   = "Pastel mood, Stardew-adjacent."

@@ -1,29 +1,74 @@
-# Industrial pack ingest scripts
+# Industrial pack ingest
 
-End-to-end tooling that took SmartyCraft's Industrial 1.12.2 pack and shipped it through the smrt mirror as the first real curated pack. Kept here as a worked example of the full pipeline; future packs reuse the same shapes with their own paths and curation tables.
+End-to-end authoring pipeline for SmartyCraft's `Industrial` pack on the smrt mirror. Worked example: every shape and constant in this directory drives a real `Industrial.json` build that ships to clients.
 
-Pipeline overview, in execution order:
+## Pipeline
 
-1. **`extract-mod-annotations.py`** -- parses every jar's `@Mod` annotation via raw `.class` bytecode (no `javap` dependency). Surfaces `acceptableRemoteVersions` so the curator can tell which mods strict-pin their version on the SC handshake side and which are permissive. The handshake-side reality is what determines whether a smrt_cache substitute can ship a different version than SC's own bytes.
+All steps below are `smrt-pack` subcommands (Rust). Earlier revisions of this directory wrapped the same flow in Python helpers (`extract-mod-annotations.py`, `enrich-mods.py`, `build-pack-config.py`, `upload-static.py`); those got retired in favour of native subcommands so a new pack onboarding does not require a Python toolchain.
 
-2. **`enrich-mods.py`** -- per-jar `mcmod.info` extraction (description, author, project URL) plus Modrinth sha1 batch lookup and slug-by-modid fallback. Writes `/tmp/industrial-mods-enriched.json` consumed by the pack-config generator.
+### One-time setup
 
-3. **`upload-mods.sh`** -- bash bulk-uploader that PUTs every jar in `mods/` and `mods/1.12.2/` into the mirror's smrt_cache via the admin API. Reads the admin token from `/tmp/smrt-token`. Substitutes SC's proprietary Smarty mod with the open-smrt-network jar at upload time (drop-in handshake replacement).
+* Drop the SC client install (`~/.local/share/nexira/clients/Industrial/` or wherever Nexira put it) so the mods/, config/, resourcepacks/, shaderpacks/ trees are readable.
+* Build `open-smrt-network` locally (the wire-protocol-clean replacement for SC's proprietary Smarty coremod) and `sha1sum` the resulting jar. Paste the sha1 into `curator.toml`'s `[substitute."Smarty-1.12.2.jar"].source.sha1` field.
+* Make sure `/tmp/smrt-token` has the admin token (chmod 600; never commit).
 
-4. **`upload-static.py`** -- Python bulk-uploader for the per-pack static assets (configs, resourcepacks, shaderpacks, root client-settings files). Hits `/v1/admin/packs/{id}/static/{rel_path}`; URL-encodes path segments so shaderpack filenames with spaces ("Chocapic13 V7.1 High.zip") work.
+### Recurring per-build
 
-5. **`build-pack-config.py`** -- the actual curation step. Reads the SC manifest cache (`~/.local/share/nexira/manifest-cache/Industrial.json`) as the source of truth for which mods are server-required (top-level `mods/`) vs optional pool (`mods/1.12.2/`), merges in the enriched metadata, applies the curation table (drop list, optional overrides like OptiFine -> toggleable, Modrinth-direct cozy additions like AppleSkin and Mizuno's), emits the wire `PackConfig` JSON for `smrt-pack build`.
+1. **Bootstrap the starter config** -- extracts mods + extras from the SC archive, runs the Modrinth sha1 batch lookup to identify which mods can ride Modrinth versus which need to live in the smrt cache. Writes a starter `Industrial.bootstrap.json`.
 
-After the five steps run, `smrt-pack build` on the VPS reads the emitted `PackConfig`, resolves every source (smrt_cache verifies the file is on disk, modrinth fetches version metadata, smrt_static reads the local asset), writes the wire manifest under `/var/lib/smrt/packs/Industrial/manifests/`, atomically swaps the `latest` symlink, and writes the summary that powers `/v1/packs`.
+   ```bash
+   smrt-pack bootstrap \
+       --sc-archive ~/IndustrialSC.zip \
+       --out        /tmp/Industrial.bootstrap.json \
+       --pack-id    Industrial \
+       --display-name Industrial \
+       --tagline    "SmartyCraft Industrial via Hivens Mirror" \
+       --minecraft-version 1.12.2 \
+       --loader-name forge \
+       --loader-version 14.23.5.2922 \
+       --java-major 8
+   ```
 
-## Paths assumed
+2. **Upload mod jars to the cache** -- one-shot bash uploader for every jar that lives in `mods/` (and substitutes Smarty for OSN). Pre-existing script; retained because it doubles as the OSN-swap moment.
 
-- SC pack files on disk under `~/.local/share/nexira/clients/Industrial/`
-- SC manifest cache at `~/.local/share/nexira/manifest-cache/Industrial.json`
-- Admin token at `/tmp/smrt-token` (chmod 600; never commit)
-- SSH access to the live mirror as `root@hivens.dev` with `~/.ssh/vps_hivens`
+   ```bash
+   bash examples/industrial/upload-mods.sh
+   ```
 
-Most paths are hard-coded; the scripts are example-scoped, not a generic CLI. For another pack, copy the directory and edit the constants at the top of each file.
+3. **Upload static assets** -- Rust subcommand that walks a local client directory and PUTs every regular file into the mirror's per-pack static area. Reads the admin token from `/tmp/smrt-token`.
+
+   ```bash
+   smrt-pack upload-static \
+       --pack-id Industrial \
+       --dir     ~/.local/share/nexira/clients/Industrial
+   ```
+
+4. **Run the curator chain** -- one omnibus subcommand reads `curator.toml` and applies every per-pack mutation in canonical order: mcmod.info enrich, role table, category table, mark-optional, source substitution (Smarty -> OSN), requires inference, and finally the Modrinth-direct extras (cozy mods + RPs + shaders).
+
+   ```bash
+   smrt-pack apply-curator \
+       --config  /tmp/Industrial.bootstrap.json \
+       --curator examples/industrial/curator.toml \
+       --out     /tmp/Industrial.curated.json
+   ```
+
+5. **Build the wire manifest** -- resolves every source against the cache or Modrinth, writes `<storage>/packs/Industrial/manifests/<date>.json`, atomically swaps the `latest` symlink, and emits `<storage>/packs/Industrial/summary.json` with the rich pack metadata merged from `curator.toml`'s `[pack_meta]` section.
+
+   ```bash
+   smrt-pack build \
+       --config  /tmp/Industrial.curated.json \
+       --curator examples/industrial/curator.toml
+   ```
+
+## Files in this directory
+
+| File              | Purpose                                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------- |
+| `curator.toml`    | Omnibus per-pack curator decisions: pack metadata + mark-optional + substitute + role table + category table + extra mods + extra assets. Drives both `apply-curator` and `build --curator`. |
+| `role-table.toml` | Standalone role-table example -- kept for reference. The `apply-role-table` subcommand still reads files in this shape if a curator prefers separate files; `curator.toml`'s `[role_table]` section subsumes the same data. |
+| `pack-meta.toml`  | Standalone pack-meta example -- same relationship as role-table.toml. `curator.toml`'s `[pack_meta]` section subsumes it. |
+| `upload-mods.sh`  | Bulk uploader for mod jars (bash). Keeps the OSN-substitute step inline; will get a `smrt-pack upload-cache` subcommand in a follow-up.                              |
+| `README.md`       | This file.                                                                                                    |
 
 ## License notes that turned up while curating
 

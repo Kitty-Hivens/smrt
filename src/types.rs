@@ -62,6 +62,11 @@ pub struct AssetEntry {
 /// block on an existing manifest is forward-compatible -- the wire schema
 /// version stays at 2. Clients that don't recognise the block fall back
 /// to defaults derived from `filename` / `dest`.
+///
+/// `icon_url`, `role`, and `requires` are additive launcher-side richer
+/// UX hooks (per-item icons, role-grouped pickers, dependency graph
+/// rendering). All three optional; manifests without them parse cleanly
+/// on every client that reached the v2 schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Display {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -83,6 +88,39 @@ pub struct Display {
     /// CurseForge project page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Per-item icon URL. Mirror serves directly for smrt_cache /
+    /// smrt_static entries; Modrinth-sourced entries can leave this null
+    /// and let the client resolve via the source's `project_id` against
+    /// the Modrinth API. Null = client falls back to a letter avatar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
+    /// Short tag for grouping interchangeable mods. Launcher renders all
+    /// mods with the same role as a single selectable slot ("Recipe
+    /// viewer: JEI [v]" with REI / JER / EMI alternatives). Canonical
+    /// values are mirror-curated; the launcher does not enumerate them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// Same-manifest dependency declarations. Each entry's `filename`
+    /// points at another mod in this pack's `mods[]`. Resolver
+    /// validates the reference at install time; missing references
+    /// surface as a warning rather than a hard failure.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<Requirement>,
+}
+
+/// Single edge in a mod's dependency DAG. [filename] must match a
+/// mods[] entry's filename in the same manifest. [version_range]
+/// follows Maven-style range syntax (`>=4.0`, `[1.0,2.0)`); null
+/// means "any version present is acceptable". [optional] = true
+/// means the consumer works without the dep but works better with
+/// it -- launcher shows it greyed-out in the dep tree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Requirement {
+    pub filename: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_range: Option<String>,
+    #[serde(default)]
+    pub optional: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +153,22 @@ pub struct PackSummary {
     pub tags: Vec<String>,
     #[serde(default)]
     pub featured: bool,
+    /// Square pack icon. Renders in BrowsePackCard avatar slot +
+    /// BrowsePackDetail hero on the launcher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
+    /// Wide hero image. Renders behind BrowsePackDetail hero text;
+    /// falls back to the launcher's mirror gradient when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banner_url: Option<String>,
+    /// Optional marketing screenshots. Rendered in a horizontal
+    /// scroller on BrowsePackDetail when non-empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gallery_urls: Vec<String>,
+    /// Long-form CommonMark description for the BrowsePackDetail
+    /// About section. HTML is not parsed by the launcher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description_md: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -285,6 +339,117 @@ mod tests {
         assert_eq!(d.name.as_deref(), Some("VoxelMap"));
         assert_eq!(d.category.as_deref(), Some("minimap"));
         assert_eq!(d.incompatible_with, vec!["XaerosMinimap.jar", "JourneyMap.jar"]);
+    }
+
+    #[test]
+    fn mod_entry_round_trips_rich_display_block() {
+        // icon_url + role + requires together. Wire format is what the
+        // 2026-05-25 launcher spec extension expects; this test fails
+        // loud if a field name drifts.
+        let json = r#"{
+            "filename": "appleskin.jar",
+            "sha1": "abc",
+            "size_bytes": 50000,
+            "required": true,
+            "source": {"type": "modrinth", "project_id": "EsAfCjCV", "version_id": "v"},
+            "display": {
+                "name": "AppleSkin",
+                "category": "performance",
+                "icon_url": "https://cdn.modrinth.com/data/EsAfCjCV/icon.png",
+                "role": "info_overlay",
+                "requires": [
+                    {"filename": "Mixinbooter.jar", "version_range": ">=10.0", "optional": false}
+                ]
+            }
+        }"#;
+        let m: ModEntry = serde_json::from_str(json).unwrap();
+        let d = m.display.expect("display deserialized");
+        assert_eq!(d.icon_url.as_deref(), Some("https://cdn.modrinth.com/data/EsAfCjCV/icon.png"));
+        assert_eq!(d.role.as_deref(), Some("info_overlay"));
+        assert_eq!(d.requires.len(), 1);
+        assert_eq!(d.requires[0].filename, "Mixinbooter.jar");
+        assert_eq!(d.requires[0].version_range.as_deref(), Some(">=10.0"));
+        assert!(!d.requires[0].optional);
+    }
+
+    #[test]
+    fn requirement_optional_defaults_to_false_when_absent() {
+        // version_range null AND optional missing -- a curator who
+        // doesn't care about pinning a version should be able to write
+        // `{"filename": "X.jar"}` and have it round-trip.
+        let json = r#"{"filename": "AppliedEnergistics2.jar"}"#;
+        let r: Requirement = serde_json::from_str(json).unwrap();
+        assert_eq!(r.filename, "AppliedEnergistics2.jar");
+        assert_eq!(r.version_range, None);
+        assert!(!r.optional);
+        // Round-trip preserves the omission shape.
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(!s.contains("version_range"), "absent version_range must not serialize: {s}");
+        assert!(s.contains("\"optional\":false"), "optional always serializes (no skip_if): {s}");
+    }
+
+    #[test]
+    fn display_with_empty_requires_does_not_emit_field() {
+        // Vec::is_empty skip is critical -- otherwise every existing
+        // manifest entry would gain a noisy `"requires":[]` on next
+        // build, churning every cache + breaking byte-equality
+        // comparisons in client-side change detection.
+        let d = Display {
+            name: Some("X".into()),
+            description: None, category: None,
+            incompatible_with: vec![],
+            license: None, url: None,
+            icon_url: None, role: None,
+            requires: vec![],
+        };
+        let s = serde_json::to_string(&d).unwrap();
+        assert!(!s.contains("requires"), "empty requires must not serialize: {s}");
+    }
+
+    #[test]
+    fn pack_summary_round_trips_rich_metadata() {
+        // r##"..."## (two hashes) -- the description_md contains "# ",
+        // and r#"..."# would terminate at the first `"#` it hit. Two
+        // hashes leave room for a single hash inside.
+        let json = r##"{
+            "pack_id": "Industrial",
+            "display_name": "Industrial",
+            "tagline": "Heavy industry and automation.",
+            "minecraft_version": "1.12.2",
+            "latest_pack_version": "2026.05.23.1",
+            "tags": ["tech", "industrial"],
+            "featured": true,
+            "icon_url": "https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/icon.png",
+            "banner_url": "https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/banner.png",
+            "gallery_urls": [
+                "https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/g1.png"
+            ],
+            "description_md": "# Industrial\n\nLong-form copy."
+        }"##;
+        let s: PackSummary = serde_json::from_str(json).unwrap();
+        assert_eq!(s.icon_url.as_deref(),    Some("https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/icon.png"));
+        assert_eq!(s.banner_url.as_deref(),  Some("https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/banner.png"));
+        assert_eq!(s.gallery_urls.len(), 1);
+        assert!(s.description_md.as_deref().unwrap().starts_with("# Industrial"));
+    }
+
+    #[test]
+    fn pack_summary_without_rich_metadata_parses() {
+        // Existing summary.json files written before the rich-metadata
+        // extension must still parse.
+        let json = r#"{
+            "pack_id": "Bare",
+            "display_name": "Bare",
+            "tagline": "",
+            "minecraft_version": "1.12.2",
+            "latest_pack_version": "2026.06.01",
+            "tags": []
+        }"#;
+        let s: PackSummary = serde_json::from_str(json).unwrap();
+        assert!(s.icon_url.is_none());
+        assert!(s.banner_url.is_none());
+        assert!(s.gallery_urls.is_empty());
+        assert!(s.description_md.is_none());
     }
 
     #[test]
