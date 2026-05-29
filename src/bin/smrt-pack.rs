@@ -524,6 +524,7 @@ async fn bootstrap(args: BootstrapArgs) -> Result<()> {
                 DeclaredMod {
                     filename: m.filename.clone(),
                     required: true,
+                    default_enabled: true,
                     source: SourceDecl::Modrinth {
                         project_id: hit.project_id.clone(),
                         version_id: hit.id.clone(),
@@ -536,6 +537,7 @@ async fn bootstrap(args: BootstrapArgs) -> Result<()> {
                 DeclaredMod {
                     filename: m.filename.clone(),
                     required: true,
+                    default_enabled: true,
                     source: SourceDecl::SmrtCache {
                         sha1: m.sha1.clone(),
                     },
@@ -551,6 +553,7 @@ async fn bootstrap(args: BootstrapArgs) -> Result<()> {
             DeclaredMod {
                 filename: m.filename.clone(),
                 required: true,
+                default_enabled: true,
                 source: SourceDecl::SmrtCache {
                     sha1: m.sha1.clone(),
                 },
@@ -808,6 +811,7 @@ async fn resolve_mod(
         sha1,
         size_bytes,
         required: decl.required,
+        default_enabled: decl.default_enabled,
         source,
         display: decl.display.clone(),
     })

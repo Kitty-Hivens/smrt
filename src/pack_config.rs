@@ -28,6 +28,10 @@ pub struct DeclaredMod {
     pub filename: String,
     #[serde(default = "default_true")]
     pub required: bool,
+    /// Install-time default for an optional mod; the curator's default-off list
+    /// flips it. Carried into the emitted ModEntry.
+    #[serde(default = "default_true")]
+    pub default_enabled: bool,
     pub source: SourceDecl,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display: Option<Display>,

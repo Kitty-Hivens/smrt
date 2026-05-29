@@ -242,6 +242,16 @@ pub struct Curator {
     pub pack_meta: PackMeta,
     #[serde(default)]
     pub mark_optional: MarkOptional,
+    /// `filename -> [incompatible filenames]`, written to each mod's
+    /// `display.incompatible_with`. Mutual at the launcher, so only one side
+    /// needs declaring (FoamFix.jar = ["!mixinbooter-10.7.jar"]).
+    #[serde(default)]
+    pub incompatible: HashMap<String, Vec<String>>,
+    /// Optional mod filenames that should install DISABLED by default
+    /// (`default_enabled = false`); the user opts in. Use for an optional that
+    /// conflicts with a default-on mod (FoamFix vs Mixinbooter).
+    #[serde(default)]
+    pub default_off: Vec<String>,
     #[serde(default)]
     pub substitute: HashMap<String, SubstituteEntry>,
     #[serde(default)]
@@ -438,6 +448,45 @@ pub fn apply_mark_optional(config: &mut PackConfig, mark: &MarkOptional) -> Mark
     report
 }
 
+/// Writes curator-declared incompatibilities into each mod's
+/// `display.incompatible_with`. The launcher treats incompatibility as mutual,
+/// so declaring one direction is enough. Creates a `Display` when absent.
+pub fn apply_incompatible(config: &mut PackConfig, incompatible: &HashMap<String, Vec<String>>) {
+    if incompatible.is_empty() {
+        return;
+    }
+    let mut applied = 0u32;
+    for m in config.mods.iter_mut() {
+        if let Some(conflicts) = incompatible.get(&m.filename) {
+            let display = m.display.get_or_insert_with(Display::default);
+            for c in conflicts {
+                if !display.incompatible_with.contains(c) {
+                    display.incompatible_with.push(c.clone());
+                    applied += 1;
+                }
+            }
+        }
+    }
+    info!(applied, declared = incompatible.len(), "incompatible applied");
+}
+
+/// Flips `default_enabled = false` on each OPTIONAL mod named in `default_off`.
+/// Required mods are skipped -- they always install, so the flag is meaningless.
+pub fn apply_default_off(config: &mut PackConfig, default_off: &[String]) {
+    if default_off.is_empty() {
+        return;
+    }
+    let names: std::collections::HashSet<&str> = default_off.iter().map(|s| s.as_str()).collect();
+    let mut flipped = 0u32;
+    for m in config.mods.iter_mut() {
+        if names.contains(m.filename.as_str()) && !m.required {
+            m.default_enabled = false;
+            flipped += 1;
+        }
+    }
+    info!(flipped, "default-off applied");
+}
+
 #[derive(Debug, Default)]
 pub struct SubstituteReport {
     pub applied: u32,
@@ -585,6 +634,7 @@ pub async fn apply_extras(
                 config.mods.push(crate::pack_config::DeclaredMod {
                     filename,
                     required: em.required,
+                    default_enabled: true,
                     source: crate::pack_config::SourceDecl::Modrinth {
                         project_id,
                         version_id,
@@ -854,6 +904,8 @@ pub async fn apply_curator(
     )?;
     apply_category_table(config, &curator.category_table);
     apply_mark_optional(config, &curator.mark_optional);
+    apply_default_off(config, &curator.default_off);
+    apply_incompatible(config, &curator.incompatible);
     apply_substitute(config, &curator.substitute);
     infer_requires_from_mcmod_info(config, storage)?;
     apply_drop_assets(config, &curator.drop_assets);
@@ -1231,6 +1283,7 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "X.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache { sha1: sha.clone() },
             display: Some(Display {
                 name: Some("CuratorName".into()), // existing -- must win
@@ -1261,6 +1314,7 @@ mod tests {
             cfg.mods.push(DeclaredMod {
                 filename: fname.into(),
                 required: true,
+                default_enabled: true,
                 source: SourceDecl::SmrtCache {
                     sha1: "a".repeat(40),
                 },
@@ -1325,6 +1379,7 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "JEI.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache { sha1: sha_jei },
             display: None,
             note: None,
@@ -1332,6 +1387,7 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "JEIAddon.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache { sha1: sha_addon },
             display: None,
             note: None,
@@ -1351,6 +1407,7 @@ mod tests {
             cfg.mods.push(DeclaredMod {
                 filename: fname.into(),
                 required: true,
+                default_enabled: true,
                 source: SourceDecl::SmrtCache {
                     sha1: "a".repeat(40),
                 },
@@ -1369,11 +1426,48 @@ mod tests {
     }
 
     #[test]
+    fn default_off_flips_optionals_and_incompatible_writes_display() {
+        let mut cfg = empty_config();
+        cfg.mods.push(DeclaredMod {
+            filename: "FoamFix.jar".into(),
+            required: false,
+            default_enabled: true,
+            source: SourceDecl::SmrtCache { sha1: "a".repeat(40) },
+            display: None,
+            note: None,
+        });
+        cfg.mods.push(DeclaredMod {
+            filename: "Mixinbooter.jar".into(),
+            required: true,
+            default_enabled: true,
+            source: SourceDecl::SmrtCache { sha1: "b".repeat(40) },
+            display: None,
+            note: None,
+        });
+
+        // Naming a required mod in default_off is a no-op (required always on).
+        apply_default_off(&mut cfg, &["FoamFix.jar".into(), "Mixinbooter.jar".into()]);
+        let mut incompat: HashMap<String, Vec<String>> = HashMap::new();
+        incompat.insert("FoamFix.jar".into(), vec!["Mixinbooter.jar".into()]);
+        apply_incompatible(&mut cfg, &incompat);
+
+        let foam = cfg.mods.iter().find(|m| m.filename == "FoamFix.jar").unwrap();
+        let mixin = cfg.mods.iter().find(|m| m.filename == "Mixinbooter.jar").unwrap();
+        assert!(!foam.default_enabled, "optional FoamFix flipped default-off");
+        assert!(mixin.default_enabled, "required mod untouched by default-off");
+        assert_eq!(
+            foam.display.as_ref().unwrap().incompatible_with,
+            vec!["Mixinbooter.jar".to_string()],
+        );
+    }
+
+    #[test]
     fn substitute_swaps_source_and_display() {
         let mut cfg = empty_config();
         cfg.mods.push(DeclaredMod {
             filename: "Smarty-1.12.2.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache {
                 sha1: "0".repeat(40),
             },
@@ -1422,6 +1516,7 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "Modded.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache {
                 sha1: "a".repeat(40),
             },
@@ -1431,6 +1526,7 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "PreviouslyCore.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache {
                 sha1: "a".repeat(40),
             },
@@ -1450,6 +1546,7 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "AlreadyRight.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache {
                 sha1: "a".repeat(40),
             },
@@ -1825,6 +1922,7 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "Lonely.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache { sha1: sha },
             display: None,
             note: None,

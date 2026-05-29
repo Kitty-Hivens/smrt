@@ -41,6 +41,11 @@ pub struct ModEntry {
     pub size_bytes: u64,
     #[serde(default = "default_true")]
     pub required: bool,
+    /// Install-time default for an optional entry (`required = false`): on unless
+    /// a curator opts it out. Omitted from the wire when true (the launcher's
+    /// SmrtModEntry defaults it to true), so only an opted-out mod carries it.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub default_enabled: bool,
     pub source: Source,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display: Option<Display>,
@@ -67,7 +72,7 @@ pub struct AssetEntry {
 /// UX hooks (per-item icons, role-grouped pickers, dependency graph
 /// rendering). All three optional; manifests without them parse cleanly
 /// on every client that reached the v2 schema.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Display {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -141,6 +146,12 @@ pub enum Source {
 
 fn default_true() -> bool {
     true
+}
+
+/// `skip_serializing_if` for bool-default-true fields: keeps the manifest clean
+/// by omitting the field when it holds its default (e.g. `default_enabled`).
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 // ── Pack summary / listing ─────────────────────────────────────────────────
@@ -328,6 +339,7 @@ mod tests {
             sha1: "abc".into(),
             size_bytes: 100,
             required: true,
+            default_enabled: true,
             source: Source::SmrtCache { url: "u".into() },
             display: None,
         };
