@@ -32,9 +32,12 @@
 #       --curator examples/industrial/curator.toml
 
 # Optional mods that install DISABLED by default (the user opts in). Root-level
-# Curator key. FoamFix is default-off because it conflicts with the (required)
-# Mixinbooter -- see the mark_optional note + [incompatible] below.
-default_off = ["FoamFix.jar"]
+# Curator key. Two confirmed conflicts (live 2026-05-29):
+#   FoamFix  -- breaks Mixinbooter-based mixins.
+#   Phosphor -- its MixinChunk injection fails against Xaero's ChunkTransformer
+#               ("Scanned 0 target(s)" -> Chunk fails to load -> IC2 crash).
+# Both stay in the pack but install off; see [incompatible] below.
+default_off = ["FoamFix.jar", "Phosphor.jar"]
 
 # ── Pack-level rich metadata ─────────────────────────────────────────────
 
@@ -108,11 +111,14 @@ filenames = [
 
 # ── incompatible ───────────────────────────────────────────────────────────
 # filename -> incompatible filenames. Written to each mod's display.incompatible_with;
-# the launcher treats it as mutual, so only one side needs declaring. FoamFix breaks
-# Mixinbooter-based mixins (live repro: Phosphor's MixinChunk injection), so the
-# launcher warns + (for toggleable conflicts) auto-resolves.
+# the launcher treats it as mutual, so only one side needs declaring. The launcher
+# warns + (for toggleable conflicts) auto-resolves. Two confirmed conflicts:
+#   FoamFix  vs Mixinbooter (FoamFix breaks mixin loading).
+#   Phosphor vs Xaero (Phosphor's MixinChunk can't inject once Xaero's
+#            ChunkTransformer has rewritten Chunk -> hard crash on load).
 [incompatible]
 "FoamFix.jar" = ["!mixinbooter-10.7.jar"]
+"Phosphor.jar" = ["XaerosMinimap.jar", "XaerosWorldMap.jar"]
 
 # ── substitute ───────────────────────────────────────────────────────────
 # Drop-in source replacements. SC's proprietary Smarty-1.12.2.jar runs
