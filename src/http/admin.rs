@@ -1,9 +1,9 @@
 use super::ApiError;
-use crate::authoring::parse_curator;
+use crate::authoring::{modrinth, parse_curator};
 use crate::domain::*;
 use crate::state::AppState;
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
@@ -39,6 +39,8 @@ pub fn router(state: AppState) -> Router {
             get(get_pack_curator).put(put_pack_curator),
         )
         .route("/v1/admin/featured", post(save_featured))
+        .route("/v1/admin/modrinth/search", get(modrinth_search))
+        .route("/v1/admin/modrinth/versions", get(modrinth_versions))
         .layer(DefaultBodyLimit::max(ADMIN_BODY_LIMIT))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
         .with_state(state)
@@ -147,6 +149,42 @@ async fn save_featured(
 ) -> Result<(StatusCode, Json<Featured>), ApiError> {
     state.storage.save_featured(&featured).await?;
     Ok((StatusCode::CREATED, Json(featured)))
+}
+
+// ── Modrinth proxy (search-to-add) ──────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct SearchQuery {
+    q: String,
+    mc: Option<String>,
+}
+
+async fn modrinth_search(
+    Query(q): Query<SearchQuery>,
+) -> Result<Json<Vec<modrinth::SearchHit>>, ApiError> {
+    let m = modrinth::Modrinth::new().map_err(ApiError::Internal)?;
+    let hits = m
+        .search(&q.q, q.mc.as_deref())
+        .await
+        .map_err(ApiError::Internal)?;
+    Ok(Json(hits))
+}
+
+#[derive(serde::Deserialize)]
+struct VersionsQuery {
+    id: String,
+    mc: Option<String>,
+}
+
+async fn modrinth_versions(
+    Query(q): Query<VersionsQuery>,
+) -> Result<Json<Vec<modrinth::Version>>, ApiError> {
+    let m = modrinth::Modrinth::new().map_err(ApiError::Internal)?;
+    let vs = m
+        .project_versions(&q.id, q.mc.as_deref())
+        .await
+        .map_err(ApiError::Internal)?;
+    Ok(Json(vs))
 }
 
 // ── authoring inputs ───────────────────────────────────────────────────────

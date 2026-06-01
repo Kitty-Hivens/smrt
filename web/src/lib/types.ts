@@ -129,3 +129,19 @@ export interface PackConfig {
 }
 
 export type JobStatus = 'running' | 'done' | 'failed';
+
+export interface ModrinthHit {
+  project_id: string;
+  slug: string;
+  title: string;
+  description: string;
+  icon_url?: string | null;
+}
+
+export interface ModrinthVersion {
+  id: string;
+  project_id: string;
+  version_number: string;
+  game_versions: string[];
+  loaders: string[];
+}

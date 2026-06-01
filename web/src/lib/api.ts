@@ -6,6 +6,8 @@ import type {
   CacheInventory,
   Featured,
   Health,
+  ModrinthHit,
+  ModrinthVersion,
   PackConfig,
   PackListing,
   ServerEntry,
@@ -175,6 +177,16 @@ export const api = {
     const enc = relPath.split('/').map(encodeURIComponent).join('/');
     return `/v1/packs/${encodeURIComponent(id)}/static/${enc}`;
   },
+
+  // ── Modrinth search-to-add ──
+  modrinthSearch: (q: string, mc?: string) =>
+    getJson<ModrinthHit[]>(
+      `/v1/admin/modrinth/search?q=${encodeURIComponent(q)}${mc ? `&mc=${encodeURIComponent(mc)}` : ''}`,
+    ),
+  modrinthVersions: (id: string, mc?: string) =>
+    getJson<ModrinthVersion[]>(
+      `/v1/admin/modrinth/versions?id=${encodeURIComponent(id)}${mc ? `&mc=${encodeURIComponent(mc)}` : ''}`,
+    ),
 
   async session(): Promise<boolean> {
     const r = await fetch('/admin/api/session', { credentials: 'include' });

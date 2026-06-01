@@ -4,6 +4,7 @@
   import BuildConsole from './BuildConsole.svelte';
   import BrandingEditor from './BrandingEditor.svelte';
   import JobLog from './JobLog.svelte';
+  import ModrinthPicker from './ModrinthPicker.svelte';
 
   let { packId, onClose }: { packId: string; onClose: () => void } = $props();
 
@@ -17,6 +18,9 @@
   let bootName = $state('');
   let bootBusy = $state(false);
   let bootJobId = $state<string | null>(null);
+
+  // Modrinth picker open for config-mods row index N, null = closed
+  let modPicker = $state<number | null>(null);
 
   let cfg = $state<PackConfig | null>(null);
   let tagsStr = $state('');
@@ -244,6 +248,7 @@
                 {#if m.source.type === 'modrinth'}
                   <input class="mono" bind:value={m.source.project_id} placeholder="project_id" />
                   <input class="mono" bind:value={m.source.version_id} placeholder="version_id" />
+                  <button class="sm" type="button" onclick={() => (modPicker = i)}>find on Modrinth</button>
                 {:else if m.source.type === 'smrt_cache'}
                   <input class="mono" bind:value={m.source.sha1} placeholder="sha1" />
                 {:else}
@@ -321,6 +326,19 @@
   <BrandingEditor {packId} />
 {:else if section === 'build'}
   <BuildConsole {packId} />
+{/if}
+
+{#if modPicker !== null && cfg}
+  <ModrinthPicker
+    mc={cfg.minecraft_version}
+    onClose={() => (modPicker = null)}
+    onPick={(sel) => {
+      const m = cfg!.mods[modPicker!];
+      m.source = { type: 'modrinth', project_id: sel.project_id, version_id: sel.version_id };
+      if (!m.filename) m.filename = `${sel.slug}.jar`;
+      modPicker = null;
+    }}
+  />
 {/if}
 
 <style>

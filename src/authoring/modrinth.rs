@@ -73,6 +73,30 @@ impl Modrinth {
     /// When [mc_filter] is Some, narrows to versions whose
     /// `game_versions` array contains that exact MC string.
     ///
+    /// Search Modrinth for mods matching [query], optionally narrowed to an MC
+    /// version. Returns the top hits (project id / slug / title / icon) so the
+    /// panel can add a mod without the operator pasting ids.
+    pub async fn search(&self, query: &str, mc: Option<&str>) -> Result<Vec<SearchHit>> {
+        let facets = match mc {
+            Some(v) => format!(r#"[["project_type:mod"],["versions:{v}"]]"#),
+            None => r#"[["project_type:mod"]]"#.to_string(),
+        };
+        let resp = self
+            .http
+            .get(format!("{MODRINTH_BASE}/v2/search"))
+            .query(&[("query", query), ("facets", facets.as_str()), ("limit", "20")])
+            .send()
+            .await
+            .context("modrinth search get")?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("modrinth search HTTP {status}: {body}"));
+        }
+        let parsed: SearchResponse = resp.json().await.context("decode search")?;
+        Ok(parsed.hits)
+    }
+
     /// Slug or numeric project id both work as the URL segment per
     /// the Modrinth API spec.
     pub async fn project_versions(
@@ -112,7 +136,23 @@ struct VersionFilesRequest<'a> {
     algorithm: &'static str,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Deserialize)]
+struct SearchResponse {
+    hits: Vec<SearchHit>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchHit {
+    pub project_id: String,
+    pub slug: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub icon_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Version {
     pub id: String,
     pub project_id: String,
@@ -125,7 +165,7 @@ pub struct Version {
     pub files: Vec<VersionFile>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionFile {
     pub hashes: VersionFileHashes,
     pub url: String,
@@ -134,7 +174,7 @@ pub struct VersionFile {
     pub size: u64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionFileHashes {
     pub sha1: String,
 }
