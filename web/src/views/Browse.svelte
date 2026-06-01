@@ -1,0 +1,463 @@
+<script lang="ts">
+  import { api, ApiError } from '../lib/api';
+  import type {
+    CacheInventoryEntry,
+    Featured,
+    Health,
+    PackSummary,
+    ServerEntry,
+  } from '../lib/types';
+  import ServerEditor from './ServerEditor.svelte';
+
+  let { onLogout }: { onLogout: () => void } = $props();
+
+  type Tab = 'overview' | 'packs' | 'servers' | 'featured' | 'cache';
+  let tab = $state<Tab>('overview');
+
+  // server create/edit: 'new' = creating, ServerEntry = editing, null = closed
+  let serverEdit = $state<ServerEntry | 'new' | null>(null);
+
+  // featured selections, synced from featured.json on load
+  let featPacks = $state<Set<string>>(new Set());
+  let featServers = $state<Set<string>>(new Set());
+  let featBusy = $state(false);
+  let featMsg = $state('');
+
+  let health = $state<Health | null>(null);
+  let packs = $state<PackSummary[]>([]);
+  let servers = $state<ServerEntry[]>([]);
+  let featured = $state<Featured | null>(null);
+  let cache = $state<CacheInventoryEntry[]>([]);
+  let authoring = $state<string[]>([]);
+  let err = $state('');
+  let loading = $state(true);
+
+  // featured.json is absent on a fresh mirror; a 404 there means "nothing
+  // featured yet", not an error worth banner-ing over the whole overview.
+  function featuredFallback(e: unknown): Featured {
+    if (e instanceof ApiError && e.status === 404) {
+      return { schema_version: 2, generated_at: '', featured_servers: [], featured_packs: [] };
+    }
+    throw e;
+  }
+
+  async function loadAll() {
+    loading = true;
+    err = '';
+    try {
+      const [h, p, s, f, c, a] = await Promise.all([
+        api.health(),
+        api.packs(),
+        api.servers(),
+        api.featured().catch(featuredFallback),
+        api.cacheInventory(),
+        api.authoringPacks(),
+      ]);
+      health = h;
+      packs = p.packs;
+      servers = s.servers;
+      featured = f;
+      featPacks = new Set(f.featured_packs);
+      featServers = new Set(f.featured_servers);
+      cache = c.entries;
+      authoring = a.packs;
+    } catch (e) {
+      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+    } finally {
+      loading = false;
+    }
+  }
+  loadAll();
+
+  async function delServer(id: string) {
+    if (!confirm(`Delete server "${id}"? Removes its metadata from the mirror.`)) return;
+    try {
+      await api.deleteServer(id);
+      await loadAll();
+    } catch (e) {
+      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+    }
+  }
+
+  async function saveFeatured() {
+    featBusy = true;
+    featMsg = '';
+    try {
+      await api.saveFeatured({
+        schema_version: 2,
+        generated_at: new Date().toISOString(),
+        featured_packs: [...featPacks],
+        featured_servers: [...featServers],
+      });
+      featMsg = 'Saved.';
+      await loadAll();
+    } catch (e) {
+      featMsg = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+    } finally {
+      featBusy = false;
+    }
+  }
+
+  function toggle(set: Set<string>, id: string): Set<string> {
+    const n = new Set(set);
+    n.has(id) ? n.delete(id) : n.add(id);
+    return n;
+  }
+
+  const cacheBytes = $derived(cache.reduce((n, e) => n + e.size_bytes, 0));
+  const authoringSet = $derived(new Set(authoring));
+
+  function fmtBytes(n: number): string {
+    if (n < 1024) return `${n} B`;
+    const u = ['KB', 'MB', 'GB'];
+    let i = -1;
+    do {
+      n /= 1024;
+      i++;
+    } while (n >= 1024 && i < u.length - 1);
+    return `${n.toFixed(1)} ${u[i]}`;
+  }
+
+  const endpoints: [string, string][] = [
+    ['GET', '/v1/health'],
+    ['GET', '/v1/packs'],
+    ['GET', '/v1/packs/:id'],
+    ['GET', '/v1/packs/:id/manifest'],
+    ['GET', '/v1/packs/:id/manifest/versions'],
+    ['GET', '/v1/packs/:id/manifest/:version'],
+    ['GET', '/v1/packs/:id/static/*path'],
+    ['GET', '/v1/servers'],
+    ['GET', '/v1/servers/:id'],
+    ['GET', '/v1/featured'],
+    ['GET', '/v1/cache/inventory'],
+    ['GET', '/v1/cache/:prefix/:sha.jar'],
+    ['GET', '/v1/admin/packs'],
+    ['GET PUT', '/v1/admin/packs/:id/config'],
+    ['GET PUT', '/v1/admin/packs/:id/curator'],
+    ['POST', '/v1/admin/servers'],
+    ['DELETE', '/v1/admin/servers/:id'],
+    ['PUT DELETE', '/v1/admin/cache/:prefix/:file'],
+    ['PUT DELETE', '/v1/admin/packs/:id/static/*path'],
+    ['POST', '/v1/admin/featured'],
+  ];
+
+  const tabs: [Tab, string][] = [
+    ['overview', 'Overview'],
+    ['packs', 'Packs'],
+    ['servers', 'Servers'],
+    ['featured', 'Featured'],
+    ['cache', 'Cache'],
+  ];
+</script>
+
+<div class="shell">
+  <header class="top">
+    <div class="brand mono">smrt<span class="faint">/control</span></div>
+    <nav class="tabs">
+      {#each tabs as [id, label]}
+        <button class="tab" class:active={tab === id} onclick={() => (tab = id)}>{label}</button>
+      {/each}
+    </nav>
+    <div class="spacer"></div>
+    {#if health}<span class="ver faint mono">v{health.version} / schema {health.schema_version}</span>{/if}
+    <button onclick={loadAll} disabled={loading}>{loading ? '...' : 'Refresh'}</button>
+    <button onclick={onLogout}>Sign out</button>
+  </header>
+
+  {#if err}<div class="err mono">{err}</div>{/if}
+
+  <main class="body scroll">
+    {#if tab === 'overview'}
+      <section class="tiles">
+        <div class="tile panel">
+          <div class="n mono">{packs.length}</div>
+          <div class="l muted">packs</div>
+        </div>
+        <div class="tile panel">
+          <div class="n mono">{servers.length}</div>
+          <div class="l muted">servers</div>
+        </div>
+        <div class="tile panel">
+          <div class="n mono">{cache.length}</div>
+          <div class="l muted">cache jars / {fmtBytes(cacheBytes)}</div>
+        </div>
+        <div class="tile panel">
+          <div class="n mono">{authoring.length}</div>
+          <div class="l muted">with authoring config</div>
+        </div>
+        <div class="tile panel">
+          <div class="n mono">{featured?.featured_packs.length ?? 0} / {featured?.featured_servers.length ?? 0}</div>
+          <div class="l muted">featured packs / servers</div>
+        </div>
+      </section>
+
+      <h2 class="sec">API surface</h2>
+      <div class="panel">
+        <table>
+          <thead><tr><th style="width:120px">Method</th><th>Path</th></tr></thead>
+          <tbody>
+            {#each endpoints as [method, path]}
+              <tr>
+                <td><span class="tag">{method}</span></td>
+                <td class="mono">{path}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {:else if tab === 'packs'}
+      <div class="panel">
+        <table>
+          <thead>
+            <tr><th>Pack</th><th>MC</th><th>Latest</th><th>Tags</th><th>Flags</th></tr>
+          </thead>
+          <tbody>
+            {#each packs as p}
+              <tr>
+                <td>
+                  <div>{p.display_name}</div>
+                  <div class="faint mono">{p.pack_id}</div>
+                </td>
+                <td class="mono">{p.minecraft_version}</td>
+                <td class="mono">{p.latest_pack_version}</td>
+                <td>{#each p.tags as t}<span class="tag">{t}</span> {/each}</td>
+                <td>
+                  {#if p.featured}<span class="tag" style="color:var(--accent)">featured</span>{/if}
+                  {#if authoringSet.has(p.pack_id)}<span class="tag" style="color:var(--ok)">authoring</span>{/if}
+                </td>
+              </tr>
+            {/each}
+            {#if packs.length === 0 && !loading}
+              <tr><td colspan="5" class="muted">No packs published yet.</td></tr>
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    {:else if tab === 'servers'}
+      {#if serverEdit !== null}
+        {#key serverEdit}
+          <ServerEditor
+            initial={serverEdit === 'new' ? null : serverEdit}
+            packIds={packs.map((p) => p.pack_id)}
+            onSaved={() => {
+              serverEdit = null;
+              loadAll();
+            }}
+            onCancel={() => (serverEdit = null)}
+          />
+        {/key}
+      {:else}
+        <div class="bar">
+          <button class="primary" onclick={() => (serverEdit = 'new')}>New server</button>
+        </div>
+      {/if}
+      <div class="panel">
+        <table>
+          <thead>
+            <tr><th>Server</th><th>Pack</th><th>Owner</th><th>Flags</th><th style="width:160px"></th></tr>
+          </thead>
+          <tbody>
+            {#each servers as s}
+              <tr>
+                <td>
+                  <div>{s.display_name}</div>
+                  <div class="faint mono">{s.server_id}</div>
+                </td>
+                <td class="mono">{s.pack_id}</td>
+                <td>{s.owner_display}</td>
+                <td>{#if s.featured}<span class="tag" style="color:var(--accent)">featured</span>{/if}</td>
+                <td class="actions">
+                  <button onclick={() => (serverEdit = s)}>Edit</button>
+                  <button class="danger" onclick={() => delServer(s.server_id)}>Delete</button>
+                </td>
+              </tr>
+            {/each}
+            {#if servers.length === 0 && !loading}
+              <tr><td colspan="5" class="muted">No servers curated yet.</td></tr>
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    {:else if tab === 'featured'}
+      <div class="bar row">
+        <button class="primary" onclick={saveFeatured} disabled={featBusy}>
+          {featBusy ? 'saving...' : 'Save featured'}
+        </button>
+        {#if featMsg}<span class="muted mono">{featMsg}</span>{/if}
+      </div>
+      <div class="feat">
+        <div class="panel col">
+          <div class="ch">Featured packs</div>
+          {#each packs as p}
+            <label class="opt">
+              <input
+                type="checkbox"
+                checked={featPacks.has(p.pack_id)}
+                onchange={() => (featPacks = toggle(featPacks, p.pack_id))}
+              />
+              {p.display_name} <span class="faint mono">{p.pack_id}</span>
+            </label>
+          {/each}
+          {#if packs.length === 0}<div class="muted">No packs.</div>{/if}
+        </div>
+        <div class="panel col">
+          <div class="ch">Featured servers</div>
+          {#each servers as s}
+            <label class="opt">
+              <input
+                type="checkbox"
+                checked={featServers.has(s.server_id)}
+                onchange={() => (featServers = toggle(featServers, s.server_id))}
+              />
+              {s.display_name} <span class="faint mono">{s.server_id}</span>
+            </label>
+          {/each}
+          {#if servers.length === 0}<div class="muted">No servers.</div>{/if}
+        </div>
+      </div>
+    {:else if tab === 'cache'}
+      <div class="cache-head muted">
+        {cache.length} jars, {fmtBytes(cacheBytes)} total
+      </div>
+      <div class="panel">
+        <table>
+          <thead><tr><th>sha1</th><th style="width:140px">size</th></tr></thead>
+          <tbody>
+            {#each cache as c}
+              <tr>
+                <td class="mono">{c.sha1}</td>
+                <td class="mono">{fmtBytes(c.size_bytes)}</td>
+              </tr>
+            {/each}
+            {#if cache.length === 0 && !loading}
+              <tr><td colspan="2" class="muted">Cache is empty.</td></tr>
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </main>
+</div>
+
+<style>
+  .shell {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+  .top {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--seam);
+    background: var(--panel);
+  }
+  .brand {
+    font-size: 16px;
+    letter-spacing: 0.04em;
+  }
+  .tabs {
+    display: flex;
+    gap: 2px;
+  }
+  .tab {
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: 2px solid transparent;
+    padding: 6px 12px;
+    color: var(--fg-dim);
+  }
+  .tab:hover {
+    color: var(--fg);
+    border-color: transparent;
+  }
+  .tab.active {
+    color: var(--fg);
+    border-bottom-color: var(--accent);
+  }
+  .spacer {
+    flex: 1;
+  }
+  .ver {
+    font-size: 11px;
+  }
+  .body {
+    flex: 1;
+    padding: 18px 16px;
+  }
+  .err {
+    color: var(--danger);
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--seam);
+    font-size: 12px;
+  }
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .tile {
+    padding: 16px;
+  }
+  .tile .n {
+    font-size: 26px;
+    color: var(--accent);
+  }
+  .tile .l {
+    font-size: 12px;
+    margin-top: 4px;
+  }
+  .sec {
+    font-size: 13px;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 10px;
+  }
+  .cache-head {
+    font-size: 12px;
+    margin-bottom: 10px;
+  }
+  .bar {
+    margin-bottom: 14px;
+  }
+  .actions {
+    white-space: nowrap;
+  }
+  .actions button {
+    padding: 4px 10px;
+    font-size: 12px;
+    margin-right: 6px;
+  }
+  button.danger:hover {
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+  .feat {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  .col {
+    padding: 14px;
+  }
+  .ch {
+    font-size: 12px;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 10px;
+  }
+  .opt {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 0;
+    font-size: 13px;
+  }
+  .opt input {
+    width: auto;
+  }
+</style>
