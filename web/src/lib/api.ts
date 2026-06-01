@@ -39,6 +39,26 @@ async function send(method: string, path: string, jsonBody?: unknown): Promise<v
   if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''));
 }
 
+async function sendRaw(
+  method: string,
+  path: string,
+  body: ArrayBuffer,
+  contentType: string,
+): Promise<void> {
+  const r = await fetch(path, {
+    method,
+    credentials: 'include',
+    headers: { 'Content-Type': contentType },
+    body,
+  });
+  if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''));
+}
+
+async function sha1Hex(buf: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-1', buf);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export const api = {
   health: () => getJson<Health>('/v1/health'),
   packs: () => getJson<PackListing>('/v1/packs'),
@@ -51,6 +71,22 @@ export const api = {
   saveServer: (e: ServerEntry) => send('POST', '/v1/admin/servers', e),
   deleteServer: (id: string) => send('DELETE', `/v1/admin/servers/${encodeURIComponent(id)}`),
   saveFeatured: (f: Featured) => send('POST', '/v1/admin/featured', f),
+
+  // Content-addressed: hash client-side and PUT under the sha1 path. The
+  // mirror re-verifies the body hashes to the claimed sha1.
+  async uploadCacheJar(file: File): Promise<string> {
+    const buf = await file.arrayBuffer();
+    const sha1 = await sha1Hex(buf);
+    await sendRaw(
+      'PUT',
+      `/v1/admin/cache/${sha1.slice(0, 2)}/${sha1}.jar`,
+      buf,
+      'application/java-archive',
+    );
+    return sha1;
+  },
+  deleteCacheJar: (sha1: string) =>
+    send('DELETE', `/v1/admin/cache/${sha1.slice(0, 2)}/${sha1}.jar`),
 
   async session(): Promise<boolean> {
     const r = await fetch('/admin/api/session', { credentials: 'include' });

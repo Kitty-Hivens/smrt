@@ -104,6 +104,42 @@
     return n;
   }
 
+  let uploading = $state(false);
+  let upMsg = $state('');
+
+  async function onUploadJar(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    uploading = true;
+    upMsg = '';
+    try {
+      const sha1 = await api.uploadCacheJar(file);
+      upMsg = `Uploaded ${file.name} (${sha1.slice(0, 12)}...)`;
+      await loadAll();
+    } catch (x) {
+      upMsg = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+    } finally {
+      uploading = false;
+      input.value = '';
+    }
+  }
+
+  async function delCacheJar(sha1: string) {
+    if (
+      !confirm(
+        `Delete jar ${sha1.slice(0, 12)}...? It is added to the removed-list (takedown) and cannot be re-uploaded.`,
+      )
+    )
+      return;
+    try {
+      await api.deleteCacheJar(sha1);
+      await loadAll();
+    } catch (x) {
+      err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+    }
+  }
+
   const cacheBytes = $derived(cache.reduce((n, e) => n + e.size_bytes, 0));
   const authoringSet = $derived(new Set(authoring));
 
@@ -316,21 +352,33 @@
         </div>
       </div>
     {:else if tab === 'cache'}
+      <div class="bar row">
+        <label class="upbtn">
+          {uploading ? 'uploading...' : 'Upload jar'}
+          <input type="file" accept=".jar" onchange={onUploadJar} disabled={uploading} hidden />
+        </label>
+        {#if upMsg}<span class="muted mono">{upMsg}</span>{/if}
+      </div>
       <div class="cache-head muted">
         {cache.length} jars, {fmtBytes(cacheBytes)} total
       </div>
       <div class="panel">
         <table>
-          <thead><tr><th>sha1</th><th style="width:140px">size</th></tr></thead>
+          <thead>
+            <tr><th>sha1</th><th style="width:140px">size</th><th style="width:90px"></th></tr>
+          </thead>
           <tbody>
             {#each cache as c}
               <tr>
                 <td class="mono">{c.sha1}</td>
                 <td class="mono">{fmtBytes(c.size_bytes)}</td>
+                <td class="actions">
+                  <button class="danger" onclick={() => delCacheJar(c.sha1)}>Delete</button>
+                </td>
               </tr>
             {/each}
             {#if cache.length === 0 && !loading}
-              <tr><td colspan="2" class="muted">Cache is empty.</td></tr>
+              <tr><td colspan="3" class="muted">Cache is empty. Upload a jar to seed it.</td></tr>
             {/if}
           </tbody>
         </table>
@@ -459,5 +507,17 @@
   }
   .opt input {
     width: auto;
+  }
+  .upbtn {
+    display: inline-block;
+    font-size: 13px;
+    color: var(--fg);
+    background: var(--panel-2);
+    border: 1px solid var(--seam-bright);
+    padding: 7px 14px;
+    cursor: pointer;
+  }
+  .upbtn:hover {
+    border-color: var(--accent);
   }
 </style>
