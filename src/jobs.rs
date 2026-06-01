@@ -3,7 +3,9 @@
 //! streams the log (SSE) instead of shelling out to `smrt-pack`. A job is an
 //! in-memory log + status; `Notify` wakes SSE tailers on each new line.
 
-use crate::authoring::{Modrinth, apply_curator, build_manifest, make_pack_summary, parse_curator};
+use crate::authoring::{
+    self, BootstrapArgs, Modrinth, apply_curator, build_manifest, make_pack_summary, parse_curator,
+};
 use crate::config::Config;
 use crate::storage::Storage;
 use serde::Serialize;
@@ -121,6 +123,29 @@ impl JobRegistry {
         });
         job
     }
+
+    /// Create a bootstrap job: stage an SC archive into the cache + static and
+    /// write the starter authoring config, on a background task.
+    pub fn spawn_bootstrap(
+        &self,
+        pack_id: String,
+        args: BootstrapArgs,
+        archive: Vec<u8>,
+        storage: Arc<Storage>,
+    ) -> Arc<Job> {
+        let job = self.create("bootstrap", pack_id);
+        let handle = job.clone();
+        tokio::spawn(async move {
+            match run_bootstrap(&handle, args, &archive, &storage).await {
+                Ok(()) => handle.finish(Status::Done),
+                Err(e) => {
+                    handle.line(format!("failed: {e}"));
+                    handle.finish(Status::Failed);
+                }
+            }
+        });
+        job
+    }
 }
 
 /// Load the pack's authoring inputs, apply the curator chain transiently
@@ -187,5 +212,32 @@ async fn run_build(job: &Job, storage: &Storage, config: &Config) -> Result<(), 
         .await
         .map_err(|e| e.to_string())?;
     job.line(format!("build complete: {pack_id} is now {}", manifest.pack_version));
+    Ok(())
+}
+
+async fn run_bootstrap(
+    job: &Job,
+    args: BootstrapArgs,
+    archive: &[u8],
+    storage: &Storage,
+) -> Result<(), String> {
+    let pack_id = args.pack_id.clone();
+    job.line(format!(
+        "bootstrap {pack_id}: reading SC archive ({} bytes)",
+        archive.len()
+    ));
+    let cfg = authoring::bootstrap(args, archive)
+        .await
+        .map_err(|e| e.to_string())?;
+    job.line(format!(
+        "discovered {} mods, {} assets; staged into cache + static",
+        cfg.mods.len(),
+        cfg.assets.len()
+    ));
+    storage
+        .save_pack_config(&pack_id, &cfg)
+        .await
+        .map_err(|e| e.to_string())?;
+    job.line(format!("wrote authoring config for {pack_id} -- ready to curate + build"));
     Ok(())
 }

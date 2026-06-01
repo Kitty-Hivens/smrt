@@ -1,12 +1,22 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
-  import type { DeclaredAsset, DeclaredMod, PackConfig, SourceDecl } from '../lib/types';
+  import type { DeclaredAsset, DeclaredMod, JobStatus, PackConfig, SourceDecl } from '../lib/types';
   import BuildConsole from './BuildConsole.svelte';
+  import BrandingEditor from './BrandingEditor.svelte';
+  import JobLog from './JobLog.svelte';
 
   let { packId, onClose }: { packId: string; onClose: () => void } = $props();
 
-  type Section = 'config' | 'curator' | 'build';
+  type Section = 'config' | 'curator' | 'branding' | 'build';
   let section = $state<Section>('config');
+
+  // bootstrap-from-SC-archive (only shown when there is no config yet)
+  let bootstrapMode = $state(false);
+  let bootMc = $state('1.12.2');
+  let bootLoader = $state('');
+  let bootName = $state('');
+  let bootBusy = $state(false);
+  let bootJobId = $state<string | null>(null);
 
   let cfg = $state<PackConfig | null>(null);
   let tagsStr = $state('');
@@ -58,6 +68,40 @@
       assets: [],
     };
     tagsStr = '';
+  }
+
+  async function onBootstrap(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    bootBusy = true;
+    err = '';
+    bootJobId = null;
+    try {
+      const { job_id } = await api.bootstrapPack(
+        packId,
+        {
+          minecraft_version: bootMc.trim(),
+          loader_version: bootLoader.trim(),
+          display_name: bootName.trim() || undefined,
+        },
+        file,
+      );
+      bootJobId = job_id;
+    } catch (x) {
+      err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+      bootBusy = false;
+    } finally {
+      input.value = '';
+    }
+  }
+
+  function onBootDone(status: JobStatus) {
+    bootBusy = false;
+    if (status === 'done') {
+      bootstrapMode = false;
+      load();
+    }
   }
 
   async function saveConfig() {
@@ -116,7 +160,7 @@
 <div class="hd">
   <h2 class="ttl mono">{packId}<span class="faint">/edit</span></h2>
   <nav class="sub">
-    {#each [['config', 'Config'], ['curator', 'Curator'], ['build', 'Build']] as [id, label]}
+    {#each [['config', 'Config'], ['curator', 'Curator'], ['branding', 'Branding'], ['build', 'Build']] as [id, label]}
       <button class="seg" class:active={section === id} onclick={() => (section = id as Section)}>{label}</button>
     {/each}
   </nav>
@@ -132,7 +176,30 @@
   {#if !cfg}
     <div class="panel empty">
       <p class="muted">No authoring config for <span class="mono">{packId}</span> yet.</p>
-      <button class="primary" onclick={createBlank}>Create blank config</button>
+      <div class="opts">
+        <button class="primary" onclick={createBlank}>Create blank config</button>
+        <button onclick={() => (bootstrapMode = !bootstrapMode)}>Bootstrap from SC archive</button>
+      </div>
+      {#if bootstrapMode}
+        <div class="bootform">
+          <div class="brow">
+            <label>minecraft_version<input bind:value={bootMc} placeholder="1.12.2" /></label>
+            <label>loader_version<input bind:value={bootLoader} placeholder="14.23.5.2922" /></label>
+            <label>display_name<input bind:value={bootName} placeholder={packId} /></label>
+          </div>
+          <label class="upbtn">
+            {bootBusy ? 'working...' : 'Choose SC archive (.zip) + bootstrap'}
+            <input
+              type="file"
+              accept=".zip"
+              onchange={onBootstrap}
+              disabled={bootBusy || !bootMc.trim() || !bootLoader.trim()}
+              hidden
+            />
+          </label>
+          {#if bootJobId}{#key bootJobId}<JobLog jobId={bootJobId} onDone={onBootDone} />{/key}{/if}
+        </div>
+      {/if}
     </div>
   {:else}
     <div class="bar row">
@@ -250,6 +317,8 @@
     hidemymods. Saved verbatim -- your comments and rationale stay intact.
   </p>
   <textarea class="curator mono" bind:value={curatorText} spellcheck="false" placeholder="# curator.toml"></textarea>
+{:else if section === 'branding'}
+  <BrandingEditor {packId} />
 {:else if section === 'build'}
   <BuildConsole {packId} />
 {/if}
@@ -376,5 +445,40 @@
   }
   .panel.scroll {
     margin-bottom: 22px;
+  }
+  .opts {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .bootform {
+    margin-top: 18px;
+    text-align: left;
+  }
+  .brow {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .brow label {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 12px;
+    color: var(--fg-dim);
+  }
+  .upbtn {
+    display: inline-block;
+    font-size: 13px;
+    color: var(--fg);
+    background: var(--panel-2);
+    border: 1px solid var(--seam-bright);
+    padding: 8px 14px;
+    cursor: pointer;
+  }
+  .upbtn:hover {
+    border-color: var(--accent);
   }
 </style>

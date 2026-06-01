@@ -7,13 +7,11 @@ use super::archive::{extract_extra_assets, extract_mods};
 use super::modrinth::Modrinth;
 use super::sources::{write_to_cache, write_to_static};
 use crate::domain::{DeclaredAsset, DeclaredMod, LoaderSpec, PackConfig, SourceDecl};
-use anyhow::{Context, Result, bail};
-use std::fs;
+use anyhow::{Result, bail};
 use std::path::PathBuf;
 use tracing::info;
 
 pub struct BootstrapArgs {
-    pub sc_archive: PathBuf,
     pub pack_id: String,
     pub display_name: String,
     pub tagline: String,
@@ -25,18 +23,16 @@ pub struct BootstrapArgs {
     pub storage: PathBuf,
 }
 
-pub async fn bootstrap(args: BootstrapArgs) -> Result<PackConfig> {
-    let archive_bytes = fs::read(&args.sc_archive)
-        .with_context(|| format!("reading {}", args.sc_archive.display()))?;
+pub async fn bootstrap(args: BootstrapArgs, archive_bytes: &[u8]) -> Result<PackConfig> {
     info!(bytes = archive_bytes.len(), "loaded SC archive");
 
-    let mods = extract_mods(&archive_bytes)?;
+    let mods = extract_mods(archive_bytes)?;
     info!(count = mods.len(), "discovered mods in archive");
     if mods.is_empty() {
         bail!("no mods/*.jar in archive -- wrong archive layout?");
     }
 
-    let extras = extract_extra_assets(&archive_bytes)?;
+    let extras = extract_extra_assets(archive_bytes)?;
     info!(count = extras.len(), "discovered extras files");
 
     let modrinth = Modrinth::new()?;

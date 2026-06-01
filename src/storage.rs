@@ -276,6 +276,36 @@ impl Storage {
         Ok(())
     }
 
+    /// Every file under the pack's static area as relative paths (sorted).
+    /// Backs the panel's Branding section (uploaded icons / banners / assets).
+    pub async fn list_pack_static(&self, pack_id: &str) -> Result<Vec<String>, ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        let base = self.root.join("packs").join(pack_id).join("static");
+        let mut out = Vec::new();
+        let mut stack = vec![base.clone()];
+        while let Some(dir) = stack.pop() {
+            let mut entries = match fs::read_dir(&dir).await {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            while let Some(entry) = entries.next_entry().await.map_err(io_err)? {
+                let path = entry.path();
+                let ft = entry.file_type().await.map_err(io_err)?;
+                if ft.is_dir() {
+                    stack.push(path);
+                } else if ft.is_file()
+                    && let Ok(rel) = path.strip_prefix(&base)
+                {
+                    out.push(rel.to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+        out.sort();
+        Ok(out)
+    }
+
     // ── Servers ────────────────────────────────────────────────────────────
 
     pub async fn list_servers(&self) -> Result<Vec<ServerEntry>, ApiError> {

@@ -28,6 +28,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/admin/packs/:pack_id/static/*rel_path",
             put(put_pack_static).delete(delete_pack_static),
         )
+        .route("/v1/admin/packs/:pack_id/static", get(list_pack_static))
         .route("/v1/admin/packs", get(list_authoring_packs))
         .route(
             "/v1/admin/packs/:pack_id/config",
@@ -128,6 +129,18 @@ async fn delete_pack_static(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn list_pack_static(
+    State(state): State<AppState>,
+    Path(pack_id): Path<String>,
+) -> Result<Json<StaticListing>, ApiError> {
+    let files = state.storage.list_pack_static(&pack_id).await?;
+    Ok(Json(StaticListing {
+        schema_version: SCHEMA_VERSION,
+        pack_id,
+        files,
+    }))
+}
+
 async fn save_featured(
     State(state): State<AppState>,
     Json(featured): Json<Featured>,
@@ -214,4 +227,11 @@ struct PutStaticResponse {
     pack_id: String,
     rel_path: String,
     size_bytes: u64,
+}
+
+#[derive(serde::Serialize)]
+struct StaticListing {
+    schema_version: u32,
+    pack_id: String,
+    files: Vec<String>,
 }

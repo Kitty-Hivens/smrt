@@ -123,6 +123,59 @@ export const api = {
   },
   jobEventsUrl: (jobId: string) => `/v1/admin/jobs/${encodeURIComponent(jobId)}/events`,
 
+  // ── bootstrap + pack static assets ──
+  async bootstrapPack(
+    id: string,
+    params: {
+      minecraft_version: string;
+      loader_version: string;
+      display_name?: string;
+      tagline?: string;
+      loader_name?: string;
+      java_major?: number;
+    },
+    file: File,
+  ): Promise<{ job_id: string }> {
+    const q = new URLSearchParams();
+    q.set('minecraft_version', params.minecraft_version);
+    q.set('loader_version', params.loader_version);
+    if (params.display_name) q.set('display_name', params.display_name);
+    if (params.tagline) q.set('tagline', params.tagline);
+    if (params.loader_name) q.set('loader_name', params.loader_name);
+    if (params.java_major != null) q.set('java_major', String(params.java_major));
+    const buf = await file.arrayBuffer();
+    const r = await fetch(`/v1/admin/packs/${encodeURIComponent(id)}/bootstrap?${q}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/zip' },
+      body: buf,
+    });
+    if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''));
+    return (await r.json()) as { job_id: string };
+  },
+  packStatic: (id: string) =>
+    getJson<{ schema_version: number; pack_id: string; files: string[] }>(
+      `/v1/admin/packs/${encodeURIComponent(id)}/static`,
+    ),
+  async uploadStatic(id: string, relPath: string, file: File): Promise<void> {
+    const buf = await file.arrayBuffer();
+    const enc = relPath.split('/').map(encodeURIComponent).join('/');
+    await sendRaw(
+      'PUT',
+      `/v1/admin/packs/${encodeURIComponent(id)}/static/${enc}`,
+      buf,
+      file.type || 'application/octet-stream',
+    );
+  },
+  deleteStatic(id: string, relPath: string): Promise<void> {
+    const enc = relPath.split('/').map(encodeURIComponent).join('/');
+    return send('DELETE', `/v1/admin/packs/${encodeURIComponent(id)}/static/${enc}`);
+  },
+  staticUrl(id: string, relPath: string): string {
+    const enc = relPath.split('/').map(encodeURIComponent).join('/');
+    return `/v1/packs/${encodeURIComponent(id)}/static/${enc}`;
+  },
+
   async session(): Promise<boolean> {
     const r = await fetch('/admin/api/session', { credentials: 'include' });
     return r.ok;

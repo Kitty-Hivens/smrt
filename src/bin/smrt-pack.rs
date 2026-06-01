@@ -172,19 +172,23 @@ async fn main() -> Result<()> {
             java_major,
             storage,
         } => {
-            let cfg = authoring::bootstrap(BootstrapArgs {
-                sc_archive,
-                pack_id,
-                display_name,
-                tagline,
-                minecraft_version,
-                loader: LoaderSpec {
-                    name: loader_name,
-                    version: loader_version,
+            let archive = fs::read(&sc_archive)
+                .with_context(|| format!("reading {}", sc_archive.display()))?;
+            let cfg = authoring::bootstrap(
+                BootstrapArgs {
+                    pack_id,
+                    display_name,
+                    tagline,
+                    minecraft_version,
+                    loader: LoaderSpec {
+                        name: loader_name,
+                        version: loader_version,
+                    },
+                    java_major,
+                    storage,
                 },
-                java_major,
-                storage,
-            })
+                &archive,
+            )
             .await?;
             write_pack_config(&cfg, &out)?;
             info!(
