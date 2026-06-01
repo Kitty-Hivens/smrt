@@ -4,6 +4,9 @@
 // Operational / external types that have no Rust counterpart stay hand-written
 // at the bottom.
 
+import type { DryRun } from './bindings/DryRun';
+
+export type { DryRun };
 export type { Health } from './bindings/Health';
 export type { PackSummary } from './bindings/PackSummary';
 export type { PackListing } from './bindings/PackListing';
@@ -59,4 +62,14 @@ export interface ModrinthVersion {
   version_number: string;
   game_versions: string[];
   loaders: string[];
+}
+
+// GET /v1/admin/jobs/:id -- `result` is present only for a finished dry-run.
+export interface JobResult {
+  job_id: string;
+  kind: string;
+  pack_id: string;
+  status: JobStatus;
+  log: string[];
+  result?: DryRun | null;
 }

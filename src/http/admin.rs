@@ -45,6 +45,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/admin/featured", post(save_featured))
         .route("/v1/admin/modrinth/search", get(modrinth_search))
         .route("/v1/admin/modrinth/versions", get(modrinth_versions))
+        .route("/v1/admin/modrinth/icon", get(modrinth_icon))
         .layer(DefaultBodyLimit::max(ADMIN_BODY_LIMIT))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
         .with_state(state)
@@ -189,6 +190,25 @@ async fn modrinth_versions(
         .await
         .map_err(ApiError::Internal)?;
     Ok(Json(vs))
+}
+
+#[derive(serde::Deserialize)]
+struct IconQuery {
+    id: String,
+}
+
+#[derive(serde::Serialize)]
+struct IconResp {
+    icon_url: Option<String>,
+}
+
+// Mirrors the launcher's per-project icon lookup so the preview can show the
+// same icons the player will see for Modrinth-sourced mods without an explicit
+// display.icon_url. The panel caches per project_id client-side.
+async fn modrinth_icon(Query(q): Query<IconQuery>) -> Result<Json<IconResp>, ApiError> {
+    let m = modrinth::Modrinth::new().map_err(ApiError::Internal)?;
+    let icon_url = m.project_icon(&q.id).await.map_err(ApiError::Internal)?;
+    Ok(Json(IconResp { icon_url }))
 }
 
 // ── authoring inputs ───────────────────────────────────────────────────────

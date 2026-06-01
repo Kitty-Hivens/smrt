@@ -7,10 +7,13 @@ import type {
   Featured,
   Curator,
   Health,
+  JobResult,
+  ManifestVersionsListing,
   ModrinthHit,
   ModrinthVersion,
   PackConfig,
   PackListing,
+  PackManifest,
   ServerEntry,
   ServerListing,
 } from './types';
@@ -79,6 +82,27 @@ async function putText(path: string, text: string): Promise<void> {
   if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''));
 }
 
+// Per-project icon cache (incl. negative results), mirroring the launcher's
+// ModIconResolver. Shared across every ModIcon in the preview so a 56-mod pack
+// hits each Modrinth project at most once.
+const modrinthIconCache = new Map<string, string | null>();
+
+async function resolveModrinthIcon(projectId: string): Promise<string | null> {
+  const cached = modrinthIconCache.get(projectId);
+  if (cached !== undefined) return cached;
+  try {
+    const r = await getJson<{ icon_url: string | null }>(
+      `/v1/admin/modrinth/icon?id=${encodeURIComponent(projectId)}`,
+    );
+    const url = r.icon_url ?? null;
+    modrinthIconCache.set(projectId, url);
+    return url;
+  } catch {
+    modrinthIconCache.set(projectId, null);
+    return null;
+  }
+}
+
 export const api = {
   health: () => getJson<Health>('/v1/health'),
   packs: () => getJson<PackListing>('/v1/packs'),
@@ -120,8 +144,9 @@ export const api = {
     getJson<Curator>(`/v1/admin/packs/${encodeURIComponent(id)}/curator/structured`),
   saveCuratorStructured: (id: string, c: Curator) =>
     send('PUT', `/v1/admin/packs/${encodeURIComponent(id)}/curator/structured`, c),
-  async buildPack(id: string): Promise<{ job_id: string }> {
-    const r = await fetch(`/v1/admin/packs/${encodeURIComponent(id)}/build`, {
+  async buildPack(id: string, opts?: { dryRun?: boolean }): Promise<{ job_id: string }> {
+    const q = opts?.dryRun ? '?dry_run=true' : '';
+    const r = await fetch(`/v1/admin/packs/${encodeURIComponent(id)}/build${q}`, {
       method: 'POST',
       credentials: 'include',
     });
@@ -129,6 +154,16 @@ export const api = {
     return (await r.json()) as { job_id: string };
   },
   jobEventsUrl: (jobId: string) => `/v1/admin/jobs/${encodeURIComponent(jobId)}/events`,
+  jobStatus: (jobId: string) => getJson<JobResult>(`/v1/admin/jobs/${encodeURIComponent(jobId)}`),
+
+  // ── published manifest (preview baseline + version diff) ──
+  manifest: (id: string) => getJson<PackManifest>(`/v1/packs/${encodeURIComponent(id)}/manifest`),
+  manifestVersions: (id: string) =>
+    getJson<ManifestVersionsListing>(`/v1/packs/${encodeURIComponent(id)}/manifest/versions`),
+  manifestVersion: (id: string, version: string) =>
+    getJson<PackManifest>(
+      `/v1/packs/${encodeURIComponent(id)}/manifest/${encodeURIComponent(version)}`,
+    ),
 
   // ── bootstrap + pack static assets ──
   async bootstrapPack(
@@ -192,6 +227,8 @@ export const api = {
     getJson<ModrinthVersion[]>(
       `/v1/admin/modrinth/versions?id=${encodeURIComponent(id)}${mc ? `&mc=${encodeURIComponent(mc)}` : ''}`,
     ),
+  // Same per-project lookup the launcher's ModIconResolver does; cached.
+  modrinthIcon: (projectId: string) => resolveModrinthIcon(projectId),
 
   async session(): Promise<boolean> {
     const r = await fetch('/admin/api/session', { credentials: 'include' });

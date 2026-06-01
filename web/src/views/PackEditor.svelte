@@ -6,11 +6,13 @@
   import CuratorEditor from './CuratorEditor.svelte';
   import JobLog from './JobLog.svelte';
   import ModrinthPicker from './ModrinthPicker.svelte';
+  import PackPreview from './PackPreview.svelte';
 
   let { packId, onClose }: { packId: string; onClose: () => void } = $props();
 
   type Section = 'config' | 'curator' | 'branding' | 'build';
   let section = $state<Section>('config');
+  let previewOpen = $state(false);
 
   // bootstrap-from-SC-archive (only shown when there is no config yet)
   let bootstrapMode = $state(false);
@@ -159,11 +161,18 @@
     {/each}
   </nav>
   <div class="spacer"></div>
+  {#if !loading && cfg}
+    <button class="pv" class:active={previewOpen} onclick={() => (previewOpen = !previewOpen)}>
+      {previewOpen ? 'Hide preview' : 'Preview'}
+    </button>
+  {/if}
   <button onclick={onClose}>Close</button>
 </div>
 
 {#if err}<div class="err mono">{err}</div>{/if}
 
+<div class="body" class:split={previewOpen}>
+  <div class="editcol">
 {#if loading}
   <div class="muted mono">loading...</div>
 {:else if section === 'config'}
@@ -310,6 +319,13 @@
 {:else if section === 'build'}
   <BuildConsole {packId} />
 {/if}
+  </div>
+  {#if previewOpen}
+    <div class="previewcol">
+      <PackPreview {packId} />
+    </div>
+  {/if}
+</div>
 
 {#if modPicker !== null && cfg}
   <ModrinthPicker
@@ -469,5 +485,28 @@
   }
   .upbtn:hover {
     border-color: var(--accent);
+  }
+  .pv {
+    margin-right: 8px;
+  }
+  .pv.active {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .body.split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 18px;
+    align-items: start;
+  }
+  .editcol {
+    min-width: 0;
+  }
+  .previewcol {
+    position: sticky;
+    top: 12px;
+    max-height: calc(100vh - 96px);
+    overflow: auto;
+    min-width: 0;
   }
 </style>

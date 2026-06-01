@@ -5,7 +5,7 @@
 use super::ApiError;
 use crate::authoring::BootstrapArgs;
 use crate::domain::LoaderSpec;
-use crate::jobs::Status;
+use crate::jobs::{DryRun, Status};
 use crate::state::AppState;
 use axum::Json;
 use axum::Router;
@@ -37,10 +37,25 @@ struct JobRef {
     pack_id: String,
 }
 
-async fn build_pack(State(state): State<AppState>, Path(pack_id): Path<String>) -> Json<JobRef> {
-    let job = state
-        .jobs
-        .spawn_build(pack_id, state.storage.clone(), state.config.clone());
+#[derive(Deserialize)]
+struct BuildParams {
+    /// `?dry_run=1` computes + stashes the manifest without publishing, so the
+    /// panel can preview and diff before committing a real build.
+    #[serde(default)]
+    dry_run: bool,
+}
+
+async fn build_pack(
+    State(state): State<AppState>,
+    Path(pack_id): Path<String>,
+    Query(p): Query<BuildParams>,
+) -> Json<JobRef> {
+    let job = state.jobs.spawn_build(
+        pack_id,
+        state.storage.clone(),
+        state.config.clone(),
+        p.dry_run,
+    );
     Json(JobRef {
         job_id: job.id.clone(),
         kind: job.kind,
@@ -94,6 +109,9 @@ struct JobStatusResp {
     pack_id: String,
     status: Status,
     log: Vec<String>,
+    /// Present only for a finished dry-run (preview) build.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<DryRun>,
 }
 
 async fn job_status(
@@ -108,6 +126,7 @@ async fn job_status(
         pack_id: job.pack_id.clone(),
         status,
         log,
+        result: job.result(),
     }))
 }
 

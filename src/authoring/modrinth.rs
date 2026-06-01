@@ -52,6 +52,25 @@ impl Modrinth {
         Ok(out)
     }
 
+    /// A project's icon URL -- the launcher's `ModIconResolver` runtime
+    /// fallback when a manifest entry carries no `display.icon_url`. `None`
+    /// when the project has no icon. Slug or numeric id both work.
+    pub async fn project_icon(&self, slug_or_id: &str) -> Result<Option<String>> {
+        let resp = self
+            .http
+            .get(format!("{MODRINTH_BASE}/v2/project/{slug_or_id}"))
+            .send()
+            .await
+            .context("project get")?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("modrinth project HTTP {status}: {body}"));
+        }
+        let p: ProjectIcon = resp.json().await.context("decode project")?;
+        Ok(p.icon_url.filter(|s| !s.is_empty()))
+    }
+
     pub async fn project_version(&self, project_id: &str, version_id: &str) -> Result<Version> {
         let resp = self
             .http
@@ -134,6 +153,12 @@ impl Modrinth {
 struct VersionFilesRequest<'a> {
     hashes: &'a [String],
     algorithm: &'static str,
+}
+
+#[derive(Deserialize)]
+struct ProjectIcon {
+    #[serde(default)]
+    icon_url: Option<String>,
 }
 
 #[derive(Deserialize)]
