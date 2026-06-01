@@ -1,5 +1,5 @@
 use super::ApiError;
-use crate::authoring::{modrinth, parse_curator};
+use crate::authoring::{Curator, merge_curator, modrinth, parse_curator};
 use crate::domain::*;
 use crate::state::AppState;
 use axum::body::Bytes;
@@ -37,6 +37,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/admin/packs/:pack_id/curator",
             get(get_pack_curator).put(put_pack_curator),
+        )
+        .route(
+            "/v1/admin/packs/:pack_id/curator/structured",
+            put(put_pack_curator_structured),
         )
         .route("/v1/admin/featured", post(save_featured))
         .route("/v1/admin/modrinth/search", get(modrinth_search))
@@ -247,6 +251,23 @@ async fn put_pack_curator(
     parse_curator(&body)
         .map_err(|e| ApiError::BadRequest(format!("curator.toml does not parse: {e}")))?;
     state.storage.save_curator_doc(&pack_id, &body).await?;
+    Ok(StatusCode::CREATED)
+}
+
+async fn put_pack_curator_structured(
+    State(state): State<AppState>,
+    Path(pack_id): Path<String>,
+    Json(curator): Json<Curator>,
+) -> Result<StatusCode, ApiError> {
+    // Merge the structured edit into the existing doc so section comments
+    // survive; the raw editor stays the full-fidelity path.
+    let existing = state
+        .storage
+        .load_curator_doc(&pack_id)
+        .await
+        .unwrap_or_default();
+    let merged = merge_curator(&existing, &curator).map_err(ApiError::Internal)?;
+    state.storage.save_curator_doc(&pack_id, &merged).await?;
     Ok(StatusCode::CREATED)
 }
 

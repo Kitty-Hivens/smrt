@@ -12,7 +12,7 @@
 use crate::domain::{PackConfig, SourceDecl};
 use crate::domain::{Display, Requirement};
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use std::collections::HashMap;
 use std::fs;
@@ -27,7 +27,7 @@ use tracing::{debug, info, warn};
 /// `[{...mod...}, ...]`; some older mods wrap a single object in
 /// `{"modListVersion": 2, "modList": [{...}]}`. [`read_mcmod_info`]
 /// flattens both into `Vec<McModInfo>`.
-#[derive(Debug, Clone, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "bindings/")]
 pub struct McModInfo {
     #[serde(default)]
@@ -44,7 +44,7 @@ pub struct McModInfo {
     pub dependencies: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "bindings/")]
 struct McModInfoListWrap {
     #[serde(rename = "modList")]
@@ -191,7 +191,7 @@ pub fn enrich_from_mcmod_info(
 
 /// Curator-authored mapping of mod filename to role string.
 /// Loaded from a TOML file via [`load_role_table`].
-#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "bindings/")]
 pub struct RoleTable {
     #[serde(default)]
@@ -208,7 +208,7 @@ pub fn load_role_table(path: &Path) -> Result<RoleTable> {
 /// Merged into the emitted `summary.json` by `smrt-pack build` when
 /// passed via `--pack-meta`. Every field optional; absent fields stay
 /// out of summary.json (per the `skip_serializing_if` on PackSummary).
-#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "bindings/")]
 pub struct PackMeta {
     #[serde(default)]
@@ -241,7 +241,7 @@ pub fn load_pack_meta(path: &Path) -> Result<PackMeta> {
 /// [`apply_role_table`], [`infer_requires_from_mcmod_info`]) remain
 /// callable from their own subcommands for power-user / debugging
 /// scenarios, but the canonical pipeline goes through this one file.
-#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "bindings/")]
 pub struct Curator {
     #[serde(default)]
@@ -290,7 +290,7 @@ pub struct Curator {
 /// shaderpacks, resourcepacks) are never matched even if their
 /// dest accidentally collides -- the filter keys on
 /// `source.type == "smrt_static"` to keep curator extras safe.
-#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "bindings/")]
 pub struct DropAssets {
     #[serde(default)]
@@ -301,7 +301,7 @@ pub struct DropAssets {
 /// part of `apply-curator` and become regular `smrt_static` assets in
 /// the resulting manifest. Each generator is gated by a boolean so
 /// curator opts in per pack.
-#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "bindings/")]
 pub struct GenerateConfig {
     /// Emit `<static>/<filename>` listing the curator-authored
@@ -338,14 +338,14 @@ fn default_hidemymods_filename() -> String {
     "hidemymods-spoof.json".to_string()
 }
 
-#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "bindings/")]
 pub struct MarkOptional {
     #[serde(default)]
     pub filenames: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "bindings/")]
 pub struct SubstituteEntry {
     pub source: crate::domain::SourceDecl,
@@ -356,7 +356,7 @@ pub struct SubstituteEntry {
 /// Modrinth-direct extra mod the curator wants to add on top of the
 /// SC-derived pack. The build pipeline does the Modrinth API lookup
 /// at apply time to resolve project_id + version_id + primary file.
-#[derive(Debug, Clone, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "bindings/")]
 pub struct ExtraMod {
     pub slug: String,
@@ -373,7 +373,7 @@ pub struct ExtraMod {
 /// Modrinth-direct extra asset (resourcepack / shaderpack / data pack).
 /// `dest_dir` is the destination subfolder ("resourcepacks",
 /// "shaderpacks", etc); the resolved filename appends to that path.
-#[derive(Debug, Clone, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "bindings/")]
 pub struct ExtraAsset {
     pub slug: String,
@@ -389,7 +389,7 @@ pub struct ExtraAsset {
     pub name_override: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "bindings/")]
 #[serde(rename_all = "snake_case")]
 pub enum ExtraAssetKind {
@@ -426,6 +426,45 @@ pub fn load_curator(path: &Path) -> Result<Curator> {
 /// shape validation as [`load_curator`] without the file read.
 pub fn parse_curator(text: &str) -> Result<Curator> {
     toml::from_str(text).context("parsing curator TOML")
+}
+
+/// Merge a structured [`Curator`] into an existing curator.toml, preserving the
+/// existing document's comments where toml_edit can (a kept key keeps its
+/// leading decor). Each managed table is replaced from the struct; empty
+/// tables / arrays are dropped so unused features don't clutter the file. Inner
+/// per-line comments inside a replaced table are not preserved -- the raw
+/// editor stays the full-fidelity path.
+pub fn merge_curator(existing: &str, curator: &Curator) -> Result<String> {
+    use toml_edit::DocumentMut;
+    let mut doc: DocumentMut = if existing.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        existing.parse().context("parsing existing curator.toml")?
+    };
+    let fresh: DocumentMut = toml_edit::ser::to_string(curator)
+        .context("serializing curator")?
+        .parse()
+        .context("re-parsing serialized curator")?;
+    for (key, item) in fresh.as_table().iter() {
+        if is_empty_item(item) {
+            doc.remove(key);
+        } else {
+            doc[key] = item.clone();
+        }
+    }
+    Ok(doc.to_string())
+}
+
+fn is_empty_item(item: &toml_edit::Item) -> bool {
+    use toml_edit::{Item, Value};
+    match item {
+        Item::None => true,
+        Item::Table(t) => t.iter().all(|(_, v)| is_empty_item(v)),
+        Item::ArrayOfTables(a) => a.is_empty(),
+        Item::Value(Value::Array(a)) => a.is_empty(),
+        Item::Value(Value::InlineTable(t)) => t.is_empty(),
+        Item::Value(_) => false,
+    }
 }
 
 // ── Mutations (sync) ──────────────────────────────────────────────────────
@@ -1219,6 +1258,28 @@ mod tests {
     use std::io::Write;
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
+
+    #[test]
+    fn merge_curator_replaces_values_drops_empty_and_keeps_comments() {
+        let existing = "# top-of-file note\ndefault_off = [\"A.jar\"]\n\n# category notes\n[category_table]\n\"A.jar\" = \"old\"\n";
+        let mut c = Curator {
+            default_off: vec!["B.jar".to_string()],
+            ..Default::default()
+        };
+        c.category_table.insert("A.jar".to_string(), "new".to_string());
+        let merged = merge_curator(existing, &c).unwrap();
+        // values updated
+        assert!(merged.contains("B.jar"), "default_off replaced: {merged}");
+        assert!(merged.contains("\"new\""), "category replaced: {merged}");
+        assert!(!merged.contains("\"old\""), "old value gone: {merged}");
+        // unused/default tables are not emitted
+        assert!(!merged.contains("[mark_optional]"), "empty table dropped: {merged}");
+        assert!(!merged.contains("[generate]"), "empty table dropped: {merged}");
+        // round-trips as a valid Curator
+        parse_curator(&merged).unwrap();
+        // the doc-level comment survives the merge
+        assert!(merged.contains("# top-of-file note"), "doc comment survives: {merged}");
+    }
 
     fn empty_config() -> PackConfig {
         PackConfig {
