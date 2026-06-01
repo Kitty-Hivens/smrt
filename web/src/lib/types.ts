@@ -74,3 +74,58 @@ export interface AuthoringPacksListing {
   schema_version: number;
   packs: string[];
 }
+
+// ── Authoring config (the editable PackConfig) ──
+
+export interface LoaderSpec {
+  name: string;
+  version: string;
+}
+
+export interface DisplayMeta {
+  name?: string | null;
+  description?: string | null;
+  category?: string | null;
+  incompatible_with?: string[];
+  license?: string | null;
+  url?: string | null;
+  icon_url?: string | null;
+  role?: string | null;
+}
+
+export type SourceDecl =
+  | { type: 'modrinth'; project_id: string; version_id: string }
+  | { type: 'smrt_cache'; sha1: string }
+  | { type: 'smrt_static'; rel_path: string };
+
+export interface DeclaredMod {
+  filename: string;
+  required?: boolean;
+  default_enabled?: boolean;
+  source: SourceDecl;
+  display?: DisplayMeta | null;
+  note?: string | null;
+}
+
+export interface DeclaredAsset {
+  dest: string;
+  required?: boolean;
+  source: SourceDecl;
+  display?: DisplayMeta | null;
+  note?: string | null;
+}
+
+export interface PackConfig {
+  pack_id: string;
+  display_name: string;
+  tagline: string;
+  minecraft_version: string;
+  loader: LoaderSpec;
+  java_major: number;
+  tags?: string[];
+  featured?: boolean;
+  mods: DeclaredMod[];
+  assets?: DeclaredAsset[];
+}
+
+export type JobStatus = 'running' | 'done' | 'failed';

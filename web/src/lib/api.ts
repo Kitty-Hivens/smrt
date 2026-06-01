@@ -6,6 +6,7 @@ import type {
   CacheInventory,
   Featured,
   Health,
+  PackConfig,
   PackListing,
   ServerEntry,
   ServerListing,
@@ -59,6 +60,22 @@ async function sha1Hex(buf: ArrayBuffer): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+async function getText(path: string): Promise<string> {
+  const r = await fetch(path, { credentials: 'include' });
+  if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''));
+  return r.text();
+}
+
+async function putText(path: string, text: string): Promise<void> {
+  const r = await fetch(path, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    body: text,
+  });
+  if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''));
+}
+
 export const api = {
   health: () => getJson<Health>('/v1/health'),
   packs: () => getJson<PackListing>('/v1/packs'),
@@ -87,6 +104,24 @@ export const api = {
   },
   deleteCacheJar: (sha1: string) =>
     send('DELETE', `/v1/admin/cache/${sha1.slice(0, 2)}/${sha1}.jar`),
+
+  // ── authoring: config, curator, build ──
+  packConfig: (id: string) =>
+    getJson<PackConfig>(`/v1/admin/packs/${encodeURIComponent(id)}/config`),
+  savePackConfig: (id: string, cfg: PackConfig) =>
+    send('PUT', `/v1/admin/packs/${encodeURIComponent(id)}/config`, cfg),
+  curator: (id: string) => getText(`/v1/admin/packs/${encodeURIComponent(id)}/curator`),
+  saveCurator: (id: string, text: string) =>
+    putText(`/v1/admin/packs/${encodeURIComponent(id)}/curator`, text),
+  async buildPack(id: string): Promise<{ job_id: string }> {
+    const r = await fetch(`/v1/admin/packs/${encodeURIComponent(id)}/build`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''));
+    return (await r.json()) as { job_id: string };
+  },
+  jobEventsUrl: (jobId: string) => `/v1/admin/jobs/${encodeURIComponent(jobId)}/events`,
 
   async session(): Promise<boolean> {
     const r = await fetch('/admin/api/session', { credentials: 'include' });

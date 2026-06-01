@@ -8,6 +8,7 @@
     ServerEntry,
   } from '../lib/types';
   import ServerEditor from './ServerEditor.svelte';
+  import PackEditor from './PackEditor.svelte';
 
   let { onLogout }: { onLogout: () => void } = $props();
 
@@ -16,6 +17,8 @@
 
   // server create/edit: 'new' = creating, ServerEntry = editing, null = closed
   let serverEdit = $state<ServerEntry | 'new' | null>(null);
+  // pack editor: pack_id being edited, null = closed
+  let packEdit = $state<string | null>(null);
 
   // featured selections, synced from featured.json on load
   let featPacks = $state<Set<string>>(new Set());
@@ -142,6 +145,15 @@
 
   const cacheBytes = $derived(cache.reduce((n, e) => n + e.size_bytes, 0));
   const authoringSet = $derived(new Set(authoring));
+  const allPackIds = $derived(
+    [...new Set([...packs.map((p) => p.pack_id), ...authoring])].sort(),
+  );
+  const summaryFor = (id: string) => packs.find((p) => p.pack_id === id);
+
+  function newPack() {
+    const id = prompt('New pack id (letters, digits, - _ .):')?.trim();
+    if (id) packEdit = id;
+  }
 
   function fmtBytes(n: number): string {
     if (n < 1024) return `${n} B`;
@@ -242,33 +254,50 @@
         </table>
       </div>
     {:else if tab === 'packs'}
-      <div class="panel">
-        <table>
-          <thead>
-            <tr><th>Pack</th><th>MC</th><th>Latest</th><th>Tags</th><th>Flags</th></tr>
-          </thead>
-          <tbody>
-            {#each packs as p}
-              <tr>
-                <td>
-                  <div>{p.display_name}</div>
-                  <div class="faint mono">{p.pack_id}</div>
-                </td>
-                <td class="mono">{p.minecraft_version}</td>
-                <td class="mono">{p.latest_pack_version}</td>
-                <td>{#each p.tags as t}<span class="tag">{t}</span> {/each}</td>
-                <td>
-                  {#if p.featured}<span class="tag" style="color:var(--accent)">featured</span>{/if}
-                  {#if authoringSet.has(p.pack_id)}<span class="tag" style="color:var(--ok)">authoring</span>{/if}
-                </td>
-              </tr>
-            {/each}
-            {#if packs.length === 0 && !loading}
-              <tr><td colspan="5" class="muted">No packs published yet.</td></tr>
-            {/if}
-          </tbody>
-        </table>
-      </div>
+      {#if packEdit !== null}
+        {#key packEdit}
+          <PackEditor
+            packId={packEdit}
+            onClose={() => {
+              packEdit = null;
+              loadAll();
+            }}
+          />
+        {/key}
+      {:else}
+        <div class="bar">
+          <button class="primary" onclick={newPack}>New pack</button>
+        </div>
+        <div class="panel">
+          <table>
+            <thead>
+              <tr><th>Pack</th><th>MC</th><th>Latest</th><th>Tags</th><th>Flags</th><th style="width:80px"></th></tr>
+            </thead>
+            <tbody>
+              {#each allPackIds as id}
+                {@const p = summaryFor(id)}
+                <tr>
+                  <td>
+                    <div>{p?.display_name ?? id}</div>
+                    <div class="faint mono">{id}</div>
+                  </td>
+                  <td class="mono">{p?.minecraft_version ?? '-'}</td>
+                  <td class="mono">{p?.latest_pack_version ?? '(unbuilt)'}</td>
+                  <td>{#each p?.tags ?? [] as t}<span class="tag">{t}</span> {/each}</td>
+                  <td>
+                    {#if p?.featured}<span class="tag" style="color:var(--accent)">featured</span>{/if}
+                    {#if authoringSet.has(id)}<span class="tag" style="color:var(--ok)">authoring</span>{/if}
+                  </td>
+                  <td class="actions"><button onclick={() => (packEdit = id)}>Edit</button></td>
+                </tr>
+              {/each}
+              {#if allPackIds.length === 0 && !loading}
+                <tr><td colspan="6" class="muted">No packs yet. Create one or bootstrap from an SC archive.</td></tr>
+              {/if}
+            </tbody>
+          </table>
+        </div>
+      {/if}
     {:else if tab === 'servers'}
       {#if serverEdit !== null}
         {#key serverEdit}
