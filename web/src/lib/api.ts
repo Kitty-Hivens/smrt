@@ -5,6 +5,7 @@ import type {
   AuthoringPacksListing,
   CacheInventory,
   Featured,
+  Curator,
   Health,
   ModrinthHit,
   ModrinthVersion,
@@ -115,6 +116,10 @@ export const api = {
   curator: (id: string) => getText(`/v1/admin/packs/${encodeURIComponent(id)}/curator`),
   saveCurator: (id: string, text: string) =>
     putText(`/v1/admin/packs/${encodeURIComponent(id)}/curator`, text),
+  curatorStructured: (id: string) =>
+    getJson<Curator>(`/v1/admin/packs/${encodeURIComponent(id)}/curator/structured`),
+  saveCuratorStructured: (id: string, c: Curator) =>
+    send('PUT', `/v1/admin/packs/${encodeURIComponent(id)}/curator/structured`, c),
   async buildPack(id: string): Promise<{ job_id: string }> {
     const r = await fetch(`/v1/admin/packs/${encodeURIComponent(id)}/build`, {
       method: 'POST',

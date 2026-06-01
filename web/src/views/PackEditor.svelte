@@ -3,6 +3,7 @@
   import type { DeclaredAsset, DeclaredMod, JobStatus, PackConfig, SourceDecl } from '../lib/types';
   import BuildConsole from './BuildConsole.svelte';
   import BrandingEditor from './BrandingEditor.svelte';
+  import CuratorEditor from './CuratorEditor.svelte';
   import JobLog from './JobLog.svelte';
   import ModrinthPicker from './ModrinthPicker.svelte';
 
@@ -24,13 +25,10 @@
 
   let cfg = $state<PackConfig | null>(null);
   let tagsStr = $state('');
-  let curatorText = $state('');
   let loading = $state(true);
   let err = $state('');
   let cfgMsg = $state('');
-  let curMsg = $state('');
   let savingCfg = $state(false);
-  let savingCur = $state(false);
 
   async function load() {
     loading = true;
@@ -45,14 +43,6 @@
       } else {
         err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
       }
-    }
-    try {
-      curatorText = await api.curator(packId);
-    } catch (e) {
-      if (!(e instanceof ApiError && e.status === 404)) {
-        err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
-      }
-      curatorText = curatorText || '';
     }
     loading = false;
   }
@@ -126,19 +116,6 @@
       cfgMsg = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
     } finally {
       savingCfg = false;
-    }
-  }
-
-  async function saveCurator() {
-    savingCur = true;
-    curMsg = '';
-    try {
-      await api.saveCurator(packId, curatorText);
-      curMsg = 'Saved -- comments preserved.';
-    } catch (e) {
-      curMsg = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
-    } finally {
-      savingCur = false;
     }
   }
 
@@ -323,18 +300,11 @@
     </div>
   {/if}
 {:else if section === 'curator'}
-  <div class="bar row">
-    <button class="primary" onclick={saveCurator} disabled={savingCur}>
-      {savingCur ? 'saving...' : 'Save curator.toml'}
-    </button>
-    {#if curMsg}<span class="muted mono">{curMsg}</span>{/if}
-  </div>
-  <p class="muted hint">
-    The omnibus curator file: default_off, mark_optional, incompatible,
-    substitute, role_table, category_table, extra_mods/assets, drop_assets,
-    hidemymods. Saved verbatim -- your comments and rationale stay intact.
-  </p>
-  <textarea class="curator mono" bind:value={curatorText} spellcheck="false" placeholder="# curator.toml"></textarea>
+  {#if cfg}
+    <CuratorEditor packId={packId} mods={cfg.mods.map((m) => m.filename)} mc={cfg.minecraft_version} />
+  {:else}
+    <div class="muted">Create or bootstrap a config first (Config tab).</div>
+  {/if}
 {:else if section === 'branding'}
   <BrandingEditor {packId} />
 {:else if section === 'build'}
@@ -461,18 +431,6 @@
   button.danger:hover {
     border-color: var(--danger);
     color: var(--danger);
-  }
-  .hint {
-    font-size: 12px;
-    margin: 0 0 12px;
-    max-width: 720px;
-  }
-  .curator {
-    width: 100%;
-    min-height: 460px;
-    font-size: 12.5px;
-    line-height: 1.55;
-    resize: vertical;
   }
   .panel.scroll {
     margin-bottom: 22px;

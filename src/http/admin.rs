@@ -40,7 +40,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/v1/admin/packs/:pack_id/curator/structured",
-            put(put_pack_curator_structured),
+            get(get_pack_curator_structured).put(put_pack_curator_structured),
         )
         .route("/v1/admin/featured", post(save_featured))
         .route("/v1/admin/modrinth/search", get(modrinth_search))
@@ -252,6 +252,19 @@ async fn put_pack_curator(
         .map_err(|e| ApiError::BadRequest(format!("curator.toml does not parse: {e}")))?;
     state.storage.save_curator_doc(&pack_id, &body).await?;
     Ok(StatusCode::CREATED)
+}
+
+async fn get_pack_curator_structured(
+    State(state): State<AppState>,
+    Path(pack_id): Path<String>,
+) -> Result<Json<Curator>, ApiError> {
+    let curator = match state.storage.load_curator_doc(&pack_id).await {
+        Ok(text) => {
+            parse_curator(&text).map_err(|e| ApiError::BadRequest(format!("curator.toml: {e}")))?
+        }
+        Err(_) => Curator::default(),
+    };
+    Ok(Json(curator))
 }
 
 async fn put_pack_curator_structured(

@@ -435,7 +435,8 @@ pub fn parse_curator(text: &str) -> Result<Curator> {
 /// per-line comments inside a replaced table are not preserved -- the raw
 /// editor stays the full-fidelity path.
 pub fn merge_curator(existing: &str, curator: &Curator) -> Result<String> {
-    use toml_edit::DocumentMut;
+    use std::collections::HashSet;
+    use toml_edit::{DocumentMut, Item, Value};
     let mut doc: DocumentMut = if existing.trim().is_empty() {
         DocumentMut::new()
     } else {
@@ -445,25 +446,72 @@ pub fn merge_curator(existing: &str, curator: &Curator) -> Result<String> {
         .context("serializing curator")?
         .parse()
         .context("re-parsing serialized curator")?;
-    for (key, item) in fresh.as_table().iter() {
-        if is_empty_item(item) {
+    // A table equal to its default is unused -- drop it so the file only shows
+    // what the curator actually set (e.g. an all-default [generate] stays out).
+    let default_fresh: DocumentMut = toml_edit::ser::to_string(&Curator::default())
+        .context("serializing default curator")?
+        .parse()
+        .context("re-parsing default curator")?;
+    for (key, fresh_item) in fresh.as_table().iter() {
+        let is_default = default_fresh
+            .get(key)
+            .is_some_and(|d| d.to_string() == fresh_item.to_string());
+        if is_empty_item(fresh_item) || is_default {
             doc.remove(key);
-        } else {
-            doc[key] = item.clone();
+            continue;
+        }
+        // toml_edit's serde serializer emits nested structs as inline tables;
+        // promote them to section tables so they render as [key].
+        let normalized = match fresh_item {
+            Item::Value(Value::InlineTable(it)) => Item::Table(it.clone().into_table()),
+            other => other.clone(),
+        };
+        // When both sides are tables, update the existing table's entries in
+        // place so its [section] header + leading comment survive (a plain
+        // reassignment would drop them). Array / scalar keys keep their own
+        // leading comment on reassignment.
+        match (
+            doc.get_mut(key).and_then(Item::as_table_mut),
+            normalized.as_table(),
+        ) {
+            (Some(existing_tbl), Some(fresh_tbl)) => {
+                let fresh_keys: HashSet<&str> = fresh_tbl.iter().map(|(k, _)| k).collect();
+                let stale: Vec<String> = existing_tbl
+                    .iter()
+                    .map(|(k, _)| k.to_string())
+                    .filter(|k| !fresh_keys.contains(k.as_str()))
+                    .collect();
+                for k in stale {
+                    existing_tbl.remove(&k);
+                }
+                for (k, v) in fresh_tbl.iter() {
+                    existing_tbl.insert(k, v.clone());
+                }
+            }
+            _ => {
+                doc[key] = normalized;
+            }
         }
     }
     Ok(doc.to_string())
 }
 
 fn is_empty_item(item: &toml_edit::Item) -> bool {
-    use toml_edit::{Item, Value};
+    use toml_edit::Item;
     match item {
         Item::None => true,
         Item::Table(t) => t.iter().all(|(_, v)| is_empty_item(v)),
         Item::ArrayOfTables(a) => a.is_empty(),
-        Item::Value(Value::Array(a)) => a.is_empty(),
-        Item::Value(Value::InlineTable(t)) => t.is_empty(),
-        Item::Value(_) => false,
+        Item::Value(v) => value_is_empty(v),
+    }
+}
+
+fn value_is_empty(v: &toml_edit::Value) -> bool {
+    use toml_edit::Value;
+    match v {
+        Value::Array(a) => a.is_empty(),
+        Value::InlineTable(t) => t.iter().all(|(_, x)| value_is_empty(x)),
+        _ => false,
     }
 }
 
@@ -1272,13 +1320,15 @@ mod tests {
         assert!(merged.contains("B.jar"), "default_off replaced: {merged}");
         assert!(merged.contains("\"new\""), "category replaced: {merged}");
         assert!(!merged.contains("\"old\""), "old value gone: {merged}");
-        // unused/default tables are not emitted
-        assert!(!merged.contains("[mark_optional]"), "empty table dropped: {merged}");
-        assert!(!merged.contains("[generate]"), "empty table dropped: {merged}");
+        // unused/default tables are not emitted (neither section nor inline)
+        assert!(!merged.contains("mark_optional"), "empty table dropped: {merged}");
+        assert!(!merged.contains("generate"), "empty table dropped: {merged}");
+        assert!(!merged.contains("pack_meta"), "empty pack_meta dropped: {merged}");
         // round-trips as a valid Curator
         parse_curator(&merged).unwrap();
-        // the doc-level comment survives the merge
+        // both the doc-level and the [section] comment survive the merge
         assert!(merged.contains("# top-of-file note"), "doc comment survives: {merged}");
+        assert!(merged.contains("# category notes"), "section comment survives: {merged}");
     }
 
     fn empty_config() -> PackConfig {
