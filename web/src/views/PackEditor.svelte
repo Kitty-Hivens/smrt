@@ -291,7 +291,7 @@
     <div class="panel scroll">
       <table>
         <thead>
-          <tr><th>filename</th><th style="width:130px">source</th><th>ref</th><th style="width:60px">req</th><th style="width:60px">def</th><th>note</th><th style="width:44px"></th></tr>
+          <tr><th>filename</th><th style="width:130px">source</th><th>ref</th><th style="width:60px" title="required -- always installed; the player cannot turn it off">req</th><th style="width:60px" title="default_enabled -- starting on/off state for an optional (req-off) mod; ignored when required">def</th><th>note</th><th style="width:44px"></th></tr>
         </thead>
         <tbody>
           {#each cfg.mods as m, i}
@@ -335,7 +335,7 @@
     <div class="panel scroll">
       <table>
         <thead>
-          <tr><th>dest</th><th style="width:130px">source</th><th>ref</th><th style="width:60px">req</th><th style="width:44px"></th></tr>
+          <tr><th>dest</th><th style="width:130px">source</th><th>ref</th><th style="width:60px" title="required -- always installed">req</th><th style="width:44px"></th></tr>
         </thead>
         <tbody>
           {#each cfg.assets ?? [] as a, i}
