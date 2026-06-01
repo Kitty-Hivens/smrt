@@ -2,7 +2,9 @@ use crate::domain::*;
 use crate::http::ApiError;
 use sha1::{Digest, Sha1};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Clone)]
 pub struct Storage {
@@ -206,9 +208,14 @@ impl Storage {
         if !is_safe_id(pack_id) {
             return Err(ApiError::BadRequest("invalid pack id".into()));
         }
-        fs::read_to_string(self.authoring_path(pack_id, "curator.toml"))
-            .await
-            .map_err(|_| ApiError::NotFound)
+        match fs::read_to_string(self.authoring_path(pack_id, "curator.toml")).await {
+            Ok(text) => Ok(text),
+            // Only a genuinely-absent file is NotFound. An I/O / permission
+            // error must NOT masquerade as "no curator" -- that would let the
+            // structured editor round-trip an empty doc over a real one.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(ApiError::NotFound),
+            Err(e) => Err(io_err(e)),
+        }
     }
 
     /// Pack ids that have authoring inputs (an `authoring/config.json`),
@@ -522,21 +529,37 @@ impl Storage {
     }
 }
 
+/// Per-process temp-file sequence so concurrent writers to the same target use
+/// distinct temp files instead of colliding on one shared `<file>.tmp`.
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
 async fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ApiError> {
     let parent = path.parent().ok_or_else(|| {
         ApiError::Internal(anyhow::anyhow!("path {} has no parent", path.display()))
     })?;
     fs::create_dir_all(parent).await.map_err(io_err)?;
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
     let mut tmp = path.to_path_buf();
     let mut tmp_name = tmp
         .file_name()
         .map(|s| s.to_os_string())
         .unwrap_or_default();
-    tmp_name.push(".tmp");
+    tmp_name.push(format!(".tmp.{}.{seq}", std::process::id()));
     tmp.set_file_name(tmp_name);
-    fs::write(&tmp, bytes).await.map_err(io_err)?;
-    fs::rename(&tmp, path).await.map_err(io_err)?;
-    Ok(())
+
+    // Write + fsync the temp, then rename. fsync before rename so a crash can't
+    // leave a zero-length file at the target; clean up the temp on any error.
+    let result = async {
+        let mut f = fs::File::create(&tmp).await.map_err(io_err)?;
+        f.write_all(bytes).await.map_err(io_err)?;
+        f.sync_all().await.map_err(io_err)?;
+        fs::rename(&tmp, path).await.map_err(io_err)
+    }
+    .await;
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp).await;
+    }
+    result
 }
 
 fn sha1_hex(bytes: &[u8]) -> String {

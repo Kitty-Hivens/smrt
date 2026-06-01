@@ -317,7 +317,10 @@ async fn get_pack_curator_structured(
         Ok(text) => {
             parse_curator(&text).map_err(|e| ApiError::BadRequest(format!("curator.toml: {e}")))?
         }
-        Err(_) => Curator::default(),
+        // A pack with no curator yet starts from defaults; a real read error
+        // must surface, not silently present an empty curator.
+        Err(ApiError::NotFound) => Curator::default(),
+        Err(e) => return Err(e),
     };
     Ok(Json(curator))
 }
@@ -329,11 +332,13 @@ async fn put_pack_curator_structured(
 ) -> Result<StatusCode, ApiError> {
     // Merge the structured edit into the existing doc so section comments
     // survive; the raw editor stays the full-fidelity path.
-    let existing = state
-        .storage
-        .load_curator_doc(&pack_id)
-        .await
-        .unwrap_or_default();
+    // Only a genuinely-absent curator is treated as empty. If the existing doc
+    // fails to read, abort rather than merge into empty and overwrite it.
+    let existing = match state.storage.load_curator_doc(&pack_id).await {
+        Ok(text) => text,
+        Err(ApiError::NotFound) => String::new(),
+        Err(e) => return Err(e),
+    };
     let merged = merge_curator(&existing, &curator).map_err(ApiError::Internal)?;
     state.storage.save_curator_doc(&pack_id, &merged).await?;
     Ok(StatusCode::CREATED)

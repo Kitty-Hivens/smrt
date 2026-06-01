@@ -70,6 +70,10 @@ impl Job {
         self.state.lock().unwrap().result.clone()
     }
 
+    pub fn status(&self) -> Status {
+        self.state.lock().unwrap().status
+    }
+
     /// Log lines from index `from` onward, plus the current status. SSE tailers
     /// track how many lines they've sent and re-read from there, so no line is
     /// ever dropped regardless of `Notify` timing.
@@ -101,7 +105,7 @@ impl JobRegistry {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis())
             .unwrap_or(0);
-        let id = format!("{ms:013x}-{n}");
+        let id = format!("{ms:013x}-{n:08}");
         let job = Arc::new(Job {
             id: id.clone(),
             kind,
@@ -115,13 +119,18 @@ impl JobRegistry {
         });
         let mut map = self.jobs.lock().unwrap();
         map.insert(id, job.clone());
-        // Bound memory: a single-admin session won't run many builds, but cap
-        // the history anyway. Ids are zero-padded ms + counter, so lexical min
-        // is the oldest.
-        if map.len() > 50
-            && let Some(oldest) = map.keys().min().cloned()
-        {
-            map.remove(&oldest);
+        // Bound memory, but never evict a job a client may still be tailing:
+        // drop the oldest FINISHED job. Ids are zero-padded (ms + counter) so
+        // lexical min is the oldest.
+        if map.len() > 50 {
+            let victim = map
+                .values()
+                .filter(|j| j.status() != Status::Running)
+                .map(|j| j.id.clone())
+                .min();
+            if let Some(victim) = victim {
+                map.remove(&victim);
+            }
         }
         job
     }
