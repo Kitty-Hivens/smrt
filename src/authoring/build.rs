@@ -76,7 +76,11 @@ pub async fn build_manifest(
 /// Derive the `PackSummary` (the Browse-list / PackDetail card payload) from
 /// the config + the resolved `pack_version`, merging optional rich pack-meta
 /// (icon / banner / gallery / description) on top.
-pub fn make_pack_summary(cfg: &PackConfig, pack_version: &str, pack_meta: &PackMeta) -> PackSummary {
+pub fn make_pack_summary(
+    cfg: &PackConfig,
+    pack_version: &str,
+    pack_meta: &PackMeta,
+) -> PackSummary {
     PackSummary {
         pack_id: cfg.pack_id.clone(),
         display_name: cfg.display_name.clone(),

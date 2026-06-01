@@ -7,6 +7,7 @@ use super::archive::{extract_extra_assets, extract_mods};
 use super::modrinth::Modrinth;
 use super::sources::{write_to_cache, write_to_static};
 use crate::domain::{DeclaredAsset, DeclaredMod, LoaderSpec, PackConfig, SourceDecl};
+use crate::storage::is_safe_id;
 use anyhow::{Result, bail};
 use std::path::PathBuf;
 use tracing::info;
@@ -25,6 +26,13 @@ pub struct BootstrapArgs {
 
 pub async fn bootstrap(args: BootstrapArgs, archive_bytes: &[u8]) -> Result<PackConfig> {
     info!(bytes = archive_bytes.len(), "loaded SC archive");
+
+    // The pack id becomes a path segment under storage/packs/<id>/ before the
+    // config (the usual id guard) is ever written, so validate it here too: a
+    // traversal id would stage archive files outside the storage tree.
+    if !is_safe_id(&args.pack_id) {
+        bail!("invalid pack id {:?}", args.pack_id);
+    }
 
     let mods = extract_mods(archive_bytes)?;
     info!(count = mods.len(), "discovered mods in archive");

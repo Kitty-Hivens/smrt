@@ -9,16 +9,18 @@
 //! data over derived data, so a manual role-table override always wins
 //! against a heuristic source.
 
-use crate::domain::{PackConfig, SourceDecl};
+use super::archive::read_zip_entry;
 use crate::domain::{Display, Requirement};
-use anyhow::{Context, Result};
+use crate::domain::{PackConfig, SourceDecl};
+use crate::storage::is_safe_rel_path;
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
+use ts_rs::TS;
 
 // ── mcmod.info ────────────────────────────────────────────────────────────
 
@@ -67,10 +69,8 @@ pub fn read_mcmod_info(jar_bytes: &[u8]) -> Result<Option<McModInfo>> {
         Ok(e) => e,
         Err(_) => return Ok(None),
     };
-    let mut raw = Vec::with_capacity(entry.size() as usize);
-    entry
-        .read_to_end(&mut raw)
-        .context("reading mcmod.info from zip")?;
+    let size = entry.size();
+    let raw = read_zip_entry(&mut entry, size, "mcmod.info")?;
 
     // mcmod.info comes from many authors over many years. Lossy UTF-8
     // decode handles the occasional ISO-8859-1 file. BOM strip handles
@@ -573,7 +573,11 @@ pub fn apply_incompatible(config: &mut PackConfig, incompatible: &HashMap<String
             }
         }
     }
-    info!(applied, declared = incompatible.len(), "incompatible applied");
+    info!(
+        applied,
+        declared = incompatible.len(),
+        "incompatible applied"
+    );
 }
 
 /// Flips `default_enabled = false` on each OPTIONAL mod named in `default_off`.
@@ -775,6 +779,12 @@ pub async fn apply_extras(
                     requires: Vec::new(),
                 });
                 let dest = format!("{}/{}", ea.dest_dir.trim_end_matches('/'), filename);
+                if !is_safe_rel_path(&dest) {
+                    report
+                        .assets_failed
+                        .push((ea.slug.clone(), format!("unsafe extras dest {dest:?}")));
+                    continue;
+                }
                 config.assets.push(crate::domain::DeclaredAsset {
                     dest,
                     required: ea.required,
@@ -920,6 +930,12 @@ pub fn generate_hidemymods_spoof(
             .to_string(),
         mods: entries,
     };
+    if !is_safe_rel_path(&generate_cfg.hidemymods_filename) {
+        bail!(
+            "hidemymods_filename {:?} is not a safe relative path",
+            generate_cfg.hidemymods_filename
+        );
+    }
     let static_dir = storage.join("packs").join(&config.pack_id).join("static");
     fs::create_dir_all(&static_dir)
         .with_context(|| format!("creating static dir {}", static_dir.display()))?;
@@ -1301,8 +1317,8 @@ fn cache_jar_path(storage: &Path, sha1: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{DeclaredMod, PackConfig, SourceDecl};
     use crate::domain::LoaderSpec;
+    use crate::domain::{DeclaredMod, PackConfig, SourceDecl};
     use std::io::Write;
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
@@ -1314,21 +1330,37 @@ mod tests {
             default_off: vec!["B.jar".to_string()],
             ..Default::default()
         };
-        c.category_table.insert("A.jar".to_string(), "new".to_string());
+        c.category_table
+            .insert("A.jar".to_string(), "new".to_string());
         let merged = merge_curator(existing, &c).unwrap();
         // values updated
         assert!(merged.contains("B.jar"), "default_off replaced: {merged}");
         assert!(merged.contains("\"new\""), "category replaced: {merged}");
         assert!(!merged.contains("\"old\""), "old value gone: {merged}");
         // unused/default tables are not emitted (neither section nor inline)
-        assert!(!merged.contains("mark_optional"), "empty table dropped: {merged}");
-        assert!(!merged.contains("generate"), "empty table dropped: {merged}");
-        assert!(!merged.contains("pack_meta"), "empty pack_meta dropped: {merged}");
+        assert!(
+            !merged.contains("mark_optional"),
+            "empty table dropped: {merged}"
+        );
+        assert!(
+            !merged.contains("generate"),
+            "empty table dropped: {merged}"
+        );
+        assert!(
+            !merged.contains("pack_meta"),
+            "empty pack_meta dropped: {merged}"
+        );
         // round-trips as a valid Curator
         parse_curator(&merged).unwrap();
         // both the doc-level and the [section] comment survive the merge
-        assert!(merged.contains("# top-of-file note"), "doc comment survives: {merged}");
-        assert!(merged.contains("# category notes"), "section comment survives: {merged}");
+        assert!(
+            merged.contains("# top-of-file note"),
+            "doc comment survives: {merged}"
+        );
+        assert!(
+            merged.contains("# category notes"),
+            "section comment survives: {merged}"
+        );
     }
 
     fn empty_config() -> PackConfig {
@@ -1562,7 +1594,9 @@ mod tests {
             filename: "FoamFix.jar".into(),
             required: false,
             default_enabled: true,
-            source: SourceDecl::SmrtCache { sha1: "a".repeat(40) },
+            source: SourceDecl::SmrtCache {
+                sha1: "a".repeat(40),
+            },
             display: None,
             note: None,
         });
@@ -1570,7 +1604,9 @@ mod tests {
             filename: "Mixinbooter.jar".into(),
             required: true,
             default_enabled: true,
-            source: SourceDecl::SmrtCache { sha1: "b".repeat(40) },
+            source: SourceDecl::SmrtCache {
+                sha1: "b".repeat(40),
+            },
             display: None,
             note: None,
         });
@@ -1581,10 +1617,24 @@ mod tests {
         incompat.insert("FoamFix.jar".into(), vec!["Mixinbooter.jar".into()]);
         apply_incompatible(&mut cfg, &incompat);
 
-        let foam = cfg.mods.iter().find(|m| m.filename == "FoamFix.jar").unwrap();
-        let mixin = cfg.mods.iter().find(|m| m.filename == "Mixinbooter.jar").unwrap();
-        assert!(!foam.default_enabled, "optional FoamFix flipped default-off");
-        assert!(mixin.default_enabled, "required mod untouched by default-off");
+        let foam = cfg
+            .mods
+            .iter()
+            .find(|m| m.filename == "FoamFix.jar")
+            .unwrap();
+        let mixin = cfg
+            .mods
+            .iter()
+            .find(|m| m.filename == "Mixinbooter.jar")
+            .unwrap();
+        assert!(
+            !foam.default_enabled,
+            "optional FoamFix flipped default-off"
+        );
+        assert!(
+            mixin.default_enabled,
+            "required mod untouched by default-off"
+        );
         assert_eq!(
             foam.display.as_ref().unwrap().incompatible_with,
             vec!["Mixinbooter.jar".to_string()],

@@ -103,7 +103,11 @@ impl Modrinth {
         let resp = self
             .http
             .get(format!("{MODRINTH_BASE}/v2/search"))
-            .query(&[("query", query), ("facets", facets.as_str()), ("limit", "20")])
+            .query(&[
+                ("query", query),
+                ("facets", facets.as_str()),
+                ("limit", "20"),
+            ])
             .send()
             .await
             .context("modrinth search get")?;

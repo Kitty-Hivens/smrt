@@ -10,12 +10,12 @@ use crate::config::Config;
 use crate::domain::{PackManifest, PackSummary};
 use crate::storage::Storage;
 use serde::Serialize;
-use ts_rs::TS;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Notify;
+use ts_rs::TS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -219,10 +219,18 @@ async fn run_build(
     }
 
     job.line("resolving sources (Modrinth lookups + cache reads)");
-    let manifest = build_manifest(&cfg, storage.root(), pack_version.as_deref(), &config.mirror_base)
-        .await
-        .map_err(|e| format!("resolve failed: {e}"))?;
-    let pack_meta = curator.as_ref().map(|c| c.pack_meta.clone()).unwrap_or_default();
+    let manifest = build_manifest(
+        &cfg,
+        storage.root(),
+        pack_version.as_deref(),
+        &config.mirror_base,
+    )
+    .await
+    .map_err(|e| format!("resolve failed: {e}"))?;
+    let pack_meta = curator
+        .as_ref()
+        .map(|c| c.pack_meta.clone())
+        .unwrap_or_default();
     let summary = make_pack_summary(&cfg, &manifest.pack_version, &pack_meta);
 
     if dry_run {
@@ -254,7 +262,10 @@ async fn run_build(
         .save_pack_summary(&summary)
         .await
         .map_err(|e| e.to_string())?;
-    job.line(format!("build complete: {pack_id} is now {}", manifest.pack_version));
+    job.line(format!(
+        "build complete: {pack_id} is now {}",
+        manifest.pack_version
+    ));
     Ok(())
 }
 
@@ -281,7 +292,9 @@ async fn run_bootstrap(
         .save_pack_config(&pack_id, &cfg)
         .await
         .map_err(|e| e.to_string())?;
-    job.line(format!("wrote authoring config for {pack_id} -- ready to curate + build"));
+    job.line(format!(
+        "wrote authoring config for {pack_id} -- ready to curate + build"
+    ));
     Ok(())
 }
 
@@ -367,7 +380,10 @@ mod tests {
         assert_eq!(result.manifest.mods.len(), 1);
         assert_eq!(result.manifest.mods[0].filename, "Test.jar");
         assert_eq!(result.manifest.mods[0].sha1, sha1);
-        assert_eq!(result.manifest.mods[0].size_bytes, b"fake jar bytes".len() as u64);
+        assert_eq!(
+            result.manifest.mods[0].size_bytes,
+            b"fake jar bytes".len() as u64
+        );
         assert_eq!(result.summary.display_name, "Test Pack");
 
         // The whole point of a dry run: nothing reaches the public surface.
@@ -403,7 +419,10 @@ mod tests {
         assert_eq!(job.kind, "build");
         assert_eq!(await_finish(&job).await, Status::Done);
 
-        assert!(job.result().is_none(), "a real build stashes no preview result");
+        assert!(
+            job.result().is_none(),
+            "a real build stashes no preview result"
+        );
         let published = storage.load_latest_manifest("Test").await.unwrap();
         assert_eq!(published.mods.len(), 1);
         assert_eq!(published.mods[0].filename, "Test.jar");

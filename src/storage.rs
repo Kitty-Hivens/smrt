@@ -482,7 +482,7 @@ impl Storage {
         atomic_write(&path, &bytes).await
     }
 
-    async fn is_sha1_removed(&self, sha1: &str) -> Result<bool, ApiError> {
+    pub async fn is_sha1_removed(&self, sha1: &str) -> Result<bool, ApiError> {
         let path = self.root.join("removed.txt");
         let content = match fs::read_to_string(&path).await {
             Ok(c) => c,
@@ -568,7 +568,7 @@ fn is_hex(s: &str) -> bool {
 // Pack ID / server ID safety: no path traversal, no leading dots, basic alnum +
 // dashes + dots only. Stops `..`, absolute paths, and silly characters before
 // they reach the filesystem layer.
-fn is_safe_id(s: &str) -> bool {
+pub(crate) fn is_safe_id(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 64
         && !s.starts_with('.')
@@ -585,43 +585,54 @@ fn is_safe_version(s: &str) -> bool {
 /// but every segment must be a plain `is_safe_id`-style token and there must
 /// be no `..`, `.`, leading slashes, or empty segments.
 fn validate_rel_path(rel: &str) -> Result<&str, ApiError> {
+    if is_safe_rel_path(rel) {
+        Ok(rel)
+    } else {
+        Err(ApiError::BadRequest("invalid rel_path".into()))
+    }
+}
+
+/// Boolean core of [validate_rel_path], shared with the authoring layer so its
+/// curator- and archive-driven writes reject the same traversal the HTTP layer
+/// does. Allows nested dirs and real-world resourcepack/shaderpack filenames
+/// (spaces, parens, plus, comma) but forbids `..`, leading dots per segment,
+/// absolute paths, and backslashes. ASCII-only -- non-ASCII filenames break
+/// some Forge launchers on Windows.
+pub(crate) fn is_safe_rel_path(rel: &str) -> bool {
     if rel.is_empty() || rel.len() > 512 {
-        return Err(ApiError::BadRequest("invalid rel_path".into()));
+        return false;
     }
     if rel.starts_with('/') || rel.contains('\\') {
-        return Err(ApiError::BadRequest("invalid rel_path".into()));
+        return false;
     }
-    for segment in rel.split('/') {
-        if segment.is_empty() || segment.starts_with('.') {
-            return Err(ApiError::BadRequest("invalid rel_path".into()));
-        }
-        // Allow spaces and parens too -- real-world resourcepack and
-        // shaderpack filenames include them ("Chocapic13 V7.1 High.zip",
-        // "BSL (v8.2.04).zip"). The crucial constraint is no path
-        // traversal, no leading dot per segment, no NUL or path
-        // separators inside a segment. ASCII-only because non-ASCII
-        // filenames break some Forge launchers on Windows.
-        if !segment.chars().all(|c| {
-            c.is_ascii_alphanumeric()
-                || c == '-'
-                || c == '_'
-                || c == '.'
-                || c == ' '
-                || c == '('
-                || c == ')'
-                || c == '+'
-                || c == ','
-        }) {
-            return Err(ApiError::BadRequest("invalid rel_path".into()));
-        }
-    }
-    Ok(rel)
+    rel.split('/').all(|segment| {
+        !segment.is_empty()
+            && !segment.starts_with('.')
+            && segment.chars().all(|c| {
+                c.is_ascii_alphanumeric()
+                    || matches!(c, '-' | '_' | '.' | ' ' | '(' | ')' | '+' | ',')
+            })
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::{LoaderSpec, PackConfig};
+
+    #[test]
+    fn rel_path_rejects_traversal_accepts_real_filenames() {
+        assert!(is_safe_rel_path("_nexira/icon.png"));
+        assert!(is_safe_rel_path("resourcepacks/Chocapic13 V7.1 High.zip"));
+        assert!(is_safe_rel_path("config/foamfix.cfg"));
+        assert!(!is_safe_rel_path("../etc/passwd"));
+        assert!(!is_safe_rel_path("a/../../b"));
+        assert!(!is_safe_rel_path("/abs/path"));
+        assert!(!is_safe_rel_path("a\\b"));
+        assert!(!is_safe_rel_path(".hidden/x"));
+        assert!(!is_safe_rel_path("ok/.././bad"));
+        assert!(!is_safe_rel_path(""));
+    }
 
     fn sample_config() -> PackConfig {
         PackConfig {
@@ -660,7 +671,10 @@ mod tests {
         let doc = "# keep this note\ndefault_off = [\"FoamFix.jar\"]\n";
         s.save_curator_doc("Industrial", doc).await.unwrap();
         let loaded = s.load_curator_doc("Industrial").await.unwrap();
-        assert_eq!(loaded, doc, "raw curator text must round-trip byte-for-byte");
+        assert_eq!(
+            loaded, doc,
+            "raw curator text must round-trip byte-for-byte"
+        );
     }
 
     #[tokio::test]
