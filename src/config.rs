@@ -11,6 +11,9 @@ pub struct Config {
     /// is fronted by nginx TLS); set `SMRT_COOKIE_SECURE=false` for local http
     /// dev so the cookie is still sent over plain `127.0.0.1`.
     pub cookie_secure: bool,
+    /// Public base URL baked into built manifest URLs (cache + static). The
+    /// authoring build uses it; defaults to the production mirror host.
+    pub mirror_base: String,
 }
 
 impl Config {
@@ -30,11 +33,15 @@ impl Config {
             .map(|v| !matches!(v.as_str(), "false" | "0" | "no"))
             .unwrap_or(true);
 
+        let mirror_base = std::env::var("SMRT_MIRROR_BASE")
+            .unwrap_or_else(|_| "https://smrt.hivens.dev".to_string());
+
         Ok(Self {
             bind_addr,
             storage_dir,
             admin_token,
             cookie_secure,
+            mirror_base,
         })
     }
 }
