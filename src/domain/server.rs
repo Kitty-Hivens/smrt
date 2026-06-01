@@ -2,10 +2,12 @@
 //! inventory, and the health probe. Small wire types with no cross-deps.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 // ── Server metadata ────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct ServerEntry {
     pub schema_version: u32,
     pub server_id: String,
@@ -31,7 +33,8 @@ pub struct ServerEntry {
     pub featured: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct ServerListing {
     pub schema_version: u32,
     pub generated_at: String,
@@ -40,7 +43,8 @@ pub struct ServerListing {
 
 // ── Featured ───────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct Featured {
     pub schema_version: u32,
     pub generated_at: String,
@@ -50,22 +54,26 @@ pub struct Featured {
 
 // ── Cache inventory ────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct CacheInventory {
     pub schema_version: u32,
     pub generated_at: String,
     pub entries: Vec<CacheInventoryEntry>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct CacheInventoryEntry {
     pub sha1: String,
+    #[ts(type = "number")]
     pub size_bytes: u64,
 }
 
 // ── Health ─────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct Health {
     pub schema_version: u32,
     pub status: &'static str,

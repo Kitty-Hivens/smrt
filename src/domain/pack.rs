@@ -5,10 +5,12 @@
 
 use super::manifest::{Display, LoaderSpec};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 // ── Pack summary / listing ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct PackSummary {
     pub pack_id: String,
     pub display_name: String,
@@ -36,14 +38,16 @@ pub struct PackSummary {
     pub description_md: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct PackListing {
     pub schema_version: u32,
     pub generated_at: String,
     pub packs: Vec<PackSummary>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct ManifestVersionsListing {
     pub schema_version: u32,
     pub pack_id: String,
@@ -53,7 +57,8 @@ pub struct ManifestVersionsListing {
 /// Pack ids that carry editable authoring inputs (a config.json under
 /// `packs/<id>/authoring/`), including packs not yet built. Admin-only:
 /// authoring inputs are not part of the public read API.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct AuthoringPacksListing {
     pub schema_version: u32,
     pub packs: Vec<String>,
@@ -66,7 +71,8 @@ pub struct AuthoringPacksListing {
 /// storage tree. Distinct from `PackManifest` because authoring does not
 /// require admin to hand-write `sha1` and `size_bytes` for Modrinth sources --
 /// those are looked up at build time.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct PackConfig {
     pub pack_id: String,
     pub display_name: String,
@@ -83,7 +89,8 @@ pub struct PackConfig {
     pub assets: Vec<DeclaredAsset>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct DeclaredMod {
     pub filename: String,
     #[serde(default = "default_true")]
@@ -99,7 +106,8 @@ pub struct DeclaredMod {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct DeclaredAsset {
     pub dest: String,
     #[serde(default = "default_true")]
@@ -111,7 +119,8 @@ pub struct DeclaredAsset {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SourceDecl {
     Modrinth {

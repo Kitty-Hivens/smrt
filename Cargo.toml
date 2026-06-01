@@ -28,6 +28,7 @@ percent-encoding = "2.3.2"
 toml = "0.8"
 rust-embed = "8"
 async-stream = "0.3"
+ts-rs = { version = "10", features = ["no-serde-warnings"] }
 
 [dev-dependencies]
 tempfile = "3"

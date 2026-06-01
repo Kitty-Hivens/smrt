@@ -150,13 +150,26 @@
   function addMod() {
     cfg!.mods = [
       ...cfg!.mods,
-      { filename: '', required: true, default_enabled: true, source: { type: 'smrt_cache', sha1: '' } },
+      {
+        filename: '',
+        required: true,
+        default_enabled: true,
+        source: { type: 'smrt_cache', sha1: '' },
+        display: null,
+        note: null,
+      },
     ];
   }
   function addAsset() {
     cfg!.assets = [
       ...(cfg!.assets ?? []),
-      { dest: '', required: true, source: { type: 'smrt_static', rel_path: '' } },
+      {
+        dest: '',
+        required: true,
+        source: { type: 'smrt_static', rel_path: '' },
+        display: null,
+        note: null,
+      },
     ];
   }
 </script>

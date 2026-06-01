@@ -13,6 +13,7 @@ use crate::domain::{PackConfig, SourceDecl};
 use crate::domain::{Display, Requirement};
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use ts_rs::TS;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Cursor, Read};
@@ -26,7 +27,8 @@ use tracing::{debug, info, warn};
 /// `[{...mod...}, ...]`; some older mods wrap a single object in
 /// `{"modListVersion": 2, "modList": [{...}]}`. [`read_mcmod_info`]
 /// flattens both into `Vec<McModInfo>`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct McModInfo {
     #[serde(default)]
     pub modid: String,
@@ -42,7 +44,8 @@ pub struct McModInfo {
     pub dependencies: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 struct McModInfoListWrap {
     #[serde(rename = "modList")]
     mod_list: Vec<McModInfo>,
@@ -188,7 +191,8 @@ pub fn enrich_from_mcmod_info(
 
 /// Curator-authored mapping of mod filename to role string.
 /// Loaded from a TOML file via [`load_role_table`].
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct RoleTable {
     #[serde(default)]
     pub roles: HashMap<String, String>,
@@ -204,7 +208,8 @@ pub fn load_role_table(path: &Path) -> Result<RoleTable> {
 /// Merged into the emitted `summary.json` by `smrt-pack build` when
 /// passed via `--pack-meta`. Every field optional; absent fields stay
 /// out of summary.json (per the `skip_serializing_if` on PackSummary).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct PackMeta {
     #[serde(default)]
     pub icon_url: Option<String>,
@@ -236,7 +241,8 @@ pub fn load_pack_meta(path: &Path) -> Result<PackMeta> {
 /// [`apply_role_table`], [`infer_requires_from_mcmod_info`]) remain
 /// callable from their own subcommands for power-user / debugging
 /// scenarios, but the canonical pipeline goes through this one file.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct Curator {
     #[serde(default)]
     pub pack_meta: PackMeta,
@@ -284,7 +290,8 @@ pub struct Curator {
 /// shaderpacks, resourcepacks) are never matched even if their
 /// dest accidentally collides -- the filter keys on
 /// `source.type == "smrt_static"` to keep curator extras safe.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct DropAssets {
     #[serde(default)]
     pub paths: Vec<String>,
@@ -294,7 +301,8 @@ pub struct DropAssets {
 /// part of `apply-curator` and become regular `smrt_static` assets in
 /// the resulting manifest. Each generator is gated by a boolean so
 /// curator opts in per pack.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct GenerateConfig {
     /// Emit `<static>/<filename>` listing the curator-authored
     /// `(lowercase_modid, claimed_version)` pairs verbatim. Adds a
@@ -330,13 +338,15 @@ fn default_hidemymods_filename() -> String {
     "hidemymods-spoof.json".to_string()
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct MarkOptional {
     #[serde(default)]
     pub filenames: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct SubstituteEntry {
     pub source: crate::domain::SourceDecl,
     #[serde(default)]
@@ -346,7 +356,8 @@ pub struct SubstituteEntry {
 /// Modrinth-direct extra mod the curator wants to add on top of the
 /// SC-derived pack. The build pipeline does the Modrinth API lookup
 /// at apply time to resolve project_id + version_id + primary file.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct ExtraMod {
     pub slug: String,
     #[serde(default = "default_true")]
@@ -362,7 +373,8 @@ pub struct ExtraMod {
 /// Modrinth-direct extra asset (resourcepack / shaderpack / data pack).
 /// `dest_dir` is the destination subfolder ("resourcepacks",
 /// "shaderpacks", etc); the resolved filename appends to that path.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct ExtraAsset {
     pub slug: String,
     pub dest_dir: String,
@@ -377,7 +389,8 @@ pub struct ExtraAsset {
     pub name_override: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 #[serde(rename_all = "snake_case")]
 pub enum ExtraAssetKind {
     /// `https://modrinth.com/resourcepack/<slug>`

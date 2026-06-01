@@ -1,132 +1,47 @@
-// Wire DTOs the panel reads. Hand-written for the Phase 2 shell; Phase 4
-// replaces these with ts-rs codegen from the mirror's Rust structs so the
-// two never drift.
+// Wire DTOs are generated from the Rust structs by ts-rs -- see bindings/,
+// regenerated with `TS_RS_EXPORT_DIR=web/src/lib cargo test` from the smrt
+// crate root. This barrel re-exports them so the panel imports stay stable.
+// Operational / external types that have no Rust counterpart stay hand-written
+// at the bottom.
 
-export interface Health {
-  schema_version: number;
-  status: string;
-  version: string;
-}
+export type { Health } from './bindings/Health';
+export type { PackSummary } from './bindings/PackSummary';
+export type { PackListing } from './bindings/PackListing';
+export type { ManifestVersionsListing } from './bindings/ManifestVersionsListing';
+export type { AuthoringPacksListing } from './bindings/AuthoringPacksListing';
+export type { ServerEntry } from './bindings/ServerEntry';
+export type { ServerListing } from './bindings/ServerListing';
+export type { Featured } from './bindings/Featured';
+export type { CacheInventory } from './bindings/CacheInventory';
+export type { CacheInventoryEntry } from './bindings/CacheInventoryEntry';
 
-export interface PackSummary {
-  pack_id: string;
-  display_name: string;
-  tagline: string;
-  minecraft_version: string;
-  latest_pack_version: string;
-  tags: string[];
-  featured?: boolean;
-  icon_url?: string | null;
-  banner_url?: string | null;
-  gallery_urls?: string[];
-  description_md?: string | null;
-}
+// authoring config
+export type { PackConfig } from './bindings/PackConfig';
+export type { DeclaredMod } from './bindings/DeclaredMod';
+export type { DeclaredAsset } from './bindings/DeclaredAsset';
+export type { SourceDecl } from './bindings/SourceDecl';
+export type { LoaderSpec } from './bindings/LoaderSpec';
+export type { Display } from './bindings/Display';
 
-export interface PackListing {
-  schema_version: number;
-  generated_at: string;
-  packs: PackSummary[];
-}
+// wire manifest (for the launcher-faithful preview)
+export type { PackManifest } from './bindings/PackManifest';
+export type { ModEntry } from './bindings/ModEntry';
+export type { AssetEntry } from './bindings/AssetEntry';
+export type { Source } from './bindings/Source';
+export type { Requirement } from './bindings/Requirement';
 
-export interface ServerEntry {
-  schema_version: number;
-  server_id: string;
-  pack_id: string;
-  display_name: string;
-  tagline: string;
-  description_md: string;
-  banner_url: string;
-  gallery_urls?: string[];
-  tags?: string[];
-  discord_url?: string | null;
-  website_url?: string | null;
-  owner_display: string;
-  motd_override?: string | null;
-  founded_at?: string | null;
-  featured?: boolean;
-}
+// curator (structured editor)
+export type { Curator } from './bindings/Curator';
+export type { PackMeta } from './bindings/PackMeta';
+export type { MarkOptional } from './bindings/MarkOptional';
+export type { SubstituteEntry } from './bindings/SubstituteEntry';
+export type { ExtraMod } from './bindings/ExtraMod';
+export type { ExtraAsset } from './bindings/ExtraAsset';
+export type { ExtraAssetKind } from './bindings/ExtraAssetKind';
+export type { DropAssets } from './bindings/DropAssets';
+export type { GenerateConfig } from './bindings/GenerateConfig';
 
-export interface ServerListing {
-  schema_version: number;
-  generated_at: string;
-  servers: ServerEntry[];
-}
-
-export interface Featured {
-  schema_version: number;
-  generated_at: string;
-  featured_servers: string[];
-  featured_packs: string[];
-}
-
-export interface CacheInventoryEntry {
-  sha1: string;
-  size_bytes: number;
-}
-
-export interface CacheInventory {
-  schema_version: number;
-  generated_at: string;
-  entries: CacheInventoryEntry[];
-}
-
-export interface AuthoringPacksListing {
-  schema_version: number;
-  packs: string[];
-}
-
-// ── Authoring config (the editable PackConfig) ──
-
-export interface LoaderSpec {
-  name: string;
-  version: string;
-}
-
-export interface DisplayMeta {
-  name?: string | null;
-  description?: string | null;
-  category?: string | null;
-  incompatible_with?: string[];
-  license?: string | null;
-  url?: string | null;
-  icon_url?: string | null;
-  role?: string | null;
-}
-
-export type SourceDecl =
-  | { type: 'modrinth'; project_id: string; version_id: string }
-  | { type: 'smrt_cache'; sha1: string }
-  | { type: 'smrt_static'; rel_path: string };
-
-export interface DeclaredMod {
-  filename: string;
-  required?: boolean;
-  default_enabled?: boolean;
-  source: SourceDecl;
-  display?: DisplayMeta | null;
-  note?: string | null;
-}
-
-export interface DeclaredAsset {
-  dest: string;
-  required?: boolean;
-  source: SourceDecl;
-  display?: DisplayMeta | null;
-  note?: string | null;
-}
-
-export interface PackConfig {
-  pack_id: string;
-  display_name: string;
-  tagline: string;
-  minecraft_version: string;
-  loader: LoaderSpec;
-  java_major: number;
-  tags?: string[];
-  featured?: boolean;
-  mods: DeclaredMod[];
-  assets?: DeclaredAsset[];
-}
+// ── hand-written: operational + external (no Rust DTO) ──
 
 export type JobStatus = 'running' | 'done' | 'failed';
 

@@ -3,10 +3,12 @@
 //! shared with the launcher's `SmrtPackManifest`.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 pub const SCHEMA_VERSION: u32 = 2;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct PackManifest {
     pub schema_version: u32,
     pub pack_id: String,
@@ -20,26 +22,31 @@ pub struct PackManifest {
     pub assets: Vec<AssetEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct MinecraftSpec {
     pub version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct LoaderSpec {
     pub name: String,
     pub version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct JavaSpec {
     pub major: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct ModEntry {
     pub filename: String,
     pub sha1: String,
+    #[ts(type = "number")]
     pub size_bytes: u64,
     #[serde(default = "default_true")]
     pub required: bool,
@@ -53,10 +60,12 @@ pub struct ModEntry {
     pub display: Option<Display>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct AssetEntry {
     pub dest: String,
     pub sha1: String,
+    #[ts(type = "number")]
     pub size_bytes: u64,
     #[serde(default = "default_true")]
     pub required: bool,
@@ -74,7 +83,8 @@ pub struct AssetEntry {
 /// UX hooks (per-item icons, role-grouped pickers, dependency graph
 /// rendering). All three optional; manifests without them parse cleanly
 /// on every client that reached the v2 schema.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct Display {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -121,7 +131,8 @@ pub struct Display {
 /// means "any version present is acceptable". [optional] = true
 /// means the consumer works without the dep but works better with
 /// it -- launcher shows it greyed-out in the dep tree.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct Requirement {
     pub filename: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -130,7 +141,8 @@ pub struct Requirement {
     pub optional: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum Source {
