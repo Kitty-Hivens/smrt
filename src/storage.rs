@@ -1,5 +1,5 @@
-use crate::error::ApiError;
-use crate::types::*;
+use crate::domain::*;
+use crate::http::ApiError;
 use sha1::{Digest, Sha1};
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -97,6 +97,148 @@ impl Storage {
         // Lexicographic sort matches chronological order given YYYY.MM.DD scheme.
         out.sort();
         Ok(out)
+    }
+
+    /// Write a built manifest to `packs/<id>/manifests/<version>.json`. The
+    /// authoring layer computes the manifest; persistence lives here so the
+    /// on-disk layout has a single owner shared by the CLI and the panel.
+    pub async fn save_manifest(
+        &self,
+        pack_id: &str,
+        manifest: &PackManifest,
+    ) -> Result<(), ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        if !is_safe_version(&manifest.pack_version) {
+            return Err(ApiError::BadRequest("invalid pack version".into()));
+        }
+        let path = self
+            .root
+            .join("packs")
+            .join(pack_id)
+            .join("manifests")
+            .join(format!("{}.json", manifest.pack_version));
+        let bytes = serde_json::to_vec_pretty(manifest)
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("manifest json encode: {e}")))?;
+        atomic_write(&path, &bytes).await
+    }
+
+    /// Point `manifests/latest` at `<version>.json` via an atomic symlink
+    /// swap, so concurrent readers never observe a missing target. The
+    /// public read path resolves `latest` by following the link.
+    pub async fn set_latest_manifest(&self, pack_id: &str, version: &str) -> Result<(), ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        if !is_safe_version(version) {
+            return Err(ApiError::BadRequest("invalid version slug".into()));
+        }
+        let manifests_dir = self.root.join("packs").join(pack_id).join("manifests");
+        fs::create_dir_all(&manifests_dir).await.map_err(io_err)?;
+        let target = format!("{version}.json");
+        let latest = manifests_dir.join("latest");
+        let latest_tmp = manifests_dir.join("latest.tmp");
+        let _ = fs::remove_file(&latest_tmp).await;
+        #[cfg(unix)]
+        fs::symlink(&target, &latest_tmp).await.map_err(io_err)?;
+        fs::rename(&latest_tmp, &latest).await.map_err(io_err)?;
+        Ok(())
+    }
+
+    /// Write the pack's `summary.json` (the Browse-list / PackDetail card).
+    pub async fn save_pack_summary(&self, summary: &PackSummary) -> Result<(), ApiError> {
+        if !is_safe_id(&summary.pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        let path = self
+            .root
+            .join("packs")
+            .join(&summary.pack_id)
+            .join("summary.json");
+        let bytes = serde_json::to_vec_pretty(summary)
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("summary json encode: {e}")))?;
+        atomic_write(&path, &bytes).await
+    }
+
+    // ── Pack authoring inputs ────────────────────────────────────────────────
+    //
+    // The editable PackConfig + curator.toml the panel works from, kept on the
+    // mirror under packs/<id>/authoring/ so the box that holds the mod cache is
+    // the single home of both the authoring inputs and the built outputs.
+
+    pub async fn save_pack_config(&self, pack_id: &str, cfg: &PackConfig) -> Result<(), ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        let path = self.authoring_path(pack_id, "config.json");
+        let bytes = serde_json::to_vec_pretty(cfg)
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("pack config json encode: {e}")))?;
+        atomic_write(&path, &bytes).await
+    }
+
+    pub async fn load_pack_config(&self, pack_id: &str) -> Result<PackConfig, ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        let bytes = fs::read(self.authoring_path(pack_id, "config.json"))
+            .await
+            .map_err(|_| ApiError::NotFound)?;
+        serde_json::from_slice(&bytes).map_err(json_err)
+    }
+
+    /// Persist the raw `curator.toml` text verbatim (comments + formatting
+    /// preserved -- the operator's inline rationale is the point). Shape
+    /// validation is the caller's job (the admin handler parses it as a
+    /// `Curator` first); storage stays a domain-only persistence layer.
+    pub async fn save_curator_doc(&self, pack_id: &str, toml_text: &str) -> Result<(), ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        atomic_write(
+            &self.authoring_path(pack_id, "curator.toml"),
+            toml_text.as_bytes(),
+        )
+        .await
+    }
+
+    pub async fn load_curator_doc(&self, pack_id: &str) -> Result<String, ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        fs::read_to_string(self.authoring_path(pack_id, "curator.toml"))
+            .await
+            .map_err(|_| ApiError::NotFound)
+    }
+
+    /// Pack ids that have authoring inputs (an `authoring/config.json`),
+    /// including packs not yet built (so no summary.json). Sorted.
+    pub async fn list_authoring_packs(&self) -> Result<Vec<String>, ApiError> {
+        let packs_dir = self.root.join("packs");
+        let mut out = Vec::new();
+        let mut entries = match fs::read_dir(&packs_dir).await {
+            Ok(e) => e,
+            Err(_) => return Ok(out),
+        };
+        while let Some(entry) = entries.next_entry().await.map_err(io_err)? {
+            if !entry.file_type().await.map_err(io_err)?.is_dir() {
+                continue;
+            }
+            let cfg = entry.path().join("authoring").join("config.json");
+            if fs::metadata(&cfg).await.is_ok() {
+                out.push(entry.file_name().to_string_lossy().to_string());
+            }
+        }
+        out.sort();
+        Ok(out)
+    }
+
+    fn authoring_path(&self, pack_id: &str, file: &str) -> PathBuf {
+        self.root
+            .join("packs")
+            .join(pack_id)
+            .join("authoring")
+            .join(file)
     }
 
     /// Resolve a curated static asset path under the pack. Used by both the
@@ -428,4 +570,64 @@ fn validate_rel_path(rel: &str) -> Result<&str, ApiError> {
         }
     }
     Ok(rel)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{LoaderSpec, PackConfig};
+
+    fn sample_config() -> PackConfig {
+        PackConfig {
+            pack_id: "Industrial".into(),
+            display_name: "Industrial".into(),
+            tagline: String::new(),
+            minecraft_version: "1.12.2".into(),
+            loader: LoaderSpec {
+                name: "forge".into(),
+                version: "14.23.5.2922".into(),
+            },
+            java_major: 8,
+            tags: vec![],
+            featured: false,
+            mods: vec![],
+            assets: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn pack_config_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        s.save_pack_config("Industrial", &sample_config())
+            .await
+            .unwrap();
+        let loaded = s.load_pack_config("Industrial").await.unwrap();
+        assert_eq!(loaded.pack_id, "Industrial");
+        assert_eq!(loaded.minecraft_version, "1.12.2");
+    }
+
+    #[tokio::test]
+    async fn curator_doc_preserves_comments_verbatim() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let doc = "# keep this note\ndefault_off = [\"FoamFix.jar\"]\n";
+        s.save_curator_doc("Industrial", doc).await.unwrap();
+        let loaded = s.load_curator_doc("Industrial").await.unwrap();
+        assert_eq!(loaded, doc, "raw curator text must round-trip byte-for-byte");
+    }
+
+    #[tokio::test]
+    async fn list_authoring_packs_finds_configured_pack() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        assert!(s.list_authoring_packs().await.unwrap().is_empty());
+        s.save_pack_config("Industrial", &sample_config())
+            .await
+            .unwrap();
+        assert_eq!(
+            s.list_authoring_packs().await.unwrap(),
+            vec!["Industrial".to_string()]
+        );
+    }
 }

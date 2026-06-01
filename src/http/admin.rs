@@ -1,12 +1,13 @@
-use crate::error::ApiError;
+use super::ApiError;
+use crate::authoring::parse_curator;
+use crate::domain::*;
 use crate::state::AppState;
-use crate::types::*;
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Path, Request, State};
+use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{StatusCode, header};
-use axum::middleware::{Next, from_fn_with_state};
-use axum::response::Response;
-use axum::routing::{delete, post, put};
+use axum::middleware::from_fn_with_state;
+use axum::response::{IntoResponse, Response};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 
 // Mod jars and curated assets routinely run 5-50 MB. Axum's 2 MiB default
@@ -27,51 +28,19 @@ pub fn router(state: AppState) -> Router {
             "/v1/admin/packs/:pack_id/static/*rel_path",
             put(put_pack_static).delete(delete_pack_static),
         )
+        .route("/v1/admin/packs", get(list_authoring_packs))
+        .route(
+            "/v1/admin/packs/:pack_id/config",
+            get(get_pack_config).put(put_pack_config),
+        )
+        .route(
+            "/v1/admin/packs/:pack_id/curator",
+            get(get_pack_curator).put(put_pack_curator),
+        )
         .route("/v1/admin/featured", post(save_featured))
         .layer(DefaultBodyLimit::max(ADMIN_BODY_LIMIT))
-        .layer(from_fn_with_state(state.clone(), require_admin_token))
+        .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
         .with_state(state)
-}
-
-// ── auth middleware ────────────────────────────────────────────────────────
-
-async fn require_admin_token(
-    State(state): State<AppState>,
-    req: Request,
-    next: Next,
-) -> Result<Response, ApiError> {
-    // If no admin token is configured, every admin call is unauthorized --
-    // refusing by default avoids accidental open-write on misconfigured
-    // deployments.
-    let expected = state
-        .config
-        .admin_token
-        .as_deref()
-        .ok_or(ApiError::Unauthorized)?;
-
-    let presented = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-        .ok_or(ApiError::Unauthorized)?;
-
-    if constant_time_eq(expected.as_bytes(), presented.as_bytes()) {
-        Ok(next.run(req).await)
-    } else {
-        Err(ApiError::Unauthorized)
-    }
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }
 
 // ── handlers ───────────────────────────────────────────────────────────────
@@ -165,6 +134,69 @@ async fn save_featured(
 ) -> Result<(StatusCode, Json<Featured>), ApiError> {
     state.storage.save_featured(&featured).await?;
     Ok((StatusCode::CREATED, Json(featured)))
+}
+
+// ── authoring inputs ───────────────────────────────────────────────────────
+
+async fn list_authoring_packs(
+    State(state): State<AppState>,
+) -> Result<Json<AuthoringPacksListing>, ApiError> {
+    let packs = state.storage.list_authoring_packs().await?;
+    Ok(Json(AuthoringPacksListing {
+        schema_version: SCHEMA_VERSION,
+        packs,
+    }))
+}
+
+async fn get_pack_config(
+    State(state): State<AppState>,
+    Path(pack_id): Path<String>,
+) -> Result<Json<PackConfig>, ApiError> {
+    Ok(Json(state.storage.load_pack_config(&pack_id).await?))
+}
+
+async fn put_pack_config(
+    State(state): State<AppState>,
+    Path(pack_id): Path<String>,
+    Json(cfg): Json<PackConfig>,
+) -> Result<(StatusCode, Json<PackConfig>), ApiError> {
+    // The path id is authoritative; reject a body that disagrees so a
+    // mis-targeted PUT can't write one pack's config under another's id.
+    if cfg.pack_id != pack_id {
+        return Err(ApiError::BadRequest(format!(
+            "body pack_id {:?} does not match path {:?}",
+            cfg.pack_id, pack_id
+        )));
+    }
+    state.storage.save_pack_config(&pack_id, &cfg).await?;
+    Ok((StatusCode::CREATED, Json(cfg)))
+}
+
+async fn get_pack_curator(
+    State(state): State<AppState>,
+    Path(pack_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let text = state.storage.load_curator_doc(&pack_id).await?;
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/toml; charset=utf-8")],
+        text,
+    )
+        .into_response())
+}
+
+async fn put_pack_curator(
+    State(state): State<AppState>,
+    Path(pack_id): Path<String>,
+    body: String,
+) -> Result<StatusCode, ApiError> {
+    // Validate the doc parses as a Curator before persisting, so a later
+    // build never trips over a doc the panel accepted. The raw text is
+    // stored verbatim (comments preserved); only the shape is checked here.
+    parse_curator(&body)
+        .map_err(|e| ApiError::BadRequest(format!("curator.toml does not parse: {e}")))?;
+    state.storage.save_curator_doc(&pack_id, &body).await?;
+    Ok(StatusCode::CREATED)
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────

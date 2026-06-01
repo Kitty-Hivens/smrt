@@ -9,8 +9,8 @@
 //! data over derived data, so a manual role-table override always wins
 //! against a heuristic source.
 
-use crate::pack_config::{PackConfig, SourceDecl};
-use crate::types::{Display, Requirement};
+use crate::domain::{PackConfig, SourceDecl};
+use crate::domain::{Display, Requirement};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -338,7 +338,7 @@ pub struct MarkOptional {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubstituteEntry {
-    pub source: crate::pack_config::SourceDecl,
+    pub source: crate::domain::SourceDecl,
     #[serde(default)]
     pub display: Option<Display>,
 }
@@ -406,7 +406,13 @@ fn default_true() -> bool {
 pub fn load_curator(path: &Path) -> Result<Curator> {
     let raw = fs::read_to_string(path)
         .with_context(|| format!("reading curator file {}", path.display()))?;
-    toml::from_str(&raw).with_context(|| format!("parsing curator file {}", path.display()))
+    parse_curator(&raw).with_context(|| format!("parsing curator file {}", path.display()))
+}
+
+/// Parse curator TOML from a string (the panel edits the raw text). Same
+/// shape validation as [`load_curator`] without the file read.
+pub fn parse_curator(text: &str) -> Result<Curator> {
+    toml::from_str(text).context("parsing curator TOML")
 }
 
 // ── Mutations (sync) ──────────────────────────────────────────────────────
@@ -608,7 +614,7 @@ pub struct ExtraAddReport {
 /// fixing the broken slug.
 pub async fn apply_extras(
     config: &mut PackConfig,
-    modrinth: &crate::modrinth::Modrinth,
+    modrinth: &super::modrinth::Modrinth,
     extras_mods: &[ExtraMod],
     extras_assets: &[ExtraAsset],
     mc_version: &str,
@@ -631,11 +637,11 @@ pub async fn apply_extras(
                     role: None,
                     requires: Vec::new(),
                 });
-                config.mods.push(crate::pack_config::DeclaredMod {
+                config.mods.push(crate::domain::DeclaredMod {
                     filename,
                     required: em.required,
                     default_enabled: true,
-                    source: crate::pack_config::SourceDecl::Modrinth {
+                    source: crate::domain::SourceDecl::Modrinth {
                         project_id,
                         version_id,
                     },
@@ -669,10 +675,10 @@ pub async fn apply_extras(
                     requires: Vec::new(),
                 });
                 let dest = format!("{}/{}", ea.dest_dir.trim_end_matches('/'), filename);
-                config.assets.push(crate::pack_config::DeclaredAsset {
+                config.assets.push(crate::domain::DeclaredAsset {
                     dest,
                     required: ea.required,
-                    source: crate::pack_config::SourceDecl::Modrinth {
+                    source: crate::domain::SourceDecl::Modrinth {
                         project_id,
                         version_id,
                     },
@@ -699,7 +705,7 @@ pub async fn apply_extras(
 /// version_id, primary filename). Fails when the project has no
 /// matching version.
 async fn resolve_modrinth_latest_for_mc(
-    modrinth: &crate::modrinth::Modrinth,
+    modrinth: &super::modrinth::Modrinth,
     slug: &str,
     mc_version: &str,
 ) -> Result<(String, String, String)> {
@@ -832,7 +838,7 @@ pub fn generate_hidemymods_spoof(
         .iter()
         .any(|a| a.dest == generate_cfg.hidemymods_filename);
     if !asset_already_present {
-        config.assets.push(crate::pack_config::DeclaredAsset {
+        config.assets.push(crate::domain::DeclaredAsset {
             dest: generate_cfg.hidemymods_filename.clone(),
             required: true,
             source: SourceDecl::SmrtStatic {
@@ -892,7 +898,7 @@ pub async fn apply_curator(
     config: &mut PackConfig,
     curator: &Curator,
     storage: &Path,
-    modrinth: &crate::modrinth::Modrinth,
+    modrinth: &super::modrinth::Modrinth,
     mc_version: &str,
 ) -> Result<()> {
     enrich_from_mcmod_info(config, storage)?;
@@ -1195,8 +1201,8 @@ fn cache_jar_path(storage: &Path, sha1: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pack_config::{DeclaredMod, PackConfig, SourceDecl};
-    use crate::types::LoaderSpec;
+    use crate::domain::{DeclaredMod, PackConfig, SourceDecl};
+    use crate::domain::LoaderSpec;
     use std::io::Write;
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
@@ -1717,7 +1723,7 @@ mod tests {
         // smrt_static, one Modrinth, one smrt_cache. Only the
         // smrt_static one must disappear.
         let mut cfg = empty_config();
-        cfg.assets.push(crate::pack_config::DeclaredAsset {
+        cfg.assets.push(crate::domain::DeclaredAsset {
             dest: "config/foamfix.cfg".into(),
             required: true,
             source: SourceDecl::SmrtStatic {
@@ -1726,7 +1732,7 @@ mod tests {
             display: None,
             note: None,
         });
-        cfg.assets.push(crate::pack_config::DeclaredAsset {
+        cfg.assets.push(crate::domain::DeclaredAsset {
             dest: "config/quark.cfg".into(),
             required: true,
             source: SourceDecl::SmrtStatic {
@@ -1735,7 +1741,7 @@ mod tests {
             display: None,
             note: None,
         });
-        cfg.assets.push(crate::pack_config::DeclaredAsset {
+        cfg.assets.push(crate::domain::DeclaredAsset {
             dest: "resourcepacks/Better-Farm-Animals.zip".into(),
             required: false,
             source: SourceDecl::Modrinth {
@@ -1745,7 +1751,7 @@ mod tests {
             display: None,
             note: None,
         });
-        cfg.assets.push(crate::pack_config::DeclaredAsset {
+        cfg.assets.push(crate::domain::DeclaredAsset {
             dest: "shaderpacks/mellow.zip".into(),
             required: false,
             source: SourceDecl::SmrtCache {
@@ -1790,7 +1796,7 @@ mod tests {
     #[test]
     fn drop_assets_is_idempotent() {
         let mut cfg = empty_config();
-        cfg.assets.push(crate::pack_config::DeclaredAsset {
+        cfg.assets.push(crate::domain::DeclaredAsset {
             dest: "config/foamfix.cfg".into(),
             required: true,
             source: SourceDecl::SmrtStatic {
@@ -1812,7 +1818,7 @@ mod tests {
     #[test]
     fn drop_assets_empty_list_is_noop() {
         let mut cfg = empty_config();
-        cfg.assets.push(crate::pack_config::DeclaredAsset {
+        cfg.assets.push(crate::domain::DeclaredAsset {
             dest: "config/whatever.cfg".into(),
             required: true,
             source: SourceDecl::SmrtStatic {
