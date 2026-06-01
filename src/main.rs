@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let bind_addr = cfg.bind_addr;
-    let state = state::AppState::new(cfg);
+    let state = state::AppState::new(cfg)?;
     let app = http::router(state).layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;

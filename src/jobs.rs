@@ -92,11 +92,23 @@ impl Job {
 pub struct JobRegistry {
     jobs: Mutex<HashMap<String, Arc<Job>>>,
     counter: AtomicU64,
+    /// Per-pack lock so two real (publishing) builds of the same pack can't
+    /// interleave save_manifest / set_latest / summary.
+    pack_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl JobRegistry {
     pub fn get(&self, id: &str) -> Option<Arc<Job>> {
         self.jobs.lock().unwrap().get(id).cloned()
+    }
+
+    fn pack_lock(&self, pack_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.pack_locks
+            .lock()
+            .unwrap()
+            .entry(pack_id.to_string())
+            .or_default()
+            .clone()
     }
 
     fn create(&self, kind: &'static str, pack_id: String) -> Arc<Job> {
@@ -147,7 +159,14 @@ impl JobRegistry {
     ) -> Arc<Job> {
         let job = self.create(if dry_run { "preview" } else { "build" }, pack_id);
         let handle = job.clone();
+        // Real builds of the same pack are serialized; a dry run never publishes
+        // so it takes no lock.
+        let lock = (!dry_run).then(|| self.pack_lock(&job.pack_id));
         tokio::spawn(async move {
+            let _guard = match lock {
+                Some(l) => Some(l.lock_owned().await),
+                None => None,
+            };
             match run_build(&handle, &storage, &config, dry_run, pack_version).await {
                 Ok(()) => handle.finish(Status::Done),
                 Err(e) => {

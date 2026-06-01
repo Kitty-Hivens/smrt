@@ -2,6 +2,7 @@ use crate::domain::*;
 use crate::http::ApiError;
 use sha1::{Digest, Sha1};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -9,11 +10,17 @@ use tokio::io::AsyncWriteExt;
 #[derive(Debug, Clone)]
 pub struct Storage {
     root: PathBuf,
+    /// Serializes the read-modify-write of removed.txt so concurrent takedowns
+    /// don't lose each other's appends.
+    removed_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Storage {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            removed_lock: Arc::new(tokio::sync::Mutex::new(())),
+        }
     }
 
     pub fn root(&self) -> &Path {
@@ -499,6 +506,7 @@ impl Storage {
     }
 
     async fn record_removed(&self, sha1: &str) -> Result<(), ApiError> {
+        let _guard = self.removed_lock.lock().await;
         let path = self.root.join("removed.txt");
         let mut content = fs::read_to_string(&path).await.unwrap_or_default();
         if content.lines().any(|line| line.trim() == sha1) {

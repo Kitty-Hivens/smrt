@@ -167,10 +167,11 @@ struct SearchQuery {
 }
 
 async fn modrinth_search(
+    State(state): State<AppState>,
     Query(q): Query<SearchQuery>,
 ) -> Result<Json<Vec<modrinth::SearchHit>>, ApiError> {
-    let m = modrinth::Modrinth::new().map_err(ApiError::Internal)?;
-    let hits = m
+    let hits = state
+        .modrinth
         .search(&q.q, q.mc.as_deref())
         .await
         .map_err(ApiError::Internal)?;
@@ -184,10 +185,11 @@ struct VersionsQuery {
 }
 
 async fn modrinth_versions(
+    State(state): State<AppState>,
     Query(q): Query<VersionsQuery>,
 ) -> Result<Json<Vec<modrinth::Version>>, ApiError> {
-    let m = modrinth::Modrinth::new().map_err(ApiError::Internal)?;
-    let vs = m
+    let vs = state
+        .modrinth
         .project_versions(&q.id, q.mc.as_deref())
         .await
         .map_err(ApiError::Internal)?;
@@ -207,9 +209,15 @@ struct IconResp {
 // Mirrors the launcher's per-project icon lookup so the preview can show the
 // same icons the player will see for Modrinth-sourced mods without an explicit
 // display.icon_url. The panel caches per project_id client-side.
-async fn modrinth_icon(Query(q): Query<IconQuery>) -> Result<Json<IconResp>, ApiError> {
-    let m = modrinth::Modrinth::new().map_err(ApiError::Internal)?;
-    let icon_url = m.project_icon(&q.id).await.map_err(ApiError::Internal)?;
+async fn modrinth_icon(
+    State(state): State<AppState>,
+    Query(q): Query<IconQuery>,
+) -> Result<Json<IconResp>, ApiError> {
+    let icon_url = state
+        .modrinth
+        .project_icon(&q.id)
+        .await
+        .map_err(ApiError::Internal)?;
     Ok(Json(IconResp { icon_url }))
 }
 

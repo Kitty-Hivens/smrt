@@ -10,6 +10,7 @@
 //! against a heuristic source.
 
 use super::archive::read_zip_entry;
+use super::sources::cache_jar_path;
 use crate::domain::{Display, Requirement};
 use crate::domain::{PackConfig, SourceDecl};
 use crate::storage::is_safe_rel_path;
@@ -18,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Cursor;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tracing::{debug, info, warn};
 use ts_rs::TS;
 
@@ -1299,17 +1300,6 @@ fn default_display() -> Display {
         role: None,
         requires: Vec::new(),
     }
-}
-
-fn cache_jar_path(storage: &Path, sha1: &str) -> Result<PathBuf> {
-    if sha1.len() != 40 || !sha1.chars().all(|c| c.is_ascii_hexdigit()) {
-        anyhow::bail!("invalid sha1: {sha1}");
-    }
-    let prefix = &sha1[..2];
-    Ok(storage
-        .join("cache")
-        .join(prefix)
-        .join(format!("{sha1}.jar")))
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────
