@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { dialogs } from '../lib/dialogs.svelte';
   import type {
     CacheInventoryEntry,
     Featured,
@@ -31,6 +32,7 @@
   let servers = $state<ServerEntry[]>([]);
   let featured = $state<Featured | null>(null);
   let cache = $state<CacheInventoryEntry[]>([]);
+  let removed = $state<string[]>([]);
   let authoring = $state<string[]>([]);
   let err = $state('');
   let loading = $state(true);
@@ -48,13 +50,14 @@
     loading = true;
     err = '';
     try {
-      const [h, p, s, f, c, a] = await Promise.all([
+      const [h, p, s, f, c, a, rm] = await Promise.all([
         api.health(),
         api.packs(),
         api.servers(),
         api.featured().catch(featuredFallback),
         api.cacheInventory(),
         api.authoringPacks(),
+        api.removed(),
       ]);
       health = h;
       packs = p.packs;
@@ -64,6 +67,7 @@
       featServers = new Set(f.featured_servers);
       cache = c.entries;
       authoring = a.packs;
+      removed = rm.removed;
     } catch (e) {
       err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
     } finally {
@@ -73,7 +77,11 @@
   loadAll();
 
   async function delServer(id: string) {
-    if (!confirm(`Delete server "${id}"? Removes its metadata from the mirror.`)) return;
+    const ok = await dialogs.confirm(`Delete server "${id}"? Removes its metadata from the mirror.`, {
+      title: 'Delete server',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await api.deleteServer(id);
       await loadAll();
@@ -129,12 +137,11 @@
   }
 
   async function delCacheJar(sha1: string) {
-    if (
-      !confirm(
-        `Delete jar ${sha1.slice(0, 12)}...? It is added to the removed-list (takedown) and cannot be re-uploaded.`,
-      )
-    )
-      return;
+    const ok = await dialogs.confirm(
+      `Delete jar ${sha1.slice(0, 12)}...? It is added to the removed-list (takedown) and cannot be re-uploaded.`,
+      { title: 'Delete cache jar', danger: true },
+    );
+    if (!ok) return;
     try {
       await api.deleteCacheJar(sha1);
       await loadAll();
@@ -150,8 +157,10 @@
   );
   const summaryFor = (id: string) => packs.find((p) => p.pack_id === id);
 
-  function newPack() {
-    const id = prompt('New pack id (letters, digits, - _ .):')?.trim();
+  async function newPack() {
+    const id = (
+      await dialogs.prompt('New pack id (letters, digits, - _ .):', { title: 'New pack' })
+    )?.trim();
     if (id) packEdit = id;
   }
 
@@ -182,11 +191,19 @@
     ['GET', '/v1/admin/packs'],
     ['GET PUT', '/v1/admin/packs/:id/config'],
     ['GET PUT', '/v1/admin/packs/:id/curator'],
+    ['GET PUT', '/v1/admin/packs/:id/curator/structured'],
+    ['POST', '/v1/admin/packs/:id/build?dry_run'],
+    ['POST', '/v1/admin/packs/:id/bootstrap'],
+    ['POST', '/v1/admin/packs/:id/validate'],
+    ['GET', '/v1/admin/jobs/:id'],
+    ['GET', '/v1/admin/jobs/:id/events'],
     ['POST', '/v1/admin/servers'],
     ['DELETE', '/v1/admin/servers/:id'],
     ['PUT DELETE', '/v1/admin/cache/:prefix/:file'],
-    ['PUT DELETE', '/v1/admin/packs/:id/static/*path'],
+    ['GET', '/v1/admin/cache/removed'],
+    ['GET PUT DELETE', '/v1/admin/packs/:id/static/*path'],
     ['POST', '/v1/admin/featured'],
+    ['GET', '/v1/admin/modrinth/search | versions | icon'],
   ];
 
   const tabs: [Tab, string][] = [
@@ -242,7 +259,7 @@
       <h2 class="sec">API surface</h2>
       <div class="panel">
         <table>
-          <thead><tr><th style="width:120px">Method</th><th>Path</th></tr></thead>
+          <thead><tr><th style="width:150px">Method</th><th>Path</th></tr></thead>
           <tbody>
             {#each endpoints as [method, path]}
               <tr>
@@ -412,6 +429,23 @@
           </tbody>
         </table>
       </div>
+
+      {#if removed.length}
+        <h2 class="sec rm">Removed (takedown)</h2>
+        <div class="cache-head muted">
+          {removed.length} sha1{removed.length === 1 ? '' : 's'} blocked from re-ingestion (removed.txt)
+        </div>
+        <div class="panel">
+          <table>
+            <thead><tr><th>sha1</th></tr></thead>
+            <tbody>
+              {#each removed as sha}
+                <tr><td class="mono">{sha}</td></tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
     {/if}
   </main>
 </div>
@@ -492,6 +526,9 @@
     text-transform: uppercase;
     letter-spacing: 0.08em;
     margin-bottom: 10px;
+  }
+  .sec.rm {
+    margin-top: 26px;
   }
   .cache-head {
     font-size: 12px;

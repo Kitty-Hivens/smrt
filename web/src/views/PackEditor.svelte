@@ -1,6 +1,13 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
-  import type { DeclaredAsset, DeclaredMod, JobStatus, PackConfig, SourceDecl } from '../lib/types';
+  import type {
+    DeclaredAsset,
+    DeclaredMod,
+    JobStatus,
+    PackConfig,
+    SourceDecl,
+    ValidateReport,
+  } from '../lib/types';
   import BuildConsole from './BuildConsole.svelte';
   import BrandingEditor from './BrandingEditor.svelte';
   import CuratorEditor from './CuratorEditor.svelte';
@@ -31,6 +38,28 @@
   let err = $state('');
   let cfgMsg = $state('');
   let savingCfg = $state(false);
+
+  // validate the saved config against an uploaded SC archive
+  let validating = $state(false);
+  let valReport = $state<ValidateReport | null>(null);
+  let valErr = $state('');
+
+  async function onValidate(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    validating = true;
+    valErr = '';
+    valReport = null;
+    try {
+      valReport = await api.validatePack(packId, file);
+    } catch (x) {
+      valErr = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+    } finally {
+      validating = false;
+      input.value = '';
+    }
+  }
 
   async function load() {
     loading = true;
@@ -209,8 +238,40 @@
       <button class="primary" onclick={saveConfig} disabled={savingCfg}>
         {savingCfg ? 'saving...' : 'Save config'}
       </button>
+      <label class="valbtn">
+        {validating ? 'validating...' : 'Validate vs SC archive'}
+        <input type="file" accept=".zip" onchange={onValidate} disabled={validating} hidden />
+      </label>
       {#if cfgMsg}<span class="muted mono">{cfgMsg}</span>{/if}
     </div>
+
+    {#if valErr}<div class="err mono">{valErr}</div>{/if}
+    {#if valReport}
+      <div class="panel valrep">
+        <div class="valhead">
+          <span style="color:var(--ok)">{valReport.matched} matched</span>
+          <span style={valReport.missing_in_config.length ? 'color:var(--danger)' : 'opacity:.62'}>
+            {valReport.missing_in_config.length} missing in config
+          </span>
+          <span class="faint">{valReport.extra_in_config.length} extra (curator additions)</span>
+          <span class="faint">SC archive: {valReport.sc_mod_count} mods</span>
+        </div>
+        {#if valReport.missing_in_config.length}
+          <div class="vallist">
+            <div class="vl-h" style="color:var(--danger)">
+              Missing in config (in the archive -- would break the FML handshake)
+            </div>
+            {#each valReport.missing_in_config as m}<div class="mono vl-row">{m}</div>{/each}
+          </div>
+        {/if}
+        {#if valReport.extra_in_config.length}
+          <div class="vallist">
+            <div class="vl-h faint">Extra in config (declared on top of the SC set)</div>
+            {#each valReport.extra_in_config as m}<div class="mono vl-row">{m}</div>{/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
 
     <div class="panel meta">
       <label>display_name<input bind:value={cfg.display_name} /></label>
@@ -508,5 +569,41 @@
     max-height: calc(100vh - 96px);
     overflow: auto;
     min-width: 0;
+  }
+  .valbtn {
+    display: inline-block;
+    font-size: 13px;
+    color: var(--fg);
+    background: var(--panel-2);
+    border: 1px solid var(--seam-bright);
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+  .valbtn:hover {
+    border-color: var(--accent);
+  }
+  .valrep {
+    padding: 14px;
+    margin-bottom: 20px;
+  }
+  .valhead {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 12px;
+  }
+  .vallist {
+    margin-top: 12px;
+  }
+  .vl-h {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+  .vl-row {
+    font-size: 12px;
+    padding: 2px 0;
+    color: var(--fg);
   }
 </style>

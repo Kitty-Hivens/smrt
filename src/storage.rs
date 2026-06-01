@@ -504,6 +504,22 @@ impl Storage {
         content.push('\n');
         atomic_write(&path, content.as_bytes()).await
     }
+
+    /// The takedown list: sha1s blocked from (re-)ingestion. Surfaced in the
+    /// panel's Cache tab so an operator can see what has been removed.
+    pub async fn list_removed(&self) -> Result<Vec<String>, ApiError> {
+        let path = self.root.join("removed.txt");
+        let content = match fs::read_to_string(&path).await {
+            Ok(c) => c,
+            Err(_) => return Ok(Vec::new()),
+        };
+        Ok(content
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect())
+    }
 }
 
 async fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ApiError> {

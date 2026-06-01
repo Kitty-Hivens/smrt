@@ -5,16 +5,24 @@
 use super::archive::extract_mods;
 use crate::domain::PackConfig;
 use anyhow::Result;
+use serde::Serialize;
 use std::collections::HashSet;
+use ts_rs::TS;
 
 /// Result of cross-referencing a `PackConfig` against an SC archive by
 /// mod filename. `missing_in_config` (in the archive but not declared)
 /// would break the FML handshake; `extra_in_config` (declared but not in
 /// the archive) is expected when the curator adds mods on top.
+#[derive(Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct ValidateReport {
+    #[ts(type = "number")]
     pub sc_mod_count: usize,
+    #[ts(type = "number")]
     pub declared_mods: usize,
+    #[ts(type = "number")]
     pub declared_assets: usize,
+    #[ts(type = "number")]
     pub matched: usize,
     pub missing_in_config: Vec<String>,
     pub extra_in_config: Vec<String>,

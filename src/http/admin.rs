@@ -1,5 +1,5 @@
 use super::ApiError;
-use crate::authoring::{Curator, merge_curator, modrinth, parse_curator};
+use crate::authoring::{Curator, ValidateReport, merge_curator, modrinth, parse_curator, validate};
 use crate::domain::*;
 use crate::state::AppState;
 use axum::body::Bytes;
@@ -43,6 +43,8 @@ pub fn router(state: AppState) -> Router {
             get(get_pack_curator_structured).put(put_pack_curator_structured),
         )
         .route("/v1/admin/featured", post(save_featured))
+        .route("/v1/admin/packs/:pack_id/validate", post(validate_pack))
+        .route("/v1/admin/cache/removed", get(list_removed))
         .route("/v1/admin/modrinth/search", get(modrinth_search))
         .route("/v1/admin/modrinth/versions", get(modrinth_versions))
         .route("/v1/admin/modrinth/icon", get(modrinth_icon))
@@ -209,6 +211,39 @@ async fn modrinth_icon(Query(q): Query<IconQuery>) -> Result<Json<IconResp>, Api
     let m = modrinth::Modrinth::new().map_err(ApiError::Internal)?;
     let icon_url = m.project_icon(&q.id).await.map_err(ApiError::Internal)?;
     Ok(Json(IconResp { icon_url }))
+}
+
+// ── validate against an SC archive ───────────────────────────────────────────
+
+// Cross-reference the saved config against an uploaded SC archive by mod
+// filename. spawn_blocking: unzipping a large archive must not stall the runtime.
+async fn validate_pack(
+    State(state): State<AppState>,
+    Path(pack_id): Path<String>,
+    body: Bytes,
+) -> Result<Json<ValidateReport>, ApiError> {
+    let cfg = state.storage.load_pack_config(&pack_id).await?;
+    let report = tokio::task::spawn_blocking(move || validate(&cfg, &body))
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+        .map_err(ApiError::Internal)?;
+    Ok(Json(report))
+}
+
+// ── removed-list (takedown) ──────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct RemovedListing {
+    schema_version: u32,
+    removed: Vec<String>,
+}
+
+async fn list_removed(State(state): State<AppState>) -> Result<Json<RemovedListing>, ApiError> {
+    let removed = state.storage.list_removed().await?;
+    Ok(Json(RemovedListing {
+        schema_version: SCHEMA_VERSION,
+        removed,
+    }))
 }
 
 // ── authoring inputs ───────────────────────────────────────────────────────

@@ -134,11 +134,12 @@ impl JobRegistry {
         storage: Arc<Storage>,
         config: Arc<Config>,
         dry_run: bool,
+        pack_version: Option<String>,
     ) -> Arc<Job> {
         let job = self.create(if dry_run { "preview" } else { "build" }, pack_id);
         let handle = job.clone();
         tokio::spawn(async move {
-            match run_build(&handle, &storage, &config, dry_run).await {
+            match run_build(&handle, &storage, &config, dry_run, pack_version).await {
                 Ok(()) => handle.finish(Status::Done),
                 Err(e) => {
                     handle.line(format!("failed: {e}"));
@@ -181,6 +182,7 @@ async fn run_build(
     storage: &Storage,
     config: &Config,
     dry_run: bool,
+    pack_version: Option<String>,
 ) -> Result<(), String> {
     let pack_id = job.pack_id.clone();
     job.line(format!("build {pack_id}: loading authoring inputs"));
@@ -217,7 +219,7 @@ async fn run_build(
     }
 
     job.line("resolving sources (Modrinth lookups + cache reads)");
-    let manifest = build_manifest(&cfg, storage.root(), None, &config.mirror_base)
+    let manifest = build_manifest(&cfg, storage.root(), pack_version.as_deref(), &config.mirror_base)
         .await
         .map_err(|e| format!("resolve failed: {e}"))?;
     let pack_meta = curator.as_ref().map(|c| c.pack_meta.clone()).unwrap_or_default();
@@ -356,7 +358,7 @@ mod tests {
         let config = Arc::new(test_config(tmp.path().to_path_buf()));
 
         let registry = JobRegistry::default();
-        let job = registry.spawn_build("Test".into(), storage.clone(), config, true);
+        let job = registry.spawn_build("Test".into(), storage.clone(), config, true, None);
         assert_eq!(job.kind, "preview");
         assert_eq!(await_finish(&job).await, Status::Done);
 
@@ -397,7 +399,7 @@ mod tests {
         let config = Arc::new(test_config(tmp.path().to_path_buf()));
 
         let registry = JobRegistry::default();
-        let job = registry.spawn_build("Test".into(), storage.clone(), config, false);
+        let job = registry.spawn_build("Test".into(), storage.clone(), config, false, None);
         assert_eq!(job.kind, "build");
         assert_eq!(await_finish(&job).await, Status::Done);
 

@@ -33,6 +33,9 @@ export type { AssetEntry } from './bindings/AssetEntry';
 export type { Source } from './bindings/Source';
 export type { Requirement } from './bindings/Requirement';
 
+// validate report (config vs SC archive)
+export type { ValidateReport } from './bindings/ValidateReport';
+
 // curator (structured editor)
 export type { Curator } from './bindings/Curator';
 export type { PackMeta } from './bindings/PackMeta';

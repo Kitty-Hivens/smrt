@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { dialogs } from '../lib/dialogs.svelte';
 
   let { packId }: { packId: string } = $props();
 
@@ -39,7 +40,11 @@
   }
 
   async function del(f: string) {
-    if (!confirm(`Delete static asset "${f}"?`)) return;
+    const ok = await dialogs.confirm(`Delete static asset "${f}"?`, {
+      title: 'Delete asset',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await api.deleteStatic(packId, f);
       await load();

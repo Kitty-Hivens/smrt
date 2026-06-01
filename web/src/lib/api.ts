@@ -16,6 +16,7 @@ import type {
   PackManifest,
   ServerEntry,
   ServerListing,
+  ValidateReport,
 } from './types';
 
 export class ApiError extends Error {
@@ -27,12 +28,24 @@ export class ApiError extends Error {
   }
 }
 
+// A 401 mid-session means the cookie expired; let the shell bounce to login
+// rather than leave the operator staring at red banners.
+let onUnauthorized: (() => void) | null = null;
+export function setUnauthorizedHandler(fn: () => void): void {
+  onUnauthorized = fn;
+}
+
+async function toError(r: Response): Promise<ApiError> {
+  if (r.status === 401) onUnauthorized?.();
+  return new ApiError(r.status, await r.text().catch(() => ''));
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const r = await fetch(path, {
     credentials: 'include',
     headers: { Accept: 'application/json' },
   });
-  if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''));
+  if (!r.ok) throw await toError(r);
   return (await r.json()) as T;
 }
 
@@ -43,7 +56,7 @@ async function send(method: string, path: string, jsonBody?: unknown): Promise<v
     init.body = JSON.stringify(jsonBody);
   }
   const r = await fetch(path, init);
-  if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''));
+  if (!r.ok) throw await toError(r);
 }
 
 async function sendRaw(
@@ -58,7 +71,7 @@ async function sendRaw(
     headers: { 'Content-Type': contentType },
     body,
   });
-  if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''));
+  if (!r.ok) throw await toError(r);
 }
 
 async function sha1Hex(buf: ArrayBuffer): Promise<string> {
@@ -68,7 +81,7 @@ async function sha1Hex(buf: ArrayBuffer): Promise<string> {
 
 async function getText(path: string): Promise<string> {
   const r = await fetch(path, { credentials: 'include' });
-  if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''));
+  if (!r.ok) throw await toError(r);
   return r.text();
 }
 
@@ -79,7 +92,7 @@ async function putText(path: string, text: string): Promise<void> {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' },
     body: text,
   });
-  if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''));
+  if (!r.ok) throw await toError(r);
 }
 
 // Per-project icon cache (incl. negative results), mirroring the launcher's
@@ -131,6 +144,7 @@ export const api = {
   },
   deleteCacheJar: (sha1: string) =>
     send('DELETE', `/v1/admin/cache/${sha1.slice(0, 2)}/${sha1}.jar`),
+  removed: () => getJson<{ schema_version: number; removed: string[] }>('/v1/admin/cache/removed'),
 
   // ── authoring: config, curator, build ──
   packConfig: (id: string) =>
@@ -144,13 +158,19 @@ export const api = {
     getJson<Curator>(`/v1/admin/packs/${encodeURIComponent(id)}/curator/structured`),
   saveCuratorStructured: (id: string, c: Curator) =>
     send('PUT', `/v1/admin/packs/${encodeURIComponent(id)}/curator/structured`, c),
-  async buildPack(id: string, opts?: { dryRun?: boolean }): Promise<{ job_id: string }> {
-    const q = opts?.dryRun ? '?dry_run=true' : '';
-    const r = await fetch(`/v1/admin/packs/${encodeURIComponent(id)}/build${q}`, {
+  async buildPack(
+    id: string,
+    opts?: { dryRun?: boolean; packVersion?: string },
+  ): Promise<{ job_id: string }> {
+    const q = new URLSearchParams();
+    if (opts?.dryRun) q.set('dry_run', 'true');
+    if (opts?.packVersion) q.set('pack_version', opts.packVersion);
+    const qs = q.toString();
+    const r = await fetch(`/v1/admin/packs/${encodeURIComponent(id)}/build${qs ? `?${qs}` : ''}`, {
       method: 'POST',
       credentials: 'include',
     });
-    if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''));
+    if (!r.ok) throw await toError(r);
     return (await r.json()) as { job_id: string };
   },
   jobEventsUrl: (jobId: string) => `/v1/admin/jobs/${encodeURIComponent(jobId)}/events`,
@@ -164,6 +184,19 @@ export const api = {
     getJson<PackManifest>(
       `/v1/packs/${encodeURIComponent(id)}/manifest/${encodeURIComponent(version)}`,
     ),
+
+  // ── validate a config against an SC archive ──
+  async validatePack(id: string, file: File): Promise<ValidateReport> {
+    const buf = await file.arrayBuffer();
+    const r = await fetch(`/v1/admin/packs/${encodeURIComponent(id)}/validate`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/zip' },
+      body: buf,
+    });
+    if (!r.ok) throw await toError(r);
+    return (await r.json()) as ValidateReport;
+  },
 
   // ── bootstrap + pack static assets ──
   async bootstrapPack(
@@ -192,7 +225,7 @@ export const api = {
       headers: { 'Content-Type': 'application/zip' },
       body: buf,
     });
-    if (!r.ok) throw new ApiError(r.status, await r.text().catch(() => ''));
+    if (!r.ok) throw await toError(r);
     return (await r.json()) as { job_id: string };
   },
   packStatic: (id: string) =>

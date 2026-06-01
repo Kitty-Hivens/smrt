@@ -39,10 +39,12 @@ struct JobRef {
 
 #[derive(Deserialize)]
 struct BuildParams {
-    /// `?dry_run=1` computes + stashes the manifest without publishing, so the
+    /// `?dry_run=true` computes + stashes the manifest without publishing, so the
     /// panel can preview and diff before committing a real build.
     #[serde(default)]
     dry_run: bool,
+    /// Optional canonical `pack_version` override; default is today's UTC slug.
+    pack_version: Option<String>,
 }
 
 async fn build_pack(
@@ -50,11 +52,13 @@ async fn build_pack(
     Path(pack_id): Path<String>,
     Query(p): Query<BuildParams>,
 ) -> Json<JobRef> {
+    let pack_version = p.pack_version.filter(|v| !v.trim().is_empty());
     let job = state.jobs.spawn_build(
         pack_id,
         state.storage.clone(),
         state.config.clone(),
         p.dry_run,
+        pack_version,
     );
     Json(JobRef {
         job_id: job.id.clone(),
