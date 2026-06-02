@@ -22,6 +22,13 @@ type Req = ConfirmReq | PromptReq;
 
 let active = $state<Req | null>(null);
 
+// Settle an already-open dialog as cancelled before a new one replaces it, so
+// the superseded promise never hangs (and its caller's busy flag clears).
+function settlePending() {
+  if (active?.kind === 'confirm') active.resolve(false);
+  else if (active?.kind === 'prompt') active.resolve(null);
+}
+
 export const dialogs = {
   get active(): Req | null {
     return active;
@@ -29,6 +36,7 @@ export const dialogs = {
 
   confirm(message: string, opts: { title?: string; danger?: boolean } = {}): Promise<boolean> {
     return new Promise((resolve) => {
+      settlePending();
       active = {
         kind: 'confirm',
         title: opts.title ?? 'Confirm',
@@ -44,6 +52,7 @@ export const dialogs = {
     opts: { title?: string; initial?: string; placeholder?: string } = {},
   ): Promise<string | null> {
     return new Promise((resolve) => {
+      settlePending();
       active = {
         kind: 'prompt',
         title: opts.title ?? 'Input',

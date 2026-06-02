@@ -35,8 +35,8 @@
   const manifest = $derived(result?.manifest ?? null);
   const summary = $derived(result?.summary ?? null);
   const heroAvatar = $derived(summary ? letterAvatar(summary.display_name) : null);
-  // ts-rs types these as required arrays, but serde omits them when empty, so
-  // they can be undefined on the wire -- default before reading .length.
+  // gallery_urls is always serialized (no skip_serializing_if), so this is just
+  // a null-summary guard; ts-rs already types it as always-present.
   const gallery = $derived(summary?.gallery_urls ?? []);
   const mods = $derived<ModEntry[]>(manifest?.mods ?? []);
   const grouping = $derived(groupByRole(mods));

@@ -4,12 +4,18 @@
   const a = $derived(dialogs.active);
   let value = $state('');
   let input = $state<HTMLInputElement | null>(null);
+  let okBtn = $state<HTMLButtonElement | null>(null);
+  let dialogEl = $state<HTMLElement | null>(null);
 
-  // Seed the field + focus when a prompt opens.
+  // Seed + focus when a dialog opens: the field for a prompt, else the primary
+  // action for a confirm.
   $effect(() => {
-    if (a?.kind === 'prompt') {
+    if (!a) return;
+    if (a.kind === 'prompt') {
       value = a.initial;
       input?.focus();
+    } else {
+      okBtn?.focus();
     }
   });
 
@@ -25,17 +31,49 @@
   }
   function onKey(e: KeyboardEvent) {
     if (!a) return;
-    if (e.key === 'Escape') cancel();
-    else if (e.key === 'Enter' && a.kind === 'prompt') accept();
+    if (e.key === 'Escape') {
+      cancel();
+      return;
+    }
+    if (e.key === 'Enter' && a.kind === 'prompt') {
+      accept();
+      return;
+    }
+    // Trap Tab inside the dialog so focus can't reach the obscured page behind it.
+    if (e.key === 'Tab' && dialogEl) {
+      const items = [...dialogEl.querySelectorAll<HTMLElement>('button, input')];
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
   }
 </script>
 
 <svelte:window onkeydown={onKey} />
 
 {#if a}
-  <div class="overlay" onclick={cancel} role="presentation">
-    <div class="dlg panel" onclick={(e) => e.stopPropagation()} role="presentation">
-      <h3>{a.title}</h3>
+  <div
+    class="overlay"
+    role="presentation"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) cancel();
+    }}
+  >
+    <div
+      class="dlg panel"
+      bind:this={dialogEl}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dialog-title"
+    >
+      <h3 id="dialog-title">{a.title}</h3>
       {#if a.kind === 'confirm'}
         <p class="msg">{a.message}</p>
       {:else}
@@ -47,6 +85,7 @@
       <div class="actions">
         <button onclick={cancel}>Cancel</button>
         <button
+          bind:this={okBtn}
           class="primary"
           class:danger={a.kind === 'confirm' && a.danger}
           onclick={accept}

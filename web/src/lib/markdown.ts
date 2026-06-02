@@ -13,7 +13,7 @@ function escapeHtml(s: string): string {
 }
 
 // Only allow benign URL shapes; anything else (javascript:, data:, etc.) -> '#'.
-function safeUrl(url: string): string {
+export function safeUrl(url: string): string {
   const u = url.trim();
   if (/^(https?:\/\/|mailto:|#|\/|\.{1,2}\/)/i.test(u)) return u;
   if (/^[\w.-]+(\/|$)/.test(u)) return u; // bare relative path

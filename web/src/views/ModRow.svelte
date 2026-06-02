@@ -1,6 +1,7 @@
 <script lang="ts">
   import ModIcon from './ModIcon.svelte';
   import { formatBytes, modName } from '../lib/preview';
+  import { safeUrl } from '../lib/markdown';
   import type { DepEdge, MissingReq } from '../lib/preview';
   import type { ModEntry } from '../lib/types';
 
@@ -54,7 +55,7 @@
       <span>{mod.filename}</span>
       <span class="faint">{formatBytes(mod.size_bytes)}</span>
       {#if mod.source.type === 'modrinth'}<span class="faint">modrinth</span>{/if}
-      {#if d?.url}<a href={d.url} target="_blank" rel="noopener noreferrer">learn more</a>{/if}
+      {#if d?.url}<a href={safeUrl(d.url)} target="_blank" rel="noopener noreferrer">learn more</a>{/if}
     </div>
     {#if d?.description}<div class="desc">{d.description}</div>{/if}
   </div>
