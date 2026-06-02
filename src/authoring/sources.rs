@@ -11,6 +11,11 @@ use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Per-process temp-file sequence so concurrent writers to the same target use
+/// distinct temp files instead of colliding on one shared `.tmp`.
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Default)]
 pub(super) struct ModrinthCache {
@@ -191,9 +196,19 @@ pub(super) fn write_to_cache(root: &Path, sha1: &str, bytes: &[u8]) -> Result<()
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).context("creating cache prefix dir")?;
     }
-    let tmp = path.with_extension("jar.tmp");
-    fs::write(&tmp, bytes).context("writing cache jar tmp")?;
-    fs::rename(&tmp, &path).context("renaming cache jar")?;
+    let tmp = path.with_extension(format!(
+        "jar.tmp.{}.{}",
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    if let Err(e) = fs::write(&tmp, bytes) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e).context("writing cache jar tmp");
+    }
+    if let Err(e) = fs::rename(&tmp, &path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e).context("renaming cache jar");
+    }
     Ok(())
 }
 
@@ -211,9 +226,19 @@ pub(super) fn write_to_static(static_dir: &Path, rel_path: &str, bytes: &[u8]) -
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).context("creating static parent dir")?;
     }
-    let tmp = path.with_extension("tmp");
-    fs::write(&tmp, bytes).context("writing static tmp")?;
-    fs::rename(&tmp, &path).context("renaming static")?;
+    let tmp = path.with_extension(format!(
+        "tmp.{}.{}",
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    if let Err(e) = fs::write(&tmp, bytes) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e).context("writing static tmp");
+    }
+    if let Err(e) = fs::rename(&tmp, &path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e).context("renaming static");
+    }
     Ok(())
 }
 

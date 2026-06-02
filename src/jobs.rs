@@ -8,6 +8,7 @@ use crate::authoring::{
 };
 use crate::config::Config;
 use crate::domain::{PackManifest, PackSummary};
+use crate::http::ApiError;
 use crate::storage::Storage;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -226,10 +227,15 @@ async fn run_build(
 
     let curator = match storage.load_curator_doc(&pack_id).await {
         Ok(text) => Some(parse_curator(&text).map_err(|e| format!("curator.toml: {e}"))?),
-        Err(_) => {
+        Err(ApiError::NotFound) => {
             job.line("no curator.toml -- building the config as-is");
             None
         }
+        // A real read error (I/O, permissions, a race with save_curator_doc) must
+        // NOT silently drop the curator chain and publish an under-curated
+        // manifest (no incompatible / default_off / roles / hidemymods spoof) --
+        // fail the build loudly instead.
+        Err(e) => return Err(format!("reading curator.toml: {e}")),
     };
 
     let modrinth = Modrinth::new().map_err(|e| e.to_string())?;

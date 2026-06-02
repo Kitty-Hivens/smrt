@@ -588,7 +588,7 @@ fn is_hex(s: &str) -> bool {
 /// Both the on-disk layout and the public cache URL bucket by this, so the
 /// sharding width has one definition. Precondition: a validated (>= 2 char) sha1.
 pub(crate) fn sha1_shard(sha1: &str) -> &str {
-    &sha1[..2]
+    sha1.get(..2).unwrap_or(sha1)
 }
 
 /// The one definition of the content-addressed cache layout: a jar with the
