@@ -5,6 +5,7 @@
 
 use super::modrinth::{Modrinth, Version as MrVersion};
 use crate::domain::{AssetEntry, DeclaredAsset, DeclaredMod, ModEntry, Source, SourceDecl};
+use crate::storage::is_safe_rel_path;
 use anyhow::{Context, Result, anyhow, bail};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
@@ -40,6 +41,16 @@ pub(super) async fn resolve_mod(
     modrinth: &Modrinth,
     cache: &ModrinthCache,
 ) -> Result<ModEntry> {
+    // filename lands in the manifest and the launcher writes mods/<filename>.
+    // Reject traversal (any '/', '\\', leading dot, or empty) but keep the broad
+    // jar-name charset -- real mod filenames carry brackets, spaces, plus, etc.
+    if decl.filename.is_empty()
+        || decl.filename.starts_with('.')
+        || decl.filename.contains('/')
+        || decl.filename.contains('\\')
+    {
+        bail!("mod filename {:?} is not a safe filename", decl.filename);
+    }
     let (sha1, size_bytes, source) = match &decl.source {
         SourceDecl::Modrinth {
             project_id,
@@ -105,6 +116,12 @@ pub(super) async fn resolve_asset(
     modrinth: &Modrinth,
     cache: &ModrinthCache,
 ) -> Result<AssetEntry> {
+    // dest lands verbatim in the published manifest and a launcher places files
+    // at it. Reject traversal here -- the single choke point every asset
+    // (config-authored, curator extras, generated) funnels through at build.
+    if !is_safe_rel_path(&decl.dest) {
+        bail!("asset dest {:?} is not a safe relative path", decl.dest);
+    }
     let (sha1, size_bytes, source) = match &decl.source {
         SourceDecl::Modrinth {
             project_id,
@@ -311,6 +328,34 @@ mod tests {
         std::fs::write(root.join("removed.txt"), format!("{sha1}\n")).unwrap();
         let err = write_to_cache(&cache_dir, &sha1, b"jar").unwrap_err();
         assert!(err.to_string().contains("removed-list"), "got {err}");
+    }
+
+    #[tokio::test]
+    async fn resolve_asset_rejects_traversal_dest() {
+        // Every asset funnels through resolve_asset; a config-authored dest with
+        // traversal must be refused before it reaches the manifest.
+        let decl = DeclaredAsset {
+            dest: "../../etc/cron.d/x".into(),
+            required: true,
+            source: SourceDecl::SmrtStatic {
+                rel_path: "ok.png".into(),
+            },
+            display: None,
+            note: None,
+        };
+        let modrinth = Modrinth::new().unwrap();
+        let cache = ModrinthCache::default();
+        let err = resolve_asset(
+            &decl,
+            "pack",
+            Path::new("/tmp"),
+            "https://m",
+            &modrinth,
+            &cache,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("safe relative path"), "got {err}");
     }
 
     #[test]

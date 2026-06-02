@@ -780,12 +780,6 @@ pub async fn apply_extras(
                     requires: Vec::new(),
                 });
                 let dest = format!("{}/{}", ea.dest_dir.trim_end_matches('/'), filename);
-                if !is_safe_rel_path(&dest) {
-                    report
-                        .assets_failed
-                        .push((ea.slug.clone(), format!("unsafe extras dest {dest:?}")));
-                    continue;
-                }
                 config.assets.push(crate::domain::DeclaredAsset {
                     dest,
                     required: ea.required,
