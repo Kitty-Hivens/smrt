@@ -187,7 +187,7 @@ async fn main() -> Result<()> {
                     java_major,
                     storage,
                 },
-                &archive,
+                archive,
             )
             .await?;
             write_pack_config(&cfg, &out)?;

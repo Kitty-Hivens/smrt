@@ -74,7 +74,7 @@ pub(super) async fn resolve_mod(
         }
         SourceDecl::SmrtCache { sha1 } => {
             let path = cache_jar_path(storage, sha1)?;
-            let meta = fs::metadata(&path).with_context(|| {
+            let meta = tokio::fs::metadata(&path).await.with_context(|| {
                 format!(
                     "cache jar {} not found for mod {}",
                     path.display(),
@@ -145,7 +145,7 @@ pub(super) async fn resolve_asset(
         }
         SourceDecl::SmrtStatic { rel_path } => {
             let path = static_asset_path(storage, pack_id, rel_path)?;
-            let bytes = fs::read(&path).with_context(|| {
+            let bytes = tokio::fs::read(&path).await.with_context(|| {
                 format!(
                     "static asset {} not found for {}",
                     path.display(),

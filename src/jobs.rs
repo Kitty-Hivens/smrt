@@ -190,7 +190,7 @@ impl JobRegistry {
         let job = self.create("bootstrap", pack_id);
         let handle = job.clone();
         tokio::spawn(async move {
-            match run_bootstrap(&handle, args, &archive, &storage).await {
+            match run_bootstrap(&handle, args, archive, &storage).await {
                 Ok(()) => handle.finish(Status::Done),
                 Err(e) => {
                     handle.line(format!("failed: {e}"));
@@ -300,7 +300,7 @@ async fn run_build(
 async fn run_bootstrap(
     job: &Job,
     args: BootstrapArgs,
-    archive: &[u8],
+    archive: Vec<u8>,
     storage: &Storage,
 ) -> Result<(), String> {
     let pack_id = args.pack_id.clone();
