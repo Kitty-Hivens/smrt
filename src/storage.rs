@@ -1,17 +1,26 @@
-use crate::error::ApiError;
-use crate::types::*;
+use crate::domain::*;
+use crate::http::ApiError;
 use sha1::{Digest, Sha1};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Clone)]
 pub struct Storage {
     root: PathBuf,
+    /// Serializes the read-modify-write of removed.txt so concurrent takedowns
+    /// don't lose each other's appends.
+    removed_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Storage {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            removed_lock: Arc::new(tokio::sync::Mutex::new(())),
+        }
     }
 
     pub fn root(&self) -> &Path {
@@ -99,6 +108,153 @@ impl Storage {
         Ok(out)
     }
 
+    /// Write a built manifest to `packs/<id>/manifests/<version>.json`. The
+    /// authoring layer computes the manifest; persistence lives here so the
+    /// on-disk layout has a single owner shared by the CLI and the panel.
+    pub async fn save_manifest(
+        &self,
+        pack_id: &str,
+        manifest: &PackManifest,
+    ) -> Result<(), ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        if !is_safe_version(&manifest.pack_version) {
+            return Err(ApiError::BadRequest("invalid pack version".into()));
+        }
+        let path = self
+            .root
+            .join("packs")
+            .join(pack_id)
+            .join("manifests")
+            .join(format!("{}.json", manifest.pack_version));
+        let bytes = serde_json::to_vec_pretty(manifest)
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("manifest json encode: {e}")))?;
+        atomic_write(&path, &bytes).await
+    }
+
+    /// Point `manifests/latest` at `<version>.json` via an atomic symlink
+    /// swap, so concurrent readers never observe a missing target. The
+    /// public read path resolves `latest` by following the link.
+    pub async fn set_latest_manifest(&self, pack_id: &str, version: &str) -> Result<(), ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        if !is_safe_version(version) {
+            return Err(ApiError::BadRequest("invalid version slug".into()));
+        }
+        let manifests_dir = self.root.join("packs").join(pack_id).join("manifests");
+        fs::create_dir_all(&manifests_dir).await.map_err(io_err)?;
+        let target = format!("{version}.json");
+        let latest = manifests_dir.join("latest");
+        let latest_tmp = manifests_dir.join("latest.tmp");
+        let _ = fs::remove_file(&latest_tmp).await;
+        #[cfg(unix)]
+        fs::symlink(&target, &latest_tmp).await.map_err(io_err)?;
+        fs::rename(&latest_tmp, &latest).await.map_err(io_err)?;
+        Ok(())
+    }
+
+    /// Write the pack's `summary.json` (the Browse-list / PackDetail card).
+    pub async fn save_pack_summary(&self, summary: &PackSummary) -> Result<(), ApiError> {
+        if !is_safe_id(&summary.pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        let path = self
+            .root
+            .join("packs")
+            .join(&summary.pack_id)
+            .join("summary.json");
+        let bytes = serde_json::to_vec_pretty(summary)
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("summary json encode: {e}")))?;
+        atomic_write(&path, &bytes).await
+    }
+
+    // ── Pack authoring inputs ────────────────────────────────────────────────
+    //
+    // The editable PackConfig + curator.toml the panel works from, kept on the
+    // mirror under packs/<id>/authoring/ so the box that holds the mod cache is
+    // the single home of both the authoring inputs and the built outputs.
+
+    pub async fn save_pack_config(&self, pack_id: &str, cfg: &PackConfig) -> Result<(), ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        let path = self.authoring_path(pack_id, "config.json");
+        let bytes = serde_json::to_vec_pretty(cfg)
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("pack config json encode: {e}")))?;
+        atomic_write(&path, &bytes).await
+    }
+
+    pub async fn load_pack_config(&self, pack_id: &str) -> Result<PackConfig, ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        let bytes = fs::read(self.authoring_path(pack_id, "config.json"))
+            .await
+            .map_err(|_| ApiError::NotFound)?;
+        serde_json::from_slice(&bytes).map_err(json_err)
+    }
+
+    /// Persist the raw `curator.toml` text verbatim (comments + formatting
+    /// preserved -- the operator's inline rationale is the point). Shape
+    /// validation is the caller's job (the admin handler parses it as a
+    /// `Curator` first); storage stays a domain-only persistence layer.
+    pub async fn save_curator_doc(&self, pack_id: &str, toml_text: &str) -> Result<(), ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        atomic_write(
+            &self.authoring_path(pack_id, "curator.toml"),
+            toml_text.as_bytes(),
+        )
+        .await
+    }
+
+    pub async fn load_curator_doc(&self, pack_id: &str) -> Result<String, ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        match fs::read_to_string(self.authoring_path(pack_id, "curator.toml")).await {
+            Ok(text) => Ok(text),
+            // Only a genuinely-absent file is NotFound. An I/O / permission
+            // error must NOT masquerade as "no curator" -- that would let the
+            // structured editor round-trip an empty doc over a real one.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(ApiError::NotFound),
+            Err(e) => Err(io_err(e)),
+        }
+    }
+
+    /// Pack ids that have authoring inputs (an `authoring/config.json`),
+    /// including packs not yet built (so no summary.json). Sorted.
+    pub async fn list_authoring_packs(&self) -> Result<Vec<String>, ApiError> {
+        let packs_dir = self.root.join("packs");
+        let mut out = Vec::new();
+        let mut entries = match fs::read_dir(&packs_dir).await {
+            Ok(e) => e,
+            Err(_) => return Ok(out),
+        };
+        while let Some(entry) = entries.next_entry().await.map_err(io_err)? {
+            if !entry.file_type().await.map_err(io_err)?.is_dir() {
+                continue;
+            }
+            let cfg = entry.path().join("authoring").join("config.json");
+            if fs::metadata(&cfg).await.is_ok() {
+                out.push(entry.file_name().to_string_lossy().to_string());
+            }
+        }
+        out.sort();
+        Ok(out)
+    }
+
+    fn authoring_path(&self, pack_id: &str, file: &str) -> PathBuf {
+        self.root
+            .join("packs")
+            .join(pack_id)
+            .join("authoring")
+            .join(file)
+    }
+
     /// Resolve a curated static asset path under the pack. Used by both the
     /// public GET and the admin PUT/DELETE endpoints; existence is not
     /// checked here so the same routine can produce destination paths for
@@ -132,6 +288,36 @@ impl Storage {
             .await
             .map_err(|_| ApiError::NotFound)?;
         Ok(())
+    }
+
+    /// Every file under the pack's static area as relative paths (sorted).
+    /// Backs the panel's Branding section (uploaded icons / banners / assets).
+    pub async fn list_pack_static(&self, pack_id: &str) -> Result<Vec<String>, ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        let base = self.root.join("packs").join(pack_id).join("static");
+        let mut out = Vec::new();
+        let mut stack = vec![base.clone()];
+        while let Some(dir) = stack.pop() {
+            let mut entries = match fs::read_dir(&dir).await {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            while let Some(entry) = entries.next_entry().await.map_err(io_err)? {
+                let path = entry.path();
+                let ft = entry.file_type().await.map_err(io_err)?;
+                if ft.is_dir() {
+                    stack.push(path);
+                } else if ft.is_file()
+                    && let Ok(rel) = path.strip_prefix(&base)
+                {
+                    out.push(rel.to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+        out.sort();
+        Ok(out)
     }
 
     // ── Servers ────────────────────────────────────────────────────────────
@@ -185,17 +371,11 @@ impl Storage {
         if !is_hex(prefix) || prefix.len() != 2 {
             return Err(ApiError::BadRequest("invalid sha1 prefix".into()));
         }
-        if !is_hex(sha1) || sha1.len() != 40 {
-            return Err(ApiError::BadRequest("invalid sha1".into()));
-        }
         if !sha1.starts_with(prefix) {
             return Err(ApiError::BadRequest("prefix does not match sha1".into()));
         }
-        Ok(self
-            .root
-            .join("cache")
-            .join(prefix)
-            .join(format!("{sha1}.jar")))
+        cache_jar_path_in(&self.root, sha1)
+            .ok_or_else(|| ApiError::BadRequest("invalid sha1".into()))
     }
 
     pub async fn list_cache_inventory(&self) -> Result<Vec<CacheInventoryEntry>, ApiError> {
@@ -276,10 +456,8 @@ impl Storage {
                 "sha1 {sha1} is on the removed-list and cannot be re-uploaded"
             )));
         }
-        let prefix = &sha1[..2];
-        let dir = self.root.join("cache").join(prefix);
-        fs::create_dir_all(&dir).await.map_err(io_err)?;
-        let path = dir.join(format!("{sha1}.jar"));
+        let path = cache_jar_path_in(&self.root, sha1)
+            .ok_or_else(|| ApiError::BadRequest("invalid sha1".into()))?;
         if fs::metadata(&path).await.is_ok() {
             return Ok(());
         }
@@ -290,12 +468,8 @@ impl Storage {
         if !is_hex(sha1) || sha1.len() != 40 {
             return Err(ApiError::BadRequest("invalid sha1".into()));
         }
-        let prefix = &sha1[..2];
-        let path = self
-            .root
-            .join("cache")
-            .join(prefix)
-            .join(format!("{sha1}.jar"));
+        let path = cache_jar_path_in(&self.root, sha1)
+            .ok_or_else(|| ApiError::BadRequest("invalid sha1".into()))?;
         fs::remove_file(&path)
             .await
             .map_err(|_| ApiError::NotFound)?;
@@ -310,7 +484,7 @@ impl Storage {
         atomic_write(&path, &bytes).await
     }
 
-    async fn is_sha1_removed(&self, sha1: &str) -> Result<bool, ApiError> {
+    pub async fn is_sha1_removed(&self, sha1: &str) -> Result<bool, ApiError> {
         let path = self.root.join("removed.txt");
         let content = match fs::read_to_string(&path).await {
             Ok(c) => c,
@@ -320,6 +494,7 @@ impl Storage {
     }
 
     async fn record_removed(&self, sha1: &str) -> Result<(), ApiError> {
+        let _guard = self.removed_lock.lock().await;
         let path = self.root.join("removed.txt");
         let mut content = fs::read_to_string(&path).await.unwrap_or_default();
         if content.lines().any(|line| line.trim() == sha1) {
@@ -332,23 +507,55 @@ impl Storage {
         content.push('\n');
         atomic_write(&path, content.as_bytes()).await
     }
+
+    /// The takedown list: sha1s blocked from (re-)ingestion. Surfaced in the
+    /// panel's Cache tab so an operator can see what has been removed.
+    pub async fn list_removed(&self) -> Result<Vec<String>, ApiError> {
+        let path = self.root.join("removed.txt");
+        let content = match fs::read_to_string(&path).await {
+            Ok(c) => c,
+            Err(_) => return Ok(Vec::new()),
+        };
+        Ok(content
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect())
+    }
 }
+
+/// Per-process temp-file sequence so concurrent writers to the same target use
+/// distinct temp files instead of colliding on one shared `<file>.tmp`.
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 async fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ApiError> {
     let parent = path.parent().ok_or_else(|| {
         ApiError::Internal(anyhow::anyhow!("path {} has no parent", path.display()))
     })?;
     fs::create_dir_all(parent).await.map_err(io_err)?;
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
     let mut tmp = path.to_path_buf();
     let mut tmp_name = tmp
         .file_name()
         .map(|s| s.to_os_string())
         .unwrap_or_default();
-    tmp_name.push(".tmp");
+    tmp_name.push(format!(".tmp.{}.{seq}", std::process::id()));
     tmp.set_file_name(tmp_name);
-    fs::write(&tmp, bytes).await.map_err(io_err)?;
-    fs::rename(&tmp, path).await.map_err(io_err)?;
-    Ok(())
+
+    // Write + fsync the temp, then rename. fsync before rename so a crash can't
+    // leave a zero-length file at the target; clean up the temp on any error.
+    let result = async {
+        let mut f = fs::File::create(&tmp).await.map_err(io_err)?;
+        f.write_all(bytes).await.map_err(io_err)?;
+        f.sync_all().await.map_err(io_err)?;
+        fs::rename(&tmp, path).await.map_err(io_err)
+    }
+    .await;
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp).await;
+    }
+    result
 }
 
 fn sha1_hex(bytes: &[u8]) -> String {
@@ -377,10 +584,32 @@ fn is_hex(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// The cache shard for a content hash: the first two hex chars of the sha1.
+/// Both the on-disk layout and the public cache URL bucket by this, so the
+/// sharding width has one definition. Precondition: a validated (>= 2 char) sha1.
+pub(crate) fn sha1_shard(sha1: &str) -> &str {
+    sha1.get(..2).unwrap_or(sha1)
+}
+
+/// The one definition of the content-addressed cache layout: a jar with the
+/// given sha1 lives at `<root>/cache/<sha1[..2]>/<sha1>.jar`. Both the HTTP and
+/// authoring layers build their cache paths on this, so the sharding scheme has
+/// a single source of truth. `None` for a non-40-hex sha1.
+pub(crate) fn cache_jar_path_in(root: &Path, sha1: &str) -> Option<PathBuf> {
+    if sha1.len() != 40 || !is_hex(sha1) {
+        return None;
+    }
+    Some(
+        root.join("cache")
+            .join(sha1_shard(sha1))
+            .join(format!("{sha1}.jar")),
+    )
+}
+
 // Pack ID / server ID safety: no path traversal, no leading dots, basic alnum +
 // dashes + dots only. Stops `..`, absolute paths, and silly characters before
 // they reach the filesystem layer.
-fn is_safe_id(s: &str) -> bool {
+pub(crate) fn is_safe_id(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 64
         && !s.starts_with('.')
@@ -397,35 +626,109 @@ fn is_safe_version(s: &str) -> bool {
 /// but every segment must be a plain `is_safe_id`-style token and there must
 /// be no `..`, `.`, leading slashes, or empty segments.
 fn validate_rel_path(rel: &str) -> Result<&str, ApiError> {
+    if is_safe_rel_path(rel) {
+        Ok(rel)
+    } else {
+        Err(ApiError::BadRequest("invalid rel_path".into()))
+    }
+}
+
+/// Boolean core of [validate_rel_path], shared with the authoring layer so its
+/// curator- and archive-driven writes reject the same traversal the HTTP layer
+/// does. Allows nested dirs and real-world resourcepack/shaderpack filenames
+/// (spaces, parens, plus, comma) but forbids `..`, leading dots per segment,
+/// absolute paths, and backslashes. ASCII-only -- non-ASCII filenames break
+/// some Forge launchers on Windows.
+pub(crate) fn is_safe_rel_path(rel: &str) -> bool {
     if rel.is_empty() || rel.len() > 512 {
-        return Err(ApiError::BadRequest("invalid rel_path".into()));
+        return false;
     }
     if rel.starts_with('/') || rel.contains('\\') {
-        return Err(ApiError::BadRequest("invalid rel_path".into()));
+        return false;
     }
-    for segment in rel.split('/') {
-        if segment.is_empty() || segment.starts_with('.') {
-            return Err(ApiError::BadRequest("invalid rel_path".into()));
-        }
-        // Allow spaces and parens too -- real-world resourcepack and
-        // shaderpack filenames include them ("Chocapic13 V7.1 High.zip",
-        // "BSL (v8.2.04).zip"). The crucial constraint is no path
-        // traversal, no leading dot per segment, no NUL or path
-        // separators inside a segment. ASCII-only because non-ASCII
-        // filenames break some Forge launchers on Windows.
-        if !segment.chars().all(|c| {
-            c.is_ascii_alphanumeric()
-                || c == '-'
-                || c == '_'
-                || c == '.'
-                || c == ' '
-                || c == '('
-                || c == ')'
-                || c == '+'
-                || c == ','
-        }) {
-            return Err(ApiError::BadRequest("invalid rel_path".into()));
+    rel.split('/').all(|segment| {
+        !segment.is_empty()
+            && !segment.starts_with('.')
+            && segment.chars().all(|c| {
+                c.is_ascii_alphanumeric()
+                    || matches!(c, '-' | '_' | '.' | ' ' | '(' | ')' | '+' | ',')
+            })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{LoaderSpec, PackConfig};
+
+    #[test]
+    fn rel_path_rejects_traversal_accepts_real_filenames() {
+        assert!(is_safe_rel_path("_nexira/icon.png"));
+        assert!(is_safe_rel_path("resourcepacks/Chocapic13 V7.1 High.zip"));
+        assert!(is_safe_rel_path("config/foamfix.cfg"));
+        assert!(!is_safe_rel_path("../etc/passwd"));
+        assert!(!is_safe_rel_path("a/../../b"));
+        assert!(!is_safe_rel_path("/abs/path"));
+        assert!(!is_safe_rel_path("a\\b"));
+        assert!(!is_safe_rel_path(".hidden/x"));
+        assert!(!is_safe_rel_path("ok/.././bad"));
+        assert!(!is_safe_rel_path(""));
+    }
+
+    fn sample_config() -> PackConfig {
+        PackConfig {
+            pack_id: "Industrial".into(),
+            display_name: "Industrial".into(),
+            tagline: String::new(),
+            minecraft_version: "1.12.2".into(),
+            loader: LoaderSpec {
+                name: "forge".into(),
+                version: "14.23.5.2922".into(),
+            },
+            java_major: 8,
+            tags: vec![],
+            featured: false,
+            mods: vec![],
+            assets: vec![],
         }
     }
-    Ok(rel)
+
+    #[tokio::test]
+    async fn pack_config_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        s.save_pack_config("Industrial", &sample_config())
+            .await
+            .unwrap();
+        let loaded = s.load_pack_config("Industrial").await.unwrap();
+        assert_eq!(loaded.pack_id, "Industrial");
+        assert_eq!(loaded.minecraft_version, "1.12.2");
+    }
+
+    #[tokio::test]
+    async fn curator_doc_preserves_comments_verbatim() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let doc = "# keep this note\ndefault_off = [\"FoamFix.jar\"]\n";
+        s.save_curator_doc("Industrial", doc).await.unwrap();
+        let loaded = s.load_curator_doc("Industrial").await.unwrap();
+        assert_eq!(
+            loaded, doc,
+            "raw curator text must round-trip byte-for-byte"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_authoring_packs_finds_configured_pack() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        assert!(s.list_authoring_packs().await.unwrap().is_empty());
+        s.save_pack_config("Industrial", &sample_config())
+            .await
+            .unwrap();
+        assert_eq!(
+            s.list_authoring_packs().await.unwrap(),
+            vec!["Industrial".to_string()]
+        );
+    }
 }

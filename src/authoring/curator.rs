@@ -9,15 +9,19 @@
 //! data over derived data, so a manual role-table override always wins
 //! against a heuristic source.
 
-use crate::pack_config::{PackConfig, SourceDecl};
-use crate::types::{Display, Requirement};
-use anyhow::{Context, Result};
-use serde::Deserialize;
+use super::archive::read_zip_entry;
+use super::sources::cache_jar_path;
+use crate::domain::{Display, Requirement};
+use crate::domain::{PackConfig, SourceDecl};
+use crate::storage::is_safe_rel_path;
+use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Cursor, Read};
-use std::path::{Path, PathBuf};
+use std::io::Cursor;
+use std::path::Path;
 use tracing::{debug, info, warn};
+use ts_rs::TS;
 
 // ── mcmod.info ────────────────────────────────────────────────────────────
 
@@ -26,7 +30,8 @@ use tracing::{debug, info, warn};
 /// `[{...mod...}, ...]`; some older mods wrap a single object in
 /// `{"modListVersion": 2, "modList": [{...}]}`. [`read_mcmod_info`]
 /// flattens both into `Vec<McModInfo>`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct McModInfo {
     #[serde(default)]
     pub modid: String,
@@ -42,7 +47,8 @@ pub struct McModInfo {
     pub dependencies: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 struct McModInfoListWrap {
     #[serde(rename = "modList")]
     mod_list: Vec<McModInfo>,
@@ -64,10 +70,8 @@ pub fn read_mcmod_info(jar_bytes: &[u8]) -> Result<Option<McModInfo>> {
         Ok(e) => e,
         Err(_) => return Ok(None),
     };
-    let mut raw = Vec::with_capacity(entry.size() as usize);
-    entry
-        .read_to_end(&mut raw)
-        .context("reading mcmod.info from zip")?;
+    let size = entry.size();
+    let raw = read_zip_entry(&mut entry, size, "mcmod.info")?;
 
     // mcmod.info comes from many authors over many years. Lossy UTF-8
     // decode handles the occasional ISO-8859-1 file. BOM strip handles
@@ -188,7 +192,8 @@ pub fn enrich_from_mcmod_info(
 
 /// Curator-authored mapping of mod filename to role string.
 /// Loaded from a TOML file via [`load_role_table`].
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct RoleTable {
     #[serde(default)]
     pub roles: HashMap<String, String>,
@@ -204,7 +209,8 @@ pub fn load_role_table(path: &Path) -> Result<RoleTable> {
 /// Merged into the emitted `summary.json` by `smrt-pack build` when
 /// passed via `--pack-meta`. Every field optional; absent fields stay
 /// out of summary.json (per the `skip_serializing_if` on PackSummary).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct PackMeta {
     #[serde(default)]
     pub icon_url: Option<String>,
@@ -236,12 +242,23 @@ pub fn load_pack_meta(path: &Path) -> Result<PackMeta> {
 /// [`apply_role_table`], [`infer_requires_from_mcmod_info`]) remain
 /// callable from their own subcommands for power-user / debugging
 /// scenarios, but the canonical pipeline goes through this one file.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct Curator {
     #[serde(default)]
     pub pack_meta: PackMeta,
     #[serde(default)]
     pub mark_optional: MarkOptional,
+    /// `filename -> [incompatible filenames]`, written to each mod's
+    /// `display.incompatible_with`. Mutual at the launcher, so only one side
+    /// needs declaring (FoamFix.jar = ["!mixinbooter-10.7.jar"]).
+    #[serde(default)]
+    pub incompatible: HashMap<String, Vec<String>>,
+    /// Optional mod filenames that should install DISABLED by default
+    /// (`default_enabled = false`); the user opts in. Use for an optional that
+    /// conflicts with a default-on mod (FoamFix vs Mixinbooter).
+    #[serde(default)]
+    pub default_off: Vec<String>,
     #[serde(default)]
     pub substitute: HashMap<String, SubstituteEntry>,
     #[serde(default)]
@@ -274,7 +291,8 @@ pub struct Curator {
 /// shaderpacks, resourcepacks) are never matched even if their
 /// dest accidentally collides -- the filter keys on
 /// `source.type == "smrt_static"` to keep curator extras safe.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct DropAssets {
     #[serde(default)]
     pub paths: Vec<String>,
@@ -284,7 +302,8 @@ pub struct DropAssets {
 /// part of `apply-curator` and become regular `smrt_static` assets in
 /// the resulting manifest. Each generator is gated by a boolean so
 /// curator opts in per pack.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct GenerateConfig {
     /// Emit `<static>/<filename>` listing the curator-authored
     /// `(lowercase_modid, claimed_version)` pairs verbatim. Adds a
@@ -320,15 +339,17 @@ fn default_hidemymods_filename() -> String {
     "hidemymods-spoof.json".to_string()
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct MarkOptional {
     #[serde(default)]
     pub filenames: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct SubstituteEntry {
-    pub source: crate::pack_config::SourceDecl,
+    pub source: crate::domain::SourceDecl,
     #[serde(default)]
     pub display: Option<Display>,
 }
@@ -336,7 +357,8 @@ pub struct SubstituteEntry {
 /// Modrinth-direct extra mod the curator wants to add on top of the
 /// SC-derived pack. The build pipeline does the Modrinth API lookup
 /// at apply time to resolve project_id + version_id + primary file.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct ExtraMod {
     pub slug: String,
     #[serde(default = "default_true")]
@@ -352,7 +374,8 @@ pub struct ExtraMod {
 /// Modrinth-direct extra asset (resourcepack / shaderpack / data pack).
 /// `dest_dir` is the destination subfolder ("resourcepacks",
 /// "shaderpacks", etc); the resolved filename appends to that path.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct ExtraAsset {
     pub slug: String,
     pub dest_dir: String,
@@ -367,7 +390,8 @@ pub struct ExtraAsset {
     pub name_override: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 #[serde(rename_all = "snake_case")]
 pub enum ExtraAssetKind {
     /// `https://modrinth.com/resourcepack/<slug>`
@@ -396,7 +420,100 @@ fn default_true() -> bool {
 pub fn load_curator(path: &Path) -> Result<Curator> {
     let raw = fs::read_to_string(path)
         .with_context(|| format!("reading curator file {}", path.display()))?;
-    toml::from_str(&raw).with_context(|| format!("parsing curator file {}", path.display()))
+    parse_curator(&raw).with_context(|| format!("parsing curator file {}", path.display()))
+}
+
+/// Parse curator TOML from a string (the panel edits the raw text). Same
+/// shape validation as [`load_curator`] without the file read.
+pub fn parse_curator(text: &str) -> Result<Curator> {
+    toml::from_str(text).context("parsing curator TOML")
+}
+
+/// Merge a structured [`Curator`] into an existing curator.toml, preserving the
+/// existing document's comments where toml_edit can (a kept key keeps its
+/// leading decor). Each managed table is replaced from the struct; empty
+/// tables / arrays are dropped so unused features don't clutter the file. Inner
+/// per-line comments inside a replaced table are not preserved -- the raw
+/// editor stays the full-fidelity path.
+pub fn merge_curator(existing: &str, curator: &Curator) -> Result<String> {
+    use std::collections::HashSet;
+    use toml_edit::{DocumentMut, Item, Value};
+    let mut doc: DocumentMut = if existing.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        existing.parse().context("parsing existing curator.toml")?
+    };
+    let fresh: DocumentMut = toml_edit::ser::to_string(curator)
+        .context("serializing curator")?
+        .parse()
+        .context("re-parsing serialized curator")?;
+    // A table equal to its default is unused -- drop it so the file only shows
+    // what the curator actually set (e.g. an all-default [generate] stays out).
+    let default_fresh: DocumentMut = toml_edit::ser::to_string(&Curator::default())
+        .context("serializing default curator")?
+        .parse()
+        .context("re-parsing default curator")?;
+    for (key, fresh_item) in fresh.as_table().iter() {
+        let is_default = default_fresh
+            .get(key)
+            .is_some_and(|d| d.to_string() == fresh_item.to_string());
+        if is_empty_item(fresh_item) || is_default {
+            doc.remove(key);
+            continue;
+        }
+        // toml_edit's serde serializer emits nested structs as inline tables;
+        // promote them to section tables so they render as [key].
+        let normalized = match fresh_item {
+            Item::Value(Value::InlineTable(it)) => Item::Table(it.clone().into_table()),
+            other => other.clone(),
+        };
+        // When both sides are tables, update the existing table's entries in
+        // place so its [section] header + leading comment survive (a plain
+        // reassignment would drop them). Array / scalar keys keep their own
+        // leading comment on reassignment.
+        match (
+            doc.get_mut(key).and_then(Item::as_table_mut),
+            normalized.as_table(),
+        ) {
+            (Some(existing_tbl), Some(fresh_tbl)) => {
+                let fresh_keys: HashSet<&str> = fresh_tbl.iter().map(|(k, _)| k).collect();
+                let stale: Vec<String> = existing_tbl
+                    .iter()
+                    .map(|(k, _)| k.to_string())
+                    .filter(|k| !fresh_keys.contains(k.as_str()))
+                    .collect();
+                for k in stale {
+                    existing_tbl.remove(&k);
+                }
+                for (k, v) in fresh_tbl.iter() {
+                    existing_tbl.insert(k, v.clone());
+                }
+            }
+            _ => {
+                doc[key] = normalized;
+            }
+        }
+    }
+    Ok(doc.to_string())
+}
+
+fn is_empty_item(item: &toml_edit::Item) -> bool {
+    use toml_edit::Item;
+    match item {
+        Item::None => true,
+        Item::Table(t) => t.iter().all(|(_, v)| is_empty_item(v)),
+        Item::ArrayOfTables(a) => a.is_empty(),
+        Item::Value(v) => value_is_empty(v),
+    }
+}
+
+fn value_is_empty(v: &toml_edit::Value) -> bool {
+    use toml_edit::Value;
+    match v {
+        Value::Array(a) => a.is_empty(),
+        Value::InlineTable(t) => t.iter().all(|(_, x)| value_is_empty(x)),
+        _ => false,
+    }
 }
 
 // ── Mutations (sync) ──────────────────────────────────────────────────────
@@ -436,6 +553,49 @@ pub fn apply_mark_optional(config: &mut PackConfig, mark: &MarkOptional) -> Mark
         "mark-optional applied"
     );
     report
+}
+
+/// Writes curator-declared incompatibilities into each mod's
+/// `display.incompatible_with`. The launcher treats incompatibility as mutual,
+/// so declaring one direction is enough. Creates a `Display` when absent.
+pub fn apply_incompatible(config: &mut PackConfig, incompatible: &HashMap<String, Vec<String>>) {
+    if incompatible.is_empty() {
+        return;
+    }
+    let mut applied = 0u32;
+    for m in config.mods.iter_mut() {
+        if let Some(conflicts) = incompatible.get(&m.filename) {
+            let display = m.display.get_or_insert_with(Display::default);
+            for c in conflicts {
+                if !display.incompatible_with.contains(c) {
+                    display.incompatible_with.push(c.clone());
+                    applied += 1;
+                }
+            }
+        }
+    }
+    info!(
+        applied,
+        declared = incompatible.len(),
+        "incompatible applied"
+    );
+}
+
+/// Flips `default_enabled = false` on each OPTIONAL mod named in `default_off`.
+/// Required mods are skipped -- they always install, so the flag is meaningless.
+pub fn apply_default_off(config: &mut PackConfig, default_off: &[String]) {
+    if default_off.is_empty() {
+        return;
+    }
+    let names: std::collections::HashSet<&str> = default_off.iter().map(|s| s.as_str()).collect();
+    let mut flipped = 0u32;
+    for m in config.mods.iter_mut() {
+        if names.contains(m.filename.as_str()) && !m.required {
+            m.default_enabled = false;
+            flipped += 1;
+        }
+    }
+    info!(flipped, "default-off applied");
 }
 
 #[derive(Debug, Default)]
@@ -559,7 +719,7 @@ pub struct ExtraAddReport {
 /// fixing the broken slug.
 pub async fn apply_extras(
     config: &mut PackConfig,
-    modrinth: &crate::modrinth::Modrinth,
+    modrinth: &super::modrinth::Modrinth,
     extras_mods: &[ExtraMod],
     extras_assets: &[ExtraAsset],
     mc_version: &str,
@@ -582,10 +742,11 @@ pub async fn apply_extras(
                     role: None,
                     requires: Vec::new(),
                 });
-                config.mods.push(crate::pack_config::DeclaredMod {
+                config.mods.push(crate::domain::DeclaredMod {
                     filename,
                     required: em.required,
-                    source: crate::pack_config::SourceDecl::Modrinth {
+                    default_enabled: true,
+                    source: crate::domain::SourceDecl::Modrinth {
                         project_id,
                         version_id,
                     },
@@ -619,10 +780,10 @@ pub async fn apply_extras(
                     requires: Vec::new(),
                 });
                 let dest = format!("{}/{}", ea.dest_dir.trim_end_matches('/'), filename);
-                config.assets.push(crate::pack_config::DeclaredAsset {
+                config.assets.push(crate::domain::DeclaredAsset {
                     dest,
                     required: ea.required,
-                    source: crate::pack_config::SourceDecl::Modrinth {
+                    source: crate::domain::SourceDecl::Modrinth {
                         project_id,
                         version_id,
                     },
@@ -649,7 +810,7 @@ pub async fn apply_extras(
 /// version_id, primary filename). Fails when the project has no
 /// matching version.
 async fn resolve_modrinth_latest_for_mc(
-    modrinth: &crate::modrinth::Modrinth,
+    modrinth: &super::modrinth::Modrinth,
     slug: &str,
     mc_version: &str,
 ) -> Result<(String, String, String)> {
@@ -764,6 +925,12 @@ pub fn generate_hidemymods_spoof(
             .to_string(),
         mods: entries,
     };
+    if !is_safe_rel_path(&generate_cfg.hidemymods_filename) {
+        bail!(
+            "hidemymods_filename {:?} is not a safe relative path",
+            generate_cfg.hidemymods_filename
+        );
+    }
     let static_dir = storage.join("packs").join(&config.pack_id).join("static");
     fs::create_dir_all(&static_dir)
         .with_context(|| format!("creating static dir {}", static_dir.display()))?;
@@ -782,7 +949,7 @@ pub fn generate_hidemymods_spoof(
         .iter()
         .any(|a| a.dest == generate_cfg.hidemymods_filename);
     if !asset_already_present {
-        config.assets.push(crate::pack_config::DeclaredAsset {
+        config.assets.push(crate::domain::DeclaredAsset {
             dest: generate_cfg.hidemymods_filename.clone(),
             required: true,
             source: SourceDecl::SmrtStatic {
@@ -842,7 +1009,7 @@ pub async fn apply_curator(
     config: &mut PackConfig,
     curator: &Curator,
     storage: &Path,
-    modrinth: &crate::modrinth::Modrinth,
+    modrinth: &super::modrinth::Modrinth,
     mc_version: &str,
 ) -> Result<()> {
     enrich_from_mcmod_info(config, storage)?;
@@ -854,6 +1021,8 @@ pub async fn apply_curator(
     )?;
     apply_category_table(config, &curator.category_table);
     apply_mark_optional(config, &curator.mark_optional);
+    apply_default_off(config, &curator.default_off);
+    apply_incompatible(config, &curator.incompatible);
     apply_substitute(config, &curator.substitute);
     infer_requires_from_mcmod_info(config, storage)?;
     apply_drop_assets(config, &curator.drop_assets);
@@ -1127,27 +1296,56 @@ fn default_display() -> Display {
     }
 }
 
-fn cache_jar_path(storage: &Path, sha1: &str) -> Result<PathBuf> {
-    if sha1.len() != 40 || !sha1.chars().all(|c| c.is_ascii_hexdigit()) {
-        anyhow::bail!("invalid sha1: {sha1}");
-    }
-    let prefix = &sha1[..2];
-    Ok(storage
-        .join("cache")
-        .join(prefix)
-        .join(format!("{sha1}.jar")))
-}
-
 // ── tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pack_config::{DeclaredMod, PackConfig, SourceDecl};
-    use crate::types::LoaderSpec;
+    use crate::domain::LoaderSpec;
+    use crate::domain::{DeclaredMod, PackConfig, SourceDecl};
     use std::io::Write;
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
+
+    #[test]
+    fn merge_curator_replaces_values_drops_empty_and_keeps_comments() {
+        let existing = "# top-of-file note\ndefault_off = [\"A.jar\"]\n\n# category notes\n[category_table]\n\"A.jar\" = \"old\"\n";
+        let mut c = Curator {
+            default_off: vec!["B.jar".to_string()],
+            ..Default::default()
+        };
+        c.category_table
+            .insert("A.jar".to_string(), "new".to_string());
+        let merged = merge_curator(existing, &c).unwrap();
+        // values updated
+        assert!(merged.contains("B.jar"), "default_off replaced: {merged}");
+        assert!(merged.contains("\"new\""), "category replaced: {merged}");
+        assert!(!merged.contains("\"old\""), "old value gone: {merged}");
+        // unused/default tables are not emitted (neither section nor inline)
+        assert!(
+            !merged.contains("mark_optional"),
+            "empty table dropped: {merged}"
+        );
+        assert!(
+            !merged.contains("generate"),
+            "empty table dropped: {merged}"
+        );
+        assert!(
+            !merged.contains("pack_meta"),
+            "empty pack_meta dropped: {merged}"
+        );
+        // round-trips as a valid Curator
+        parse_curator(&merged).unwrap();
+        // both the doc-level and the [section] comment survive the merge
+        assert!(
+            merged.contains("# top-of-file note"),
+            "doc comment survives: {merged}"
+        );
+        assert!(
+            merged.contains("# category notes"),
+            "section comment survives: {merged}"
+        );
+    }
 
     fn empty_config() -> PackConfig {
         PackConfig {
@@ -1168,10 +1366,11 @@ mod tests {
     }
 
     fn write_test_jar(dir: &Path, sha1: &str, mcmod_json: &str) -> Result<()> {
-        let prefix = &sha1[..2];
-        let cache_dir = dir.join("cache").join(prefix);
-        fs::create_dir_all(&cache_dir)?;
-        let jar_path = cache_dir.join(format!("{sha1}.jar"));
+        // Place the fixture where the code reads it -- via the same layout helper.
+        let jar_path = cache_jar_path(dir, sha1)?;
+        if let Some(parent) = jar_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
         let f = fs::File::create(&jar_path)?;
         let mut zw = zip::ZipWriter::new(f);
         zw.start_file("mcmod.info", SimpleFileOptions::default())?;
@@ -1231,6 +1430,7 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "X.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache { sha1: sha.clone() },
             display: Some(Display {
                 name: Some("CuratorName".into()), // existing -- must win
@@ -1261,6 +1461,7 @@ mod tests {
             cfg.mods.push(DeclaredMod {
                 filename: fname.into(),
                 required: true,
+                default_enabled: true,
                 source: SourceDecl::SmrtCache {
                     sha1: "a".repeat(40),
                 },
@@ -1325,6 +1526,7 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "JEI.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache { sha1: sha_jei },
             display: None,
             note: None,
@@ -1332,6 +1534,7 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "JEIAddon.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache { sha1: sha_addon },
             display: None,
             note: None,
@@ -1351,6 +1554,7 @@ mod tests {
             cfg.mods.push(DeclaredMod {
                 filename: fname.into(),
                 required: true,
+                default_enabled: true,
                 source: SourceDecl::SmrtCache {
                     sha1: "a".repeat(40),
                 },
@@ -1369,11 +1573,66 @@ mod tests {
     }
 
     #[test]
+    fn default_off_flips_optionals_and_incompatible_writes_display() {
+        let mut cfg = empty_config();
+        cfg.mods.push(DeclaredMod {
+            filename: "FoamFix.jar".into(),
+            required: false,
+            default_enabled: true,
+            source: SourceDecl::SmrtCache {
+                sha1: "a".repeat(40),
+            },
+            display: None,
+            note: None,
+        });
+        cfg.mods.push(DeclaredMod {
+            filename: "Mixinbooter.jar".into(),
+            required: true,
+            default_enabled: true,
+            source: SourceDecl::SmrtCache {
+                sha1: "b".repeat(40),
+            },
+            display: None,
+            note: None,
+        });
+
+        // Naming a required mod in default_off is a no-op (required always on).
+        apply_default_off(&mut cfg, &["FoamFix.jar".into(), "Mixinbooter.jar".into()]);
+        let mut incompat: HashMap<String, Vec<String>> = HashMap::new();
+        incompat.insert("FoamFix.jar".into(), vec!["Mixinbooter.jar".into()]);
+        apply_incompatible(&mut cfg, &incompat);
+
+        let foam = cfg
+            .mods
+            .iter()
+            .find(|m| m.filename == "FoamFix.jar")
+            .unwrap();
+        let mixin = cfg
+            .mods
+            .iter()
+            .find(|m| m.filename == "Mixinbooter.jar")
+            .unwrap();
+        assert!(
+            !foam.default_enabled,
+            "optional FoamFix flipped default-off"
+        );
+        assert!(
+            mixin.default_enabled,
+            "required mod untouched by default-off"
+        );
+        assert_eq!(
+            foam.display.as_ref().unwrap().incompatible_with,
+            vec!["Mixinbooter.jar".to_string()],
+        );
+    }
+
+    #[test]
     fn substitute_swaps_source_and_display() {
         let mut cfg = empty_config();
         cfg.mods.push(DeclaredMod {
             filename: "Smarty-1.12.2.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache {
                 sha1: "0".repeat(40),
             },
@@ -1422,6 +1681,7 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "Modded.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache {
                 sha1: "a".repeat(40),
             },
@@ -1431,6 +1691,7 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "PreviouslyCore.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache {
                 sha1: "a".repeat(40),
             },
@@ -1450,6 +1711,7 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "AlreadyRight.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache {
                 sha1: "a".repeat(40),
             },
@@ -1620,7 +1882,7 @@ mod tests {
         // smrt_static, one Modrinth, one smrt_cache. Only the
         // smrt_static one must disappear.
         let mut cfg = empty_config();
-        cfg.assets.push(crate::pack_config::DeclaredAsset {
+        cfg.assets.push(crate::domain::DeclaredAsset {
             dest: "config/foamfix.cfg".into(),
             required: true,
             source: SourceDecl::SmrtStatic {
@@ -1629,7 +1891,7 @@ mod tests {
             display: None,
             note: None,
         });
-        cfg.assets.push(crate::pack_config::DeclaredAsset {
+        cfg.assets.push(crate::domain::DeclaredAsset {
             dest: "config/quark.cfg".into(),
             required: true,
             source: SourceDecl::SmrtStatic {
@@ -1638,7 +1900,7 @@ mod tests {
             display: None,
             note: None,
         });
-        cfg.assets.push(crate::pack_config::DeclaredAsset {
+        cfg.assets.push(crate::domain::DeclaredAsset {
             dest: "resourcepacks/Better-Farm-Animals.zip".into(),
             required: false,
             source: SourceDecl::Modrinth {
@@ -1648,7 +1910,7 @@ mod tests {
             display: None,
             note: None,
         });
-        cfg.assets.push(crate::pack_config::DeclaredAsset {
+        cfg.assets.push(crate::domain::DeclaredAsset {
             dest: "shaderpacks/mellow.zip".into(),
             required: false,
             source: SourceDecl::SmrtCache {
@@ -1693,7 +1955,7 @@ mod tests {
     #[test]
     fn drop_assets_is_idempotent() {
         let mut cfg = empty_config();
-        cfg.assets.push(crate::pack_config::DeclaredAsset {
+        cfg.assets.push(crate::domain::DeclaredAsset {
             dest: "config/foamfix.cfg".into(),
             required: true,
             source: SourceDecl::SmrtStatic {
@@ -1715,7 +1977,7 @@ mod tests {
     #[test]
     fn drop_assets_empty_list_is_noop() {
         let mut cfg = empty_config();
-        cfg.assets.push(crate::pack_config::DeclaredAsset {
+        cfg.assets.push(crate::domain::DeclaredAsset {
             dest: "config/whatever.cfg".into(),
             required: true,
             source: SourceDecl::SmrtStatic {
@@ -1825,6 +2087,7 @@ mod tests {
         cfg.mods.push(DeclaredMod {
             filename: "Lonely.jar".into(),
             required: true,
+            default_enabled: true,
             source: SourceDecl::SmrtCache { sha1: sha },
             display: None,
             note: None,

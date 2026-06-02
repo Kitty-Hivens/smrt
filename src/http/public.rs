@@ -1,6 +1,6 @@
-use crate::error::ApiError;
+use super::ApiError;
+use crate::domain::*;
 use crate::state::AppState;
-use crate::types::*;
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
@@ -138,6 +138,10 @@ async fn get_cache_jar(
     let sha1 = filename
         .strip_suffix(".jar")
         .ok_or_else(|| ApiError::BadRequest("cache path must end in .jar".into()))?;
+    // A taken-down jar must not be served even if its bytes are still on disk.
+    if state.storage.is_sha1_removed(sha1).await? {
+        return Err(ApiError::NotFound);
+    }
     let path = state.storage.cache_jar_path(&prefix, sha1)?;
     if tokio::fs::metadata(&path).await.is_err() {
         return Err(ApiError::NotFound);

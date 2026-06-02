@@ -1,5 +1,4 @@
-use axum::Router;
-use smrt::{admin, config, routes, state};
+use smrt::{config, http, state};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -23,11 +22,8 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let bind_addr = cfg.bind_addr;
-    let state = state::AppState::new(cfg);
-    let app = Router::new()
-        .merge(routes::router(state.clone()))
-        .merge(admin::router(state))
-        .layer(TraceLayer::new_for_http());
+    let state = state::AppState::new(cfg)?;
+    let app = http::router(state).layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     axum::serve(listener, app).await?;

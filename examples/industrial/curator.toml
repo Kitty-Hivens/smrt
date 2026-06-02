@@ -31,6 +31,14 @@
 #       --config  /tmp/Industrial.curated.json \
 #       --curator examples/industrial/curator.toml
 
+# Optional mods that install DISABLED by default (the user opts in). Root-level
+# Curator key. Two confirmed conflicts (live 2026-05-29):
+#   FoamFix  -- breaks Mixinbooter-based mixins.
+#   Phosphor -- its MixinChunk injection fails against Xaero's ChunkTransformer
+#               ("Scanned 0 target(s)" -> Chunk fails to load -> IC2 crash).
+# Both stay in the pack but install off; see [incompatible] below.
+default_off = ["FoamFix.jar", "Phosphor.jar"]
+
 # ── Pack-level rich metadata ─────────────────────────────────────────────
 
 [pack_meta]
@@ -64,6 +72,16 @@ so the user authenticates once at game-join. SC's proprietary
 # Mods that the SC pack lists as required (in the top-level mods/ dir)
 # but that the launcher should let the user toggle off. Mostly QoL UI
 # layer and visual-style mods that don't affect server-side protocol.
+#
+# FoamFix: kept (NOT deleted) but optional and intended DEFAULT-OFF. It is
+# INCOMPATIBLE with Mixinbooter -- breaks mixin-based mods (live repro: Phosphor's
+# MixinChunk injection fails -> launch dies before the menu). The rest of the set
+# works with Mixinbooter, so Mixinbooter stays and FoamFix steps aside; VanillaFix
+# (added to extra_mods) is the Mixinbooter-safe replacement, default-on.
+# The machine-readable incompatibility (manifest `incompatible_with`, set via the
+# [incompatible] table), the per-optional default (root-level default_off), and the
+# launcher toggle UI are the optional-mods system -- now wired. FoamFix sits in
+# default_off + [incompatible] below.
 
 [mark_optional]
 filenames = [
@@ -71,7 +89,7 @@ filenames = [
     "ServerTabInfo.jar",
     "XaerosMinimap.jar",
     "MoreOverlays.jar",
-    "FoamFix.jar",
+    "FoamFix.jar",   # incompatible with Mixinbooter -> default-off; prefer VanillaFix
     "VoxelMap.jar",
     "ToroHealth.jar",
     "XaerosWorldMap.jar",
@@ -90,6 +108,17 @@ filenames = [
     # below expects it but some users prefer vanilla render path.
     "OptiFine.jar",
 ]
+
+# ── incompatible ───────────────────────────────────────────────────────────
+# filename -> incompatible filenames. Written to each mod's display.incompatible_with;
+# the launcher treats it as mutual, so only one side needs declaring. The launcher
+# warns + (for toggleable conflicts) auto-resolves. Two confirmed conflicts:
+#   FoamFix  vs Mixinbooter (FoamFix breaks mixin loading).
+#   Phosphor vs Xaero (Phosphor's MixinChunk can't inject once Xaero's
+#            ChunkTransformer has rewritten Chunk -> hard crash on load).
+[incompatible]
+"FoamFix.jar" = ["!mixinbooter-10.7.jar"]
+"Phosphor.jar" = ["XaerosMinimap.jar", "XaerosWorldMap.jar"]
 
 # ── substitute ───────────────────────────────────────────────────────────
 # Drop-in source replacements. SC's proprietary Smarty-1.12.2.jar runs
@@ -219,6 +248,12 @@ slug         = "entityculling"
 required     = true
 category     = "performance"
 description  = "Cull off-screen entities for FPS gains."
+
+[[extra_mods]]
+slug         = "vanillafix"
+required     = true
+category     = "performance"
+description  = "Vanilla bug + crash fixes with memory wins; Mixinbooter-safe, unlike FoamFix (see [mark_optional] note)."
 
 [[extra_mods]]
 slug         = "armorhud"

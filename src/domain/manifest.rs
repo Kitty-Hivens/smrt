@@ -1,10 +1,14 @@
+//! The wire pack manifest and its parts: what the launcher downloads to
+//! reproduce a pack. Pure data; serialization shape is the public contract
+//! shared with the launcher's `SmrtPackManifest`.
+
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 pub const SCHEMA_VERSION: u32 = 2;
 
-// ── Pack manifest ──────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct PackManifest {
     pub schema_version: u32,
     pub pack_id: String,
@@ -18,43 +22,57 @@ pub struct PackManifest {
     pub assets: Vec<AssetEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct MinecraftSpec {
     pub version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct LoaderSpec {
     pub name: String,
     pub version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct JavaSpec {
     pub major: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct ModEntry {
     pub filename: String,
     pub sha1: String,
+    #[ts(type = "number")]
     pub size_bytes: u64,
     #[serde(default = "default_true")]
     pub required: bool,
+    /// Install-time default for an optional entry (`required = false`): on unless
+    /// a curator opts it out. Omitted from the wire when true (the launcher's
+    /// SmrtModEntry defaults it to true), so only an opted-out mod carries it.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub default_enabled: bool,
     pub source: Source,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub display: Option<Display>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct AssetEntry {
     pub dest: String,
     pub sha1: String,
+    #[ts(type = "number")]
     pub size_bytes: u64,
     #[serde(default = "default_true")]
     pub required: bool,
     pub source: Source,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub display: Option<Display>,
 }
 
@@ -67,13 +85,17 @@ pub struct AssetEntry {
 /// UX hooks (per-item icons, role-grouped pickers, dependency graph
 /// rendering). All three optional; manifests without them parse cleanly
 /// on every client that reached the v2 schema.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct Display {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub category: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub incompatible_with: Vec<String>,
@@ -82,23 +104,27 @@ pub struct Display {
     /// non-redistributable mods to the user. Absent for proprietary mods
     /// without an SPDX-compatible declaration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub license: Option<String>,
     /// Source / project / wiki URL. Used by a launcher's "Learn more"
     /// affordance. Preferred order: mcmod.info url, Modrinth source_url,
     /// CurseForge project page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub url: Option<String>,
     /// Per-item icon URL. Mirror serves directly for smrt_cache /
     /// smrt_static entries; Modrinth-sourced entries can leave this null
     /// and let the client resolve via the source's `project_id` against
     /// the Modrinth API. Null = client falls back to a letter avatar.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub icon_url: Option<String>,
     /// Short tag for grouping interchangeable mods. Launcher renders all
     /// mods with the same role as a single selectable slot ("Recipe
     /// viewer: JEI [v]" with REI / JER / EMI alternatives). Canonical
     /// values are mirror-curated; the launcher does not enumerate them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub role: Option<String>,
     /// Same-manifest dependency declarations. Each entry's `filename`
     /// points at another mod in this pack's `mods[]`. Resolver
@@ -114,16 +140,19 @@ pub struct Display {
 /// means "any version present is acceptable". [optional] = true
 /// means the consumer works without the dep but works better with
 /// it -- launcher shows it greyed-out in the dep tree.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct Requirement {
     pub filename: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub version_range: Option<String>,
     #[serde(default)]
     pub optional: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum Source {
@@ -143,183 +172,15 @@ fn default_true() -> bool {
     true
 }
 
-// ── Pack summary / listing ─────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PackSummary {
-    pub pack_id: String,
-    pub display_name: String,
-    pub tagline: String,
-    pub minecraft_version: String,
-    pub latest_pack_version: String,
-    pub tags: Vec<String>,
-    #[serde(default)]
-    pub featured: bool,
-    /// Square pack icon. Renders in BrowsePackCard avatar slot +
-    /// BrowsePackDetail hero on the launcher.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub icon_url: Option<String>,
-    /// Wide hero image. Renders behind BrowsePackDetail hero text;
-    /// falls back to the launcher's mirror gradient when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub banner_url: Option<String>,
-    /// Optional marketing screenshots. Rendered in a horizontal
-    /// scroller on BrowsePackDetail when non-empty.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub gallery_urls: Vec<String>,
-    /// Long-form CommonMark description for the BrowsePackDetail
-    /// About section. HTML is not parsed by the launcher.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description_md: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct PackListing {
-    pub schema_version: u32,
-    pub generated_at: String,
-    pub packs: Vec<PackSummary>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ManifestVersionsListing {
-    pub schema_version: u32,
-    pub pack_id: String,
-    pub versions: Vec<String>,
-}
-
-// ── Server metadata ────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerEntry {
-    pub schema_version: u32,
-    pub server_id: String,
-    pub pack_id: String,
-    pub display_name: String,
-    pub tagline: String,
-    pub description_md: String,
-    pub banner_url: String,
-    #[serde(default)]
-    pub gallery_urls: Vec<String>,
-    #[serde(default)]
-    pub tags: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub discord_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub website_url: Option<String>,
-    pub owner_display: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub motd_override: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub founded_at: Option<String>,
-    #[serde(default)]
-    pub featured: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ServerListing {
-    pub schema_version: u32,
-    pub generated_at: String,
-    pub servers: Vec<ServerEntry>,
-}
-
-// ── Featured ───────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Featured {
-    pub schema_version: u32,
-    pub generated_at: String,
-    pub featured_servers: Vec<String>,
-    pub featured_packs: Vec<String>,
-}
-
-// ── Cache inventory ────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CacheInventory {
-    pub schema_version: u32,
-    pub generated_at: String,
-    pub entries: Vec<CacheInventoryEntry>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CacheInventoryEntry {
-    pub sha1: String,
-    pub size_bytes: u64,
-}
-
-// ── Health ─────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Health {
-    pub schema_version: u32,
-    pub status: &'static str,
-    pub version: &'static str,
-}
-
-// ── Pack version comparison ────────────────────────────────────────────────
-
-/// Numeric-tuple representation of a `YYYY.MM.DD[.N]` style version string.
-/// Splits on `.` and parses each segment as `u64`; non-numeric segments
-/// degrade to 0 so a malformed version still produces a comparable value
-/// rather than panicking.
-pub fn pack_version_tuple(version: &str) -> Vec<u64> {
-    version
-        .split('.')
-        .map(|seg| seg.parse::<u64>().unwrap_or(0))
-        .collect()
-}
-
-/// Compare two pack versions per the spec rules: numeric tuple comparison
-/// with missing trailing segments treated as `0`. So `2026.05.22` equals
-/// `2026.05.22.0` and is strictly less than `2026.05.22.1`, and
-/// `2026.05.22.10` sorts after `2026.05.22.2`. Both clients and the mirror
-/// must use this comparison; plain `String` sort would order `.10` before
-/// `.2` and breaks update detection.
-pub fn compare_pack_versions(a: &str, b: &str) -> std::cmp::Ordering {
-    let mut at = pack_version_tuple(a);
-    let mut bt = pack_version_tuple(b);
-    let n = at.len().max(bt.len());
-    at.resize(n, 0);
-    bt.resize(n, 0);
-    at.cmp(&bt)
+/// `skip_serializing_if` for bool-default-true fields: keeps the manifest clean
+/// by omitting the field when it holds its default (e.g. `default_enabled`).
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cmp::Ordering;
-
-    #[test]
-    fn compare_orders_two_digit_subversions_after_single_digit() {
-        assert_eq!(
-            compare_pack_versions("2026.05.22.2", "2026.05.22.10"),
-            Ordering::Less
-        );
-    }
-
-    #[test]
-    fn compare_orders_dates_correctly() {
-        assert_eq!(
-            compare_pack_versions("2026.05.22", "2026.05.23"),
-            Ordering::Less
-        );
-    }
-
-    #[test]
-    fn compare_treats_missing_trailing_segment_as_zero() {
-        assert_eq!(
-            compare_pack_versions("2026.05.22", "2026.05.22.0"),
-            Ordering::Equal
-        );
-        assert_eq!(
-            compare_pack_versions("2026.05.22", "2026.05.22.1"),
-            Ordering::Less
-        );
-        assert_eq!(
-            compare_pack_versions("2026.05.22.0.0", "2026.05.22"),
-            Ordering::Equal
-        );
-    }
 
     #[test]
     fn mod_entry_serializes_without_display_block_when_absent() {
@@ -328,6 +189,7 @@ mod tests {
             sha1: "abc".into(),
             size_bytes: 100,
             required: true,
+            default_enabled: true,
             source: Source::SmrtCache { url: "u".into() },
             display: None,
         };
@@ -441,63 +303,6 @@ mod tests {
             !s.contains("requires"),
             "empty requires must not serialize: {s}"
         );
-    }
-
-    #[test]
-    fn pack_summary_round_trips_rich_metadata() {
-        // r##"..."## (two hashes) -- the description_md contains "# ",
-        // and r#"..."# would terminate at the first `"#` it hit. Two
-        // hashes leave room for a single hash inside.
-        let json = r##"{
-            "pack_id": "Industrial",
-            "display_name": "Industrial",
-            "tagline": "Heavy industry and automation.",
-            "minecraft_version": "1.12.2",
-            "latest_pack_version": "2026.05.23.1",
-            "tags": ["tech", "industrial"],
-            "featured": true,
-            "icon_url": "https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/icon.png",
-            "banner_url": "https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/banner.png",
-            "gallery_urls": [
-                "https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/g1.png"
-            ],
-            "description_md": "# Industrial\n\nLong-form copy."
-        }"##;
-        let s: PackSummary = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            s.icon_url.as_deref(),
-            Some("https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/icon.png")
-        );
-        assert_eq!(
-            s.banner_url.as_deref(),
-            Some("https://smrt.hivens.dev/v1/packs/Industrial/static/_nexira/banner.png")
-        );
-        assert_eq!(s.gallery_urls.len(), 1);
-        assert!(
-            s.description_md
-                .as_deref()
-                .unwrap()
-                .starts_with("# Industrial")
-        );
-    }
-
-    #[test]
-    fn pack_summary_without_rich_metadata_parses() {
-        // Existing summary.json files written before the rich-metadata
-        // extension must still parse.
-        let json = r#"{
-            "pack_id": "Bare",
-            "display_name": "Bare",
-            "tagline": "",
-            "minecraft_version": "1.12.2",
-            "latest_pack_version": "2026.06.01",
-            "tags": []
-        }"#;
-        let s: PackSummary = serde_json::from_str(json).unwrap();
-        assert!(s.icon_url.is_none());
-        assert!(s.banner_url.is_none());
-        assert!(s.gallery_urls.is_empty());
-        assert!(s.description_md.is_none());
     }
 
     #[test]

@@ -1,0 +1,78 @@
+// Wire DTOs are generated from the Rust structs by ts-rs -- see bindings/,
+// regenerated with `TS_RS_EXPORT_DIR=web/src/lib cargo test` from the smrt
+// crate root. This barrel re-exports them so the panel imports stay stable.
+// Operational / external types that have no Rust counterpart stay hand-written
+// at the bottom.
+
+import type { DryRun } from './bindings/DryRun';
+
+export type { DryRun };
+export type { Health } from './bindings/Health';
+export type { PackSummary } from './bindings/PackSummary';
+export type { PackListing } from './bindings/PackListing';
+export type { ManifestVersionsListing } from './bindings/ManifestVersionsListing';
+export type { AuthoringPacksListing } from './bindings/AuthoringPacksListing';
+export type { ServerEntry } from './bindings/ServerEntry';
+export type { ServerListing } from './bindings/ServerListing';
+export type { Featured } from './bindings/Featured';
+export type { CacheInventory } from './bindings/CacheInventory';
+export type { CacheInventoryEntry } from './bindings/CacheInventoryEntry';
+
+// authoring config
+export type { PackConfig } from './bindings/PackConfig';
+export type { DeclaredMod } from './bindings/DeclaredMod';
+export type { DeclaredAsset } from './bindings/DeclaredAsset';
+export type { SourceDecl } from './bindings/SourceDecl';
+export type { LoaderSpec } from './bindings/LoaderSpec';
+export type { Display } from './bindings/Display';
+
+// wire manifest (for the launcher-faithful preview)
+export type { PackManifest } from './bindings/PackManifest';
+export type { ModEntry } from './bindings/ModEntry';
+export type { AssetEntry } from './bindings/AssetEntry';
+export type { Source } from './bindings/Source';
+export type { Requirement } from './bindings/Requirement';
+
+// validate report (config vs SC archive)
+export type { ValidateReport } from './bindings/ValidateReport';
+
+// curator (structured editor)
+export type { Curator } from './bindings/Curator';
+export type { PackMeta } from './bindings/PackMeta';
+export type { MarkOptional } from './bindings/MarkOptional';
+export type { SubstituteEntry } from './bindings/SubstituteEntry';
+export type { ExtraMod } from './bindings/ExtraMod';
+export type { ExtraAsset } from './bindings/ExtraAsset';
+export type { ExtraAssetKind } from './bindings/ExtraAssetKind';
+export type { DropAssets } from './bindings/DropAssets';
+export type { GenerateConfig } from './bindings/GenerateConfig';
+
+// ── hand-written: operational + external (no Rust DTO) ──
+
+export type JobStatus = 'running' | 'done' | 'failed';
+
+export interface ModrinthHit {
+  project_id: string;
+  slug: string;
+  title: string;
+  description: string;
+  icon_url?: string | null;
+}
+
+export interface ModrinthVersion {
+  id: string;
+  project_id: string;
+  version_number: string;
+  game_versions: string[];
+  loaders: string[];
+}
+
+// GET /v1/admin/jobs/:id -- `result` is present only for a finished dry-run.
+export interface JobResult {
+  job_id: string;
+  kind: string;
+  pack_id: string;
+  status: JobStatus;
+  log: string[];
+  result?: DryRun | null;
+}

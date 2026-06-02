@@ -7,6 +7,13 @@ pub struct Config {
     pub bind_addr: SocketAddr,
     pub storage_dir: PathBuf,
     pub admin_token: Option<String>,
+    /// Set the `Secure` flag on the panel session cookie. Default true (prod
+    /// is fronted by nginx TLS); set `SMRT_COOKIE_SECURE=false` for local http
+    /// dev so the cookie is still sent over plain `127.0.0.1`.
+    pub cookie_secure: bool,
+    /// Public base URL baked into built manifest URLs (cache + static). The
+    /// authoring build uses it; defaults to the production mirror host.
+    pub mirror_base: String,
 }
 
 impl Config {
@@ -22,10 +29,19 @@ impl Config {
 
         let admin_token = std::env::var("SMRT_ADMIN_TOKEN").ok();
 
+        let cookie_secure = std::env::var("SMRT_COOKIE_SECURE")
+            .map(|v| !matches!(v.as_str(), "false" | "0" | "no"))
+            .unwrap_or(true);
+
+        let mirror_base = std::env::var("SMRT_MIRROR_BASE")
+            .unwrap_or_else(|_| "https://smrt.hivens.dev".to_string());
+
         Ok(Self {
             bind_addr,
             storage_dir,
             admin_token,
+            cookie_secure,
+            mirror_base,
         })
     }
 }
