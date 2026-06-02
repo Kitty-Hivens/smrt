@@ -1366,10 +1366,11 @@ mod tests {
     }
 
     fn write_test_jar(dir: &Path, sha1: &str, mcmod_json: &str) -> Result<()> {
-        let prefix = &sha1[..2];
-        let cache_dir = dir.join("cache").join(prefix);
-        fs::create_dir_all(&cache_dir)?;
-        let jar_path = cache_dir.join(format!("{sha1}.jar"));
+        // Place the fixture where the code reads it -- via the same layout helper.
+        let jar_path = cache_jar_path(dir, sha1)?;
+        if let Some(parent) = jar_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
         let f = fs::File::create(&jar_path)?;
         let mut zw = zip::ZipWriter::new(f);
         zw.start_file("mcmod.info", SimpleFileOptions::default())?;

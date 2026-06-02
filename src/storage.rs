@@ -371,17 +371,11 @@ impl Storage {
         if !is_hex(prefix) || prefix.len() != 2 {
             return Err(ApiError::BadRequest("invalid sha1 prefix".into()));
         }
-        if !is_hex(sha1) || sha1.len() != 40 {
-            return Err(ApiError::BadRequest("invalid sha1".into()));
-        }
         if !sha1.starts_with(prefix) {
             return Err(ApiError::BadRequest("prefix does not match sha1".into()));
         }
-        Ok(self
-            .root
-            .join("cache")
-            .join(prefix)
-            .join(format!("{sha1}.jar")))
+        cache_jar_path_in(&self.root, sha1)
+            .ok_or_else(|| ApiError::BadRequest("invalid sha1".into()))
     }
 
     pub async fn list_cache_inventory(&self) -> Result<Vec<CacheInventoryEntry>, ApiError> {
@@ -462,10 +456,8 @@ impl Storage {
                 "sha1 {sha1} is on the removed-list and cannot be re-uploaded"
             )));
         }
-        let prefix = &sha1[..2];
-        let dir = self.root.join("cache").join(prefix);
-        fs::create_dir_all(&dir).await.map_err(io_err)?;
-        let path = dir.join(format!("{sha1}.jar"));
+        let path = cache_jar_path_in(&self.root, sha1)
+            .ok_or_else(|| ApiError::BadRequest("invalid sha1".into()))?;
         if fs::metadata(&path).await.is_ok() {
             return Ok(());
         }
@@ -476,12 +468,8 @@ impl Storage {
         if !is_hex(sha1) || sha1.len() != 40 {
             return Err(ApiError::BadRequest("invalid sha1".into()));
         }
-        let prefix = &sha1[..2];
-        let path = self
-            .root
-            .join("cache")
-            .join(prefix)
-            .join(format!("{sha1}.jar"));
+        let path = cache_jar_path_in(&self.root, sha1)
+            .ok_or_else(|| ApiError::BadRequest("invalid sha1".into()))?;
         fs::remove_file(&path)
             .await
             .map_err(|_| ApiError::NotFound)?;
@@ -594,6 +582,28 @@ fn json_err(e: serde_json::Error) -> ApiError {
 
 fn is_hex(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// The cache shard for a content hash: the first two hex chars of the sha1.
+/// Both the on-disk layout and the public cache URL bucket by this, so the
+/// sharding width has one definition. Precondition: a validated (>= 2 char) sha1.
+pub(crate) fn sha1_shard(sha1: &str) -> &str {
+    &sha1[..2]
+}
+
+/// The one definition of the content-addressed cache layout: a jar with the
+/// given sha1 lives at `<root>/cache/<sha1[..2]>/<sha1>.jar`. Both the HTTP and
+/// authoring layers build their cache paths on this, so the sharding scheme has
+/// a single source of truth. `None` for a non-40-hex sha1.
+pub(crate) fn cache_jar_path_in(root: &Path, sha1: &str) -> Option<PathBuf> {
+    if sha1.len() != 40 || !is_hex(sha1) {
+        return None;
+    }
+    Some(
+        root.join("cache")
+            .join(sha1_shard(sha1))
+            .join(format!("{sha1}.jar")),
+    )
 }
 
 // Pack ID / server ID safety: no path traversal, no leading dots, basic alnum +

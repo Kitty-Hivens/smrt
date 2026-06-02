@@ -5,7 +5,7 @@
 
 use super::modrinth::{Modrinth, Version as MrVersion};
 use crate::domain::{AssetEntry, DeclaredAsset, DeclaredMod, ModEntry, Source, SourceDecl};
-use crate::storage::is_safe_rel_path;
+use crate::storage::{cache_jar_path_in, is_safe_rel_path, sha1_shard};
 use anyhow::{Context, Result, anyhow, bail};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
@@ -180,19 +180,16 @@ pub(super) async fn resolve_asset(
     })
 }
 
-pub(super) fn write_to_cache(cache_dir: &Path, sha1: &str, bytes: &[u8]) -> Result<()> {
-    if sha1.len() != 40 || !sha1.chars().all(|c| c.is_ascii_hexdigit()) {
-        bail!("invalid sha1: {sha1}");
-    }
-    if is_removed_sha1(cache_dir, sha1) {
+pub(super) fn write_to_cache(root: &Path, sha1: &str, bytes: &[u8]) -> Result<()> {
+    let path = cache_jar_path_in(root, sha1).ok_or_else(|| anyhow!("invalid sha1: {sha1}"))?;
+    if is_removed_sha1(root, sha1) {
         bail!("sha1 {sha1} is on the removed-list (takedown) and cannot be re-ingested");
     }
-    let prefix = &sha1[..2];
-    let dir = cache_dir.join(prefix);
-    fs::create_dir_all(&dir).context("creating cache prefix dir")?;
-    let path = dir.join(format!("{sha1}.jar"));
     if path.exists() {
         return Ok(());
+    }
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).context("creating cache prefix dir")?;
     }
     let tmp = path.with_extension("jar.tmp");
     fs::write(&tmp, bytes).context("writing cache jar tmp")?;
@@ -201,12 +198,8 @@ pub(super) fn write_to_cache(cache_dir: &Path, sha1: &str, bytes: &[u8]) -> Resu
 }
 
 /// Honor the takedown list on the ingest path too (storage::save_cache_jar does
-/// this for direct uploads). removed.txt lives at the storage root -- the parent
-/// of the cache dir.
-fn is_removed_sha1(cache_dir: &Path, sha1: &str) -> bool {
-    let Some(root) = cache_dir.parent() else {
-        return false;
-    };
+/// this for direct uploads). removed.txt lives at the storage root.
+fn is_removed_sha1(root: &Path, sha1: &str) -> bool {
     match fs::read_to_string(root.join("removed.txt")) {
         Ok(content) => content.lines().any(|line| line.trim() == sha1),
         Err(_) => false,
@@ -225,14 +218,7 @@ pub(super) fn write_to_static(static_dir: &Path, rel_path: &str, bytes: &[u8]) -
 }
 
 pub(super) fn cache_jar_path(storage: &Path, sha1: &str) -> Result<PathBuf> {
-    if sha1.len() != 40 || !sha1.chars().all(|c| c.is_ascii_hexdigit()) {
-        bail!("invalid sha1: {sha1}");
-    }
-    let prefix = &sha1[..2];
-    Ok(storage
-        .join("cache")
-        .join(prefix)
-        .join(format!("{sha1}.jar")))
+    cache_jar_path_in(storage, sha1).ok_or_else(|| anyhow!("invalid sha1: {sha1}"))
 }
 
 pub(super) fn static_asset_path(storage: &Path, pack_id: &str, rel_path: &str) -> Result<PathBuf> {
@@ -248,10 +234,9 @@ pub(super) fn static_asset_path(storage: &Path, pack_id: &str, rel_path: &str) -
 
 pub(super) fn cache_url(base: &str, sha1: &str) -> String {
     // sha1 is hex-only by construction (verified upstream); no encoding
-    // needed for path segments here.
-    let prefix = &sha1[..2];
+    // needed for path segments here. Same shard as the on-disk layout.
     let base = base.trim_end_matches('/');
-    format!("{base}/v1/cache/{prefix}/{sha1}.jar")
+    format!("{base}/v1/cache/{}/{sha1}.jar", sha1_shard(sha1))
 }
 
 pub(super) fn static_url(base: &str, pack_id: &str, rel_path: &str) -> String {
@@ -320,13 +305,12 @@ mod tests {
     fn write_to_cache_refuses_a_removed_sha1() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let cache_dir = root.join("cache");
         let sha1 = "a".repeat(40);
         // A direct write succeeds while the takedown list is empty...
-        write_to_cache(&cache_dir, &sha1, b"jar").unwrap();
+        write_to_cache(root, &sha1, b"jar").unwrap();
         // ...but once the sha1 is on removed.txt, re-ingest is refused.
         std::fs::write(root.join("removed.txt"), format!("{sha1}\n")).unwrap();
-        let err = write_to_cache(&cache_dir, &sha1, b"jar").unwrap_err();
+        let err = write_to_cache(root, &sha1, b"jar").unwrap_err();
         assert!(err.to_string().contains("removed-list"), "got {err}");
     }
 

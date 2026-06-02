@@ -64,7 +64,6 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
     let loader_name = args.loader.name.clone();
     let storage = args.storage.clone();
     let (declared_mods, declared_assets) = tokio::task::spawn_blocking(move || -> Result<_> {
-        let cache_dir = storage.join("cache");
         let static_dir = storage.join("packs").join(&pack_id).join("static");
 
         let mut declared_mods = Vec::with_capacity(mods.len());
@@ -88,7 +87,7 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
                         note: Some(format!("matched on Modrinth ({})", hit.version_number)),
                     }
                 } else {
-                    write_to_cache(&cache_dir, &m.sha1, &m.bytes)?;
+                    write_to_cache(&storage, &m.sha1, &m.bytes)?;
                     DeclaredMod {
                         filename: m.filename.clone(),
                         required: true,
@@ -104,7 +103,7 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
                     }
                 }
             } else {
-                write_to_cache(&cache_dir, &m.sha1, &m.bytes)?;
+                write_to_cache(&storage, &m.sha1, &m.bytes)?;
                 DeclaredMod {
                     filename: m.filename.clone(),
                     required: true,
