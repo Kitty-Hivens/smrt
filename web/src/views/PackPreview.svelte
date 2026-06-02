@@ -49,7 +49,7 @@
 
   function initEnabled(list: ModEntry[]) {
     const next: Record<string, boolean> = {};
-    for (const m of list) next[m.filename] = m.required || m.default_enabled;
+    for (const m of list) next[m.filename] = m.required || (m.default_enabled ?? true);
     enabled = next;
   }
 
@@ -222,7 +222,7 @@
           {#each g.members as m, idx (m.filename)}
             <ModRow
               mod={m}
-              enabled={enabled[m.filename] ?? (m.required || m.default_enabled)}
+              enabled={enabled[m.filename] ?? (m.required || (m.default_enabled ?? true))}
               locked={m.required}
               onToggle={(on) => toggle(m.filename, on)}
               edges={dep.edgesBySource.get(m.filename) ?? []}
@@ -243,7 +243,7 @@
           {#each ungroupedNonLib as m (m.filename)}
             <ModRow
               mod={m}
-              enabled={enabled[m.filename] ?? (m.required || m.default_enabled)}
+              enabled={enabled[m.filename] ?? (m.required || (m.default_enabled ?? true))}
               locked={m.required}
               onToggle={(on) => toggle(m.filename, on)}
               edges={dep.edgesBySource.get(m.filename) ?? []}
@@ -266,7 +266,7 @@
             {#each libraries as m (m.filename)}
               <ModRow
                 mod={m}
-                enabled={enabled[m.filename] ?? (m.required || m.default_enabled)}
+                enabled={enabled[m.filename] ?? (m.required || (m.default_enabled ?? true))}
                 locked={m.required}
                 onToggle={(on) => toggle(m.filename, on)}
                 edges={dep.edgesBySource.get(m.filename) ?? []}

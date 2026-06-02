@@ -57,6 +57,7 @@ pub struct ModEntry {
     pub default_enabled: bool,
     pub source: Source,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub display: Option<Display>,
 }
 
@@ -71,6 +72,7 @@ pub struct AssetEntry {
     pub required: bool,
     pub source: Source,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub display: Option<Display>,
 }
 
@@ -87,10 +89,13 @@ pub struct AssetEntry {
 #[ts(export, export_to = "bindings/")]
 pub struct Display {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub category: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub incompatible_with: Vec<String>,
@@ -99,23 +104,27 @@ pub struct Display {
     /// non-redistributable mods to the user. Absent for proprietary mods
     /// without an SPDX-compatible declaration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub license: Option<String>,
     /// Source / project / wiki URL. Used by a launcher's "Learn more"
     /// affordance. Preferred order: mcmod.info url, Modrinth source_url,
     /// CurseForge project page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub url: Option<String>,
     /// Per-item icon URL. Mirror serves directly for smrt_cache /
     /// smrt_static entries; Modrinth-sourced entries can leave this null
     /// and let the client resolve via the source's `project_id` against
     /// the Modrinth API. Null = client falls back to a letter avatar.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub icon_url: Option<String>,
     /// Short tag for grouping interchangeable mods. Launcher renders all
     /// mods with the same role as a single selectable slot ("Recipe
     /// viewer: JEI [v]" with REI / JER / EMI alternatives). Canonical
     /// values are mirror-curated; the launcher does not enumerate them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub role: Option<String>,
     /// Same-manifest dependency declarations. Each entry's `filename`
     /// points at another mod in this pack's `mods[]`. Resolver
@@ -136,6 +145,7 @@ pub struct Display {
 pub struct Requirement {
     pub filename: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub version_range: Option<String>,
     #[serde(default)]
     pub optional: bool,

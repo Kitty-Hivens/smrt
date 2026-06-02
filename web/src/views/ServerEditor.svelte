@@ -38,10 +38,6 @@
             gallery_urls: [],
             tags: [],
             owner_display: '',
-            discord_url: null,
-            website_url: null,
-            motd_override: null,
-            founded_at: null,
             featured: false,
           },
     ),
@@ -61,10 +57,10 @@
         .map((s) => s.trim())
         .filter(Boolean),
     };
-    // Empty optional strings normalize to null (the mirror treats null as
-    // absent via skip_serializing_if; the key stays present for the type).
+    // Empty optional strings drop out (the field is optional; the mirror treats
+    // an absent key as None via skip_serializing_if).
     for (const k of ['discord_url', 'website_url', 'motd_override', 'founded_at'] as const) {
-      if (!payload[k]) payload[k] = null;
+      if (!payload[k]) payload[k] = undefined;
     }
     try {
       await api.saveServer(payload);

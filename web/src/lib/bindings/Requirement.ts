@@ -8,4 +8,4 @@
  * means the consumer works without the dep but works better with
  * it -- launcher shows it greyed-out in the dep tree.
  */
-export type Requirement = { filename: string, version_range: string | null, optional: boolean, };
+export type Requirement = { filename: string, version_range?: string, optional: boolean, };

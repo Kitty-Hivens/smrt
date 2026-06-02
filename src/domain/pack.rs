@@ -23,18 +23,21 @@ pub struct PackSummary {
     /// Square pack icon. Renders in BrowsePackCard avatar slot +
     /// BrowsePackDetail hero on the launcher.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub icon_url: Option<String>,
     /// Wide hero image. Renders behind BrowsePackDetail hero text;
     /// falls back to the launcher's mirror gradient when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub banner_url: Option<String>,
     /// Optional marketing screenshots. Rendered in a horizontal
     /// scroller on BrowsePackDetail when non-empty.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub gallery_urls: Vec<String>,
     /// Long-form CommonMark description for the BrowsePackDetail
     /// About section. HTML is not parsed by the launcher.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub description_md: Option<String>,
 }
 
@@ -101,8 +104,10 @@ pub struct DeclaredMod {
     pub default_enabled: bool,
     pub source: SourceDecl,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub display: Option<Display>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub note: Option<String>,
 }
 
@@ -114,8 +119,10 @@ pub struct DeclaredAsset {
     pub required: bool,
     pub source: SourceDecl,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub display: Option<Display>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub note: Option<String>,
 }
 

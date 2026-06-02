@@ -21,13 +21,17 @@ pub struct ServerEntry {
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub discord_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub website_url: Option<String>,
     pub owner_display: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub motd_override: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub founded_at: Option<String>,
     #[serde(default)]
     pub featured: bool,

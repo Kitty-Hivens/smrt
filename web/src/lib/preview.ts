@@ -135,7 +135,7 @@ export function resolveDeps(mods: ModEntry[]): DepGraph {
         const edge: DepEdge = {
           from: m.filename,
           to: req.filename,
-          versionRange: req.version_range,
+          versionRange: req.version_range ?? null,
           optional: req.optional,
         };
         edges.push(edge);
@@ -255,11 +255,11 @@ export function bucketAssets(assets: AssetEntry[]): AssetBuckets {
 
 // ── Display helpers ──────────────────────────────────────────────────────────
 
-export function modName(item: { filename: string; display: Display | null }): string {
+export function modName(item: { filename: string; display?: Display | null }): string {
   return item.display?.name?.trim() || item.filename;
 }
 
-export function assetName(item: { dest: string; display: Display | null }): string {
+export function assetName(item: { dest: string; display?: Display | null }): string {
   return item.display?.name?.trim() || item.dest.split('/').pop() || item.dest;
 }
 

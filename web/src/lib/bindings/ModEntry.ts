@@ -8,4 +8,4 @@ export type ModEntry = { filename: string, sha1: string, size_bytes: number, req
  * a curator opts it out. Omitted from the wire when true (the launcher's
  * SmrtModEntry defaults it to true), so only an opted-out mod carries it.
  */
-default_enabled: boolean, source: Source, display: Display | null, };
+default_enabled: boolean, source: Source, display?: Display, };

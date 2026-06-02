@@ -2,4 +2,4 @@
 import type { Display } from "./Display";
 import type { SourceDecl } from "./SourceDecl";
 
-export type DeclaredAsset = { dest: string, required: boolean, source: SourceDecl, display: Display | null, note: string | null, };
+export type DeclaredAsset = { dest: string, required: boolean, source: SourceDecl, display?: Display, note?: string, };

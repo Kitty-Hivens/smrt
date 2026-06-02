@@ -12,34 +12,34 @@ import type { Requirement } from "./Requirement";
  * rendering). All three optional; manifests without them parse cleanly
  * on every client that reached the v2 schema.
  */
-export type Display = { name: string | null, description: string | null, category: string | null, incompatible_with: Array<string>, 
+export type Display = { name?: string, description?: string, category?: string, incompatible_with: Array<string>, 
 /**
  * SPDX license identifier where known (e.g. "MIT", "LGPL-3.0-only",
  * "CC-BY-NC-SA-3.0"). Useful for a launcher to surface
  * non-redistributable mods to the user. Absent for proprietary mods
  * without an SPDX-compatible declaration.
  */
-license: string | null, 
+license?: string, 
 /**
  * Source / project / wiki URL. Used by a launcher's "Learn more"
  * affordance. Preferred order: mcmod.info url, Modrinth source_url,
  * CurseForge project page.
  */
-url: string | null, 
+url?: string, 
 /**
  * Per-item icon URL. Mirror serves directly for smrt_cache /
  * smrt_static entries; Modrinth-sourced entries can leave this null
  * and let the client resolve via the source's `project_id` against
  * the Modrinth API. Null = client falls back to a letter avatar.
  */
-icon_url: string | null, 
+icon_url?: string, 
 /**
  * Short tag for grouping interchangeable mods. Launcher renders all
  * mods with the same role as a single selectable slot ("Recipe
  * viewer: JEI [v]" with REI / JER / EMI alternatives). Canonical
  * values are mirror-curated; the launcher does not enumerate them.
  */
-role: string | null, 
+role?: string, 
 /**
  * Same-manifest dependency declarations. Each entry's `filename`
  * points at another mod in this pack's `mods[]`. Resolver

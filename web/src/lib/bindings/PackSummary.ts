@@ -5,12 +5,12 @@ export type PackSummary = { pack_id: string, display_name: string, tagline: stri
  * Square pack icon. Renders in BrowsePackCard avatar slot +
  * BrowsePackDetail hero on the launcher.
  */
-icon_url: string | null, 
+icon_url?: string, 
 /**
  * Wide hero image. Renders behind BrowsePackDetail hero text;
  * falls back to the launcher's mirror gradient when absent.
  */
-banner_url: string | null, 
+banner_url?: string, 
 /**
  * Optional marketing screenshots. Rendered in a horizontal
  * scroller on BrowsePackDetail when non-empty.
@@ -20,4 +20,4 @@ gallery_urls: Array<string>,
  * Long-form CommonMark description for the BrowsePackDetail
  * About section. HTML is not parsed by the launcher.
  */
-description_md: string | null, };
+description_md?: string, };

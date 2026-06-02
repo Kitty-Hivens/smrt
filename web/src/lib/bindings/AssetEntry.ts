@@ -2,4 +2,4 @@
 import type { Display } from "./Display";
 import type { Source } from "./Source";
 
-export type AssetEntry = { dest: string, sha1: string, size_bytes: number, required: boolean, source: Source, display: Display | null, };
+export type AssetEntry = { dest: string, sha1: string, size_bytes: number, required: boolean, source: Source, display?: Display, };

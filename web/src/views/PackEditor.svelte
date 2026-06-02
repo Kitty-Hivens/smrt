@@ -163,8 +163,6 @@
         required: true,
         default_enabled: true,
         source: { type: 'smrt_cache', sha1: '' },
-        display: null,
-        note: null,
       },
     ];
   }
@@ -175,8 +173,6 @@
         dest: '',
         required: true,
         source: { type: 'smrt_static', rel_path: '' },
-        display: null,
-        note: null,
       },
     ];
   }

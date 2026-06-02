@@ -7,4 +7,4 @@ export type DeclaredMod = { filename: string, required: boolean,
  * Install-time default for an optional mod; the curator's default-off list
  * flips it. Carried into the emitted ModEntry.
  */
-default_enabled: boolean, source: SourceDecl, display: Display | null, note: string | null, };
+default_enabled: boolean, source: SourceDecl, display?: Display, note?: string, };
