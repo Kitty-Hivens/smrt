@@ -1,20 +1,51 @@
-/* smrt control panel -- Atelier sensibility: hard, sharp, quiet.
-   Near-black field, thin seams, one restrained brass accent, monospace for
-   machine data. No neon, no rounded cards, no dashboard gloss. */
+/* smrt control panel base styles.
+   Dark slate field, one clear accent, a real spacing + radius scale, monospace
+   reserved for machine data (hashes, ids, paths). Components reference the
+   tokens below, so the look is steered from here. This palette is a starting
+   point for the redesign and is meant to be tuned, not treated as fixed. */
 
 :root {
-  --bg: #0c0d0f;
-  --panel: #141619;
-  --panel-2: #191c20;
-  --seam: #262a30;
-  --seam-bright: #343a42;
-  --fg: #d2d6dc;
-  --fg-dim: #868d97;
-  --fg-faint: #5b626b;
-  --accent: #c0a172; /* brass */
-  --accent-dim: #8a7a55;
-  --danger: #b5635a;
-  --ok: #7f9b6f;
+  /* surfaces, dark to light */
+  --bg: #0e1014;
+  --bg-2: #12151b;
+  --panel: #171b22;
+  --panel-2: #1d222b;
+  --panel-3: #242b35; /* hover / raised */
+
+  /* seams */
+  --seam: #2a313b;
+  --seam-bright: #3a434f;
+
+  /* text */
+  --fg: #e7eaef;
+  --fg-dim: #9aa3b1;
+  --fg-faint: #69727f;
+
+  /* accent + status */
+  --accent: #6c9cf5;
+  --accent-strong: #8db4ff;
+  --accent-dim: #4f73b8;
+  --accent-soft: rgba(108, 156, 245, 0.13);
+  --ok: #5fb98e;
+  --warn: #e0b15a;
+  --danger: #e3736a;
+  --danger-soft: rgba(227, 115, 106, 0.12);
+
+  /* spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* radius */
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 14px;
+
+  --ring: 0 0 0 2px var(--accent-soft);
+
   --mono: 'JetBrains Mono', 'SF Mono', ui-monospace, 'Cascadia Code', monospace;
   --sans: ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
 }
@@ -54,15 +85,17 @@ h1,
 h2,
 h3 {
   font-weight: 600;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.005em;
   margin: 0;
 }
 
 code,
 .mono {
   font-family: var(--mono);
-  font-size: 0.92em;
+  font-size: 0.9em;
 }
+
+/* controls */
 
 button {
   font-family: var(--sans);
@@ -70,54 +103,138 @@ button {
   color: var(--fg);
   background: var(--panel-2);
   border: 1px solid var(--seam-bright);
-  border-radius: 0;
-  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  padding: 7px 13px;
   cursor: pointer;
-  transition: border-color 0.12s ease, background 0.12s ease;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease,
+    color 0.12s ease;
 }
 button:hover {
+  border-color: var(--accent-dim);
+  background: var(--panel-3);
+}
+button:focus-visible {
+  outline: none;
   border-color: var(--accent);
+  box-shadow: var(--ring);
 }
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
+button:disabled:hover {
+  border-color: var(--seam-bright);
+  background: var(--panel-2);
+}
 button.primary {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--accent-dim);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
 }
 button.primary:hover {
-  background: rgba(192, 161, 114, 0.08);
+  border-color: var(--accent);
+  background: rgba(108, 156, 245, 0.2);
+}
+button.danger:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 input,
-textarea {
+textarea,
+select {
   font-family: var(--mono);
   font-size: 13px;
   color: var(--fg);
-  background: var(--bg);
+  background: var(--bg-2);
   border: 1px solid var(--seam-bright);
-  border-radius: 0;
+  border-radius: var(--radius-sm);
   padding: 8px 10px;
   width: 100%;
 }
+input::placeholder,
+textarea::placeholder {
+  color: var(--fg-faint);
+}
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+/* native dark-mode checkboxes read as harsh bright boxes; this is a calmer
+   custom control -- slate box, muted fill when checked, soft tick. */
+input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--seam-bright);
+  border-radius: 4px;
+  background: var(--bg-2);
+  cursor: pointer;
+  position: relative;
+  vertical-align: middle;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease;
+}
+input[type='checkbox']:hover {
+  border-color: var(--accent-dim);
+}
+input[type='checkbox']:checked {
+  background: var(--accent-dim);
+  border-color: var(--accent-dim);
+}
+input[type='checkbox']:checked::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 3px;
+  height: 7px;
+  border: solid var(--fg);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+/* no glow ring on the checkbox: a click leaves it focused, and a lingering
+   shadow after toggling reads as unnatural. Keep a quiet border for keyboard. */
+input[type='checkbox']:focus-visible {
   outline: none;
   border-color: var(--accent);
 }
 
-/* ── layout primitives ──────────────────────────────────────────────── */
+/* drop the up/down spinner on number inputs (e.g. java_major) -- it is ugly
+   and the value is typed, not stepped. */
+input[type='number'] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* layout primitives */
 
 .panel {
   background: var(--panel);
   border: 1px solid var(--seam);
+  border-radius: var(--radius-md);
 }
 
 .row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .muted {
@@ -133,7 +250,8 @@ textarea:focus {
   font-size: 11px;
   color: var(--fg-dim);
   border: 1px solid var(--seam);
-  padding: 1px 6px;
+  border-radius: 999px;
+  padding: 1px 8px;
 }
 
 .badge-on {
@@ -153,12 +271,15 @@ th {
   font-weight: 500;
   color: var(--fg-dim);
   border-bottom: 1px solid var(--seam);
-  padding: 8px 10px;
+  padding: 9px 11px;
 }
 td {
   border-bottom: 1px solid var(--seam);
-  padding: 8px 10px;
+  padding: 9px 11px;
   vertical-align: top;
+}
+tr:last-child td {
+  border-bottom: none;
 }
 tr:hover td {
   background: var(--panel-2);
@@ -166,4 +287,20 @@ tr:hover td {
 
 .scroll {
   overflow: auto;
+}
+
+/* a thin scrollbar that matches the field instead of the OS default */
+.scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.scroll::-webkit-scrollbar-thumb {
+  background: var(--seam-bright);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-faint);
+  background-clip: content-box;
 }

@@ -1,20 +1,18 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
+  import { route } from '../lib/route.svelte';
+  import { t } from '../lib/i18n.svelte';
   import type {
     CacheInventoryEntry,
     Featured,
-    Health,
     PackSummary,
     ServerEntry,
   } from '../lib/types';
   import ServerEditor from './ServerEditor.svelte';
   import PackEditor from './PackEditor.svelte';
 
-  let { onLogout }: { onLogout: () => void } = $props();
-
-  type Tab = 'overview' | 'packs' | 'servers' | 'featured' | 'cache';
-  let tab = $state<Tab>('overview');
+  // the active section comes from the shared route store; the shell rail drives it
 
   // server create/edit: 'new' = creating, ServerEntry = editing, null = closed
   let serverEdit = $state<ServerEntry | 'new' | null>(null);
@@ -27,7 +25,6 @@
   let featBusy = $state(false);
   let featMsg = $state('');
 
-  let health = $state<Health | null>(null);
   let packs = $state<PackSummary[]>([]);
   let servers = $state<ServerEntry[]>([]);
   let featured = $state<Featured | null>(null);
@@ -50,8 +47,7 @@
     loading = true;
     err = '';
     try {
-      const [h, p, s, f, c, a, rm] = await Promise.all([
-        api.health(),
+      const [p, s, f, c, a, rm] = await Promise.all([
         api.packs(),
         api.servers(),
         api.featured().catch(featuredFallback),
@@ -59,7 +55,6 @@
         api.authoringPacks(),
         api.removed(),
       ]);
-      health = h;
       packs = p.packs;
       servers = s.servers;
       featured = f;
@@ -206,33 +201,19 @@
     ['GET', '/v1/admin/modrinth/search | versions | icon'],
   ];
 
-  const tabs: [Tab, string][] = [
-    ['overview', 'Overview'],
-    ['packs', 'Packs'],
-    ['servers', 'Servers'],
-    ['featured', 'Featured'],
-    ['cache', 'Cache'],
-  ];
 </script>
 
-<div class="shell">
-  <header class="top">
-    <div class="brand mono">smrt<span class="faint">/control</span></div>
-    <nav class="tabs">
-      {#each tabs as [id, label]}
-        <button class="tab" class:active={tab === id} onclick={() => (tab = id)}>{label}</button>
-      {/each}
-    </nav>
-    <div class="spacer"></div>
-    {#if health}<span class="ver faint mono">v{health.version} / schema {health.schema_version}</span>{/if}
-    <button onclick={loadAll} disabled={loading}>{loading ? '...' : 'Refresh'}</button>
-    <button onclick={onLogout}>Sign out</button>
-  </header>
+<div class="view">
+  <div class="toolbar">
+    <button onclick={loadAll} disabled={loading}>
+      {loading ? t('common.loading') : t('shell.refresh')}
+    </button>
+  </div>
 
   {#if err}<div class="err mono">{err}</div>{/if}
 
-  <main class="body scroll">
-    {#if tab === 'overview'}
+  <div class="body">
+    {#if route.section === 'overview'}
       <section class="tiles">
         <div class="tile panel">
           <div class="n mono">{packs.length}</div>
@@ -270,7 +251,7 @@
           </tbody>
         </table>
       </div>
-    {:else if tab === 'packs'}
+    {:else if route.section === 'packs'}
       {#if packEdit !== null}
         {#key packEdit}
           <PackEditor
@@ -315,7 +296,7 @@
           </table>
         </div>
       {/if}
-    {:else if tab === 'servers'}
+    {:else if route.section === 'servers'}
       {#if serverEdit !== null}
         {#key serverEdit}
           <ServerEditor
@@ -360,7 +341,7 @@
           </tbody>
         </table>
       </div>
-    {:else if tab === 'featured'}
+    {:else if route.section === 'featured'}
       <div class="bar row">
         <button class="primary" onclick={saveFeatured} disabled={featBusy}>
           {featBusy ? 'saving...' : 'Save featured'}
@@ -397,7 +378,7 @@
           {#if servers.length === 0}<div class="muted">No servers.</div>{/if}
         </div>
       </div>
-    {:else if tab === 'cache'}
+    {:else if route.section === 'cache'}
       <div class="bar row">
         <label class="upbtn">
           {uploading ? 'uploading...' : 'Upload jar'}
@@ -447,60 +428,28 @@
         </div>
       {/if}
     {/if}
-  </main>
+  </div>
 </div>
 
 <style>
-  .shell {
+  .view {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    gap: var(--space-4);
   }
-  .top {
+  .toolbar {
     display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 10px 16px;
-    border-bottom: 1px solid var(--seam);
-    background: var(--panel);
-  }
-  .brand {
-    font-size: 16px;
-    letter-spacing: 0.04em;
-  }
-  .tabs {
-    display: flex;
-    gap: 2px;
-  }
-  .tab {
-    background: transparent;
-    border: 1px solid transparent;
-    border-bottom: 2px solid transparent;
-    padding: 6px 12px;
-    color: var(--fg-dim);
-  }
-  .tab:hover {
-    color: var(--fg);
-    border-color: transparent;
-  }
-  .tab.active {
-    color: var(--fg);
-    border-bottom-color: var(--accent);
-  }
-  .spacer {
-    flex: 1;
-  }
-  .ver {
-    font-size: 11px;
+    justify-content: flex-end;
   }
   .body {
-    flex: 1;
-    padding: 18px 16px;
+    min-width: 0;
   }
   .err {
     color: var(--danger);
-    padding: 8px 16px;
-    border-bottom: 1px solid var(--seam);
+    background: var(--danger-soft);
+    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3) var(--space-4);
     font-size: 12px;
   }
   .tiles {
@@ -570,9 +519,6 @@
     gap: 8px;
     padding: 5px 0;
     font-size: 13px;
-  }
-  .opt input {
-    width: auto;
   }
   .upbtn {
     display: inline-block;

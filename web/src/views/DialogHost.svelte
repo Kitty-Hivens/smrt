@@ -1,5 +1,6 @@
 <script lang="ts">
   import { dialogs } from '../lib/dialogs.svelte';
+  import { t } from '../lib/i18n.svelte';
 
   const a = $derived(dialogs.active);
   let value = $state('');
@@ -83,14 +84,14 @@
         </label>
       {/if}
       <div class="actions">
-        <button onclick={cancel}>Cancel</button>
+        <button onclick={cancel}>{t('dialog.cancel')}</button>
         <button
           bind:this={okBtn}
           class="primary"
           class:danger={a.kind === 'confirm' && a.danger}
           onclick={accept}
         >
-          {a.kind === 'confirm' && a.danger ? 'Delete' : 'OK'}
+          {a.kind === 'confirm' && a.danger ? t('dialog.delete') : t('dialog.ok')}
         </button>
       </div>
     </div>

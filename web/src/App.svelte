@@ -1,6 +1,8 @@
 <script lang="ts">
   import { api, setUnauthorizedHandler } from './lib/api';
+  import { t } from './lib/i18n.svelte';
   import Login from './views/Login.svelte';
+  import AppShell from './views/AppShell.svelte';
   import Browse from './views/Browse.svelte';
   import DialogHost from './views/DialogHost.svelte';
 
@@ -23,11 +25,13 @@
 </script>
 
 {#if authed === null}
-  <div class="boot"><span class="muted mono">checking session...</span></div>
+  <div class="boot"><span class="muted mono">{t('app.checkingSession')}</span></div>
 {:else if !authed}
   <Login onAuthed={() => (authed = true)} />
 {:else}
-  <Browse onLogout={logout} />
+  <AppShell onLogout={logout}>
+    <Browse />
+  </AppShell>
 {/if}
 
 <DialogHost />
