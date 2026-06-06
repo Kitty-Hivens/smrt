@@ -4,9 +4,10 @@
 
 use super::curator::PackMeta;
 use super::modrinth::Modrinth;
-use super::sources::{ModrinthCache, resolve_asset, resolve_mod};
+use super::sources::{ModrinthCache, resolve_asset, resolve_mod, sha1_hex};
 use crate::domain::{
-    JavaSpec, MinecraftSpec, PackConfig, PackManifest, PackSummary, SCHEMA_VERSION,
+    AssetEntry, JavaSpec, LoaderSpec, MinecraftSpec, ModEntry, PackConfig, PackManifest,
+    PackSummary, SCHEMA_VERSION,
 };
 use anyhow::{Result, bail};
 use std::path::Path;
@@ -56,21 +57,59 @@ pub async fn build_manifest(
     }
     asset_entries.sort_by(|a, b| a.dest.cmp(&b.dest));
 
+    let minecraft = MinecraftSpec {
+        version: cfg.minecraft_version.clone(),
+    };
+    let java = JavaSpec {
+        major: cfg.java_major,
+    };
+    let fingerprint =
+        content_fingerprint(&minecraft, &cfg.loader, &java, &mod_entries, &asset_entries);
+
     Ok(PackManifest {
         schema_version: SCHEMA_VERSION,
         pack_id: cfg.pack_id.clone(),
         pack_version,
         generated_at: now_rfc3339(),
-        minecraft: MinecraftSpec {
-            version: cfg.minecraft_version.clone(),
-        },
+        fingerprint: Some(fingerprint),
+        minecraft,
         loader: cfg.loader.clone(),
-        java: JavaSpec {
-            major: cfg.java_major,
-        },
+        java,
         mods: mod_entries,
         assets: asset_entries,
     })
+}
+
+/// Content fingerprint of a build: a sha1 over exactly what lands in an
+/// instance -- each artifact's hash + install flags, plus the loader / java /
+/// MC baseline. Deliberately excludes `pack_version` (the label this makes
+/// derivable), `generated_at` (a timestamp, not content), and the advisory
+/// `display` metadata (a description edit does not change the instance). Lines
+/// are sorted, so the result is independent of mod/asset ordering: identical
+/// content yields an identical fingerprint across rebuilds, a changed set
+/// yields a new one.
+fn content_fingerprint(
+    minecraft: &MinecraftSpec,
+    loader: &LoaderSpec,
+    java: &JavaSpec,
+    mods: &[ModEntry],
+    assets: &[AssetEntry],
+) -> String {
+    let mut lines: Vec<String> = Vec::with_capacity(mods.len() + assets.len() + 3);
+    lines.push(format!("mc\t{}", minecraft.version));
+    lines.push(format!("loader\t{}\t{}", loader.name, loader.version));
+    lines.push(format!("java\t{}", java.major));
+    for m in mods {
+        lines.push(format!(
+            "mod\t{}\t{}\t{}\t{}",
+            m.filename, m.sha1, m.required, m.default_enabled
+        ));
+    }
+    for a in assets {
+        lines.push(format!("asset\t{}\t{}\t{}", a.dest, a.sha1, a.required));
+    }
+    lines.sort();
+    sha1_hex(lines.join("\n").as_bytes())
 }
 
 /// Derive the `PackSummary` (the Browse-list / PackDetail card payload) from
@@ -160,5 +199,69 @@ mod tests {
         assert!(validate_canonical_pack_version("2026.05.22a").is_err());
         assert!(validate_canonical_pack_version("v1").is_err());
         assert!(validate_canonical_pack_version("").is_err());
+    }
+
+    use crate::domain::Source;
+
+    fn mc() -> MinecraftSpec {
+        MinecraftSpec {
+            version: "1.12.2".into(),
+        }
+    }
+    fn forge() -> LoaderSpec {
+        LoaderSpec {
+            name: "forge".into(),
+            version: "14.23.5.2922".into(),
+        }
+    }
+    fn modentry(filename: &str, sha1: &str) -> ModEntry {
+        ModEntry {
+            filename: filename.into(),
+            sha1: sha1.into(),
+            size_bytes: 1,
+            required: true,
+            default_enabled: true,
+            source: Source::SmrtCache { url: "u".into() },
+            display: None,
+        }
+    }
+
+    #[test]
+    fn fingerprint_is_stable_and_order_independent() {
+        let a = [modentry("a.jar", "aaa"), modentry("b.jar", "bbb")];
+        let b = [modentry("b.jar", "bbb"), modentry("a.jar", "aaa")];
+        let fa = content_fingerprint(&mc(), &forge(), &JavaSpec { major: 8 }, &a, &[]);
+        let fb = content_fingerprint(&mc(), &forge(), &JavaSpec { major: 8 }, &b, &[]);
+        assert_eq!(
+            fa, fb,
+            "reordering the same content must not change the hash"
+        );
+        assert_eq!(fa.len(), 40, "sha1 hex");
+    }
+
+    #[test]
+    fn fingerprint_changes_on_content_change() {
+        let base = [modentry("a.jar", "aaa")];
+        let f0 = content_fingerprint(&mc(), &forge(), &JavaSpec { major: 8 }, &base, &[]);
+
+        // a different artifact hash
+        let swapped = [modentry("a.jar", "ccc")];
+        let f1 = content_fingerprint(&mc(), &forge(), &JavaSpec { major: 8 }, &swapped, &[]);
+        assert_ne!(f0, f1, "a changed mod sha1 changes the fingerprint");
+
+        // a loader migration (same MC, new loader) -- the heavy update case
+        let cleanroom = LoaderSpec {
+            name: "cleanroom".into(),
+            version: "0.2".into(),
+        };
+        let f2 = content_fingerprint(&mc(), &cleanroom, &JavaSpec { major: 8 }, &base, &[]);
+        assert_ne!(f0, f2, "a loader change changes the fingerprint");
+
+        // an install-flag flip (optional default off) changes the instance
+        let mut toggled = modentry("a.jar", "aaa");
+        toggled.required = false;
+        toggled.default_enabled = false;
+        let f3 = content_fingerprint(&mc(), &forge(), &JavaSpec { major: 8 }, &[toggled], &[]);
+        assert_ne!(f0, f3, "install flags are part of the instance identity");
     }
 }

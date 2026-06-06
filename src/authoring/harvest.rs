@@ -47,6 +47,7 @@ pub struct PackSeed {
     pub loader_id: Option<String>,
     pub loader_version: Option<String>,
     pub java_major: Option<i64>,
+    pub fingerprint: Option<String>,
     pub mods: Vec<BuildModSeed>,
     pub conflicts: Vec<(String, String)>, // (a_sha1, b_sha1), from curator.incompatible
 }
@@ -158,6 +159,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
             pack.loader_id.as_deref(),
             pack.loader_version.as_deref(),
             pack.java_major,
+            pack.fingerprint.as_deref(),
             true,
             now,
         )?;
@@ -291,6 +293,7 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
             loader_id: Some(manifest.loader.name.clone()),
             loader_version: Some(manifest.loader.version.clone()),
             java_major: Some(manifest.java.major as i64),
+            fingerprint: manifest.fingerprint.clone(),
             mods,
             conflicts,
         });
@@ -397,6 +400,7 @@ mod tests {
                 loader_id: Some("forge".into()),
                 loader_version: Some("14.23".into()),
                 java_major: Some(8),
+                fingerprint: Some("fp_test".into()),
                 mods: vec![
                     BuildModSeed {
                         sha1: "sha_a".into(),
@@ -449,6 +453,13 @@ mod tests {
                 |r| r.get(0),
             )?;
             assert_eq!(conf, 2);
+            // the build's content fingerprint lands in pack_build
+            let fp: Option<String> = c.query_row(
+                "SELECT fingerprint FROM pack_build WHERE pack_id='Industrial'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(fp.as_deref(), Some("fp_test"));
             Ok(())
         })
         .unwrap();

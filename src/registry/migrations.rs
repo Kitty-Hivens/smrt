@@ -8,6 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 const MIGRATIONS: &[(u32, &str)] = &[
     (1, include_str!("schema/0001_init.sql")),
     (2, include_str!("schema/0002_seed_loaders.sql")),
+    (3, include_str!("schema/0003_pack_build_fingerprint.sql")),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its

@@ -121,6 +121,7 @@ mod tests {
                 Some("forge"),
                 Some("14.23"),
                 Some(8),
+                Some("fp_industrial"),
                 true,
                 NOW,
             )?;
