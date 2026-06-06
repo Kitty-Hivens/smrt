@@ -5,7 +5,6 @@
   import { t } from '../lib/i18n.svelte';
   import type {
     CacheUsageEntry,
-    Featured,
     PackSummary,
     ServerEntry,
   } from '../lib/types';
@@ -20,47 +19,27 @@
   // pack editor: pack_id being edited, null = closed
   let packEdit = $state<string | null>(null);
 
-  // featured selections, synced from featured.json on load
-  let featPacks = $state<Set<string>>(new Set());
-  let featServers = $state<Set<string>>(new Set());
-  let featBusy = $state(false);
-  let featMsg = $state('');
-
   let packs = $state<PackSummary[]>([]);
   let servers = $state<ServerEntry[]>([]);
-  let featured = $state<Featured | null>(null);
   let cache = $state<CacheUsageEntry[]>([]);
   let removed = $state<string[]>([]);
   let authoring = $state<string[]>([]);
   let err = $state('');
   let loading = $state(true);
 
-  // featured.json is absent on a fresh mirror; a 404 there means "nothing
-  // featured yet", not an error worth banner-ing over the whole overview.
-  function featuredFallback(e: unknown): Featured {
-    if (e instanceof ApiError && e.status === 404) {
-      return { schema_version: 2, generated_at: '', featured_servers: [], featured_packs: [] };
-    }
-    throw e;
-  }
-
   async function loadAll() {
     loading = true;
     err = '';
     try {
-      const [p, s, f, c, a, rm] = await Promise.all([
+      const [p, s, c, a, rm] = await Promise.all([
         api.packs(),
         api.servers(),
-        api.featured().catch(featuredFallback),
         api.cacheUsage(),
         api.authoringPacks(),
         api.removed(),
       ]);
       packs = p.packs;
       servers = s.servers;
-      featured = f;
-      featPacks = new Set(f.featured_packs);
-      featServers = new Set(f.featured_servers);
       cache = c.entries;
       authoring = a.packs;
       removed = rm.removed;
@@ -84,31 +63,6 @@
     } catch (e) {
       err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
     }
-  }
-
-  async function saveFeatured() {
-    featBusy = true;
-    featMsg = '';
-    try {
-      await api.saveFeatured({
-        schema_version: 2,
-        generated_at: new Date().toISOString(),
-        featured_packs: [...featPacks],
-        featured_servers: [...featServers],
-      });
-      featMsg = 'Saved.';
-      await loadAll();
-    } catch (e) {
-      featMsg = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
-    } finally {
-      featBusy = false;
-    }
-  }
-
-  function toggle(set: Set<string>, id: string): Set<string> {
-    const n = new Set(set);
-    n.has(id) ? n.delete(id) : n.add(id);
-    return n;
   }
 
   let uploading = $state(false);
@@ -177,6 +131,8 @@
   const orphanCount = $derived(cache.filter((e) => e.uses.length === 0).length);
   const unbuiltCount = $derived(allPackIds.filter((id) => !summaryFor(id)).length);
   const builtCount = $derived(allPackIds.length - unbuiltCount);
+  const featPackCount = $derived(packs.filter((p) => p.featured).length);
+  const featServerCount = $derived(servers.filter((s) => s.featured).length);
 
   async function newPack() {
     const id = (
@@ -233,7 +189,7 @@
           <div class="l muted">{t('overview.authoring')}</div>
         </div>
         <div class="tile panel">
-          <div class="n mono">{featured?.featured_packs.length ?? 0} / {featured?.featured_servers.length ?? 0}</div>
+          <div class="n mono">{featPackCount} / {featServerCount}</div>
           <div class="l muted">{t('overview.featured')}</div>
         </div>
         {#if removed.length}
@@ -350,43 +306,6 @@
             {/if}
           </tbody>
         </table>
-      </div>
-    {:else if route.section === 'featured'}
-      <div class="bar row">
-        <button class="primary" onclick={saveFeatured} disabled={featBusy}>
-          {featBusy ? 'saving...' : 'Save featured'}
-        </button>
-        {#if featMsg}<span class="muted mono">{featMsg}</span>{/if}
-      </div>
-      <div class="feat">
-        <div class="panel col">
-          <div class="ch">Featured packs</div>
-          {#each packs as p}
-            <label class="opt">
-              <input
-                type="checkbox"
-                checked={featPacks.has(p.pack_id)}
-                onchange={() => (featPacks = toggle(featPacks, p.pack_id))}
-              />
-              {p.display_name} <span class="faint mono">{p.pack_id}</span>
-            </label>
-          {/each}
-          {#if packs.length === 0}<div class="muted">No packs.</div>{/if}
-        </div>
-        <div class="panel col">
-          <div class="ch">Featured servers</div>
-          {#each servers as s}
-            <label class="opt">
-              <input
-                type="checkbox"
-                checked={featServers.has(s.server_id)}
-                onchange={() => (featServers = toggle(featServers, s.server_id))}
-              />
-              {s.display_name} <span class="faint mono">{s.server_id}</span>
-            </label>
-          {/each}
-          {#if servers.length === 0}<div class="muted">No servers.</div>{/if}
-        </div>
       </div>
     {:else if route.section === 'cache'}
       <DropZone
@@ -541,28 +460,6 @@
   button.danger:hover {
     border-color: var(--danger);
     color: var(--danger);
-  }
-  .feat {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-  }
-  .col {
-    padding: 14px;
-  }
-  .ch {
-    font-size: 12px;
-    color: var(--fg-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-bottom: 10px;
-  }
-  .opt {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 0;
-    font-size: 13px;
   }
   .cache-bar {
     display: flex;

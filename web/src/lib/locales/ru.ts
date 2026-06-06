@@ -7,7 +7,6 @@ export const ru: Dict = {
   'nav.overview': 'Обзор',
   'nav.packs': 'Паки',
   'nav.servers': 'Сервера',
-  'nav.featured': 'Витрина',
   'nav.cache': 'Кэш',
 
   'shell.signOut': 'Выйти',

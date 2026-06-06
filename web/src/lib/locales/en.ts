@@ -8,7 +8,6 @@ export const en = {
   'nav.overview': 'Overview',
   'nav.packs': 'Packs',
   'nav.servers': 'Servers',
-  'nav.featured': 'Featured',
   'nav.cache': 'Cache',
 
   'shell.signOut': 'Sign out',
