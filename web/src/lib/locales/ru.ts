@@ -38,4 +38,13 @@ export const ru: Dict = {
   'packs.flag.featured': 'рекомендуемый',
   'packs.flag.authoring': 'редактируемый',
   'packs.empty': 'Паков пока нет. Создай или загрузи из SC-архива.',
+
+  'overview.packs': 'Паки',
+  'overview.packsSub': 'собрано {built} / не собрано {unbuilt}',
+  'overview.servers': 'Сервера',
+  'overview.cache': 'Jar в кэше',
+  'overview.cacheSub': '{size} / {orphan} бесхозных',
+  'overview.authoring': 'С авторским конфигом',
+  'overview.featured': 'Рекомендуемые: паки / сервера',
+  'overview.takedown': 'В takedown',
 };

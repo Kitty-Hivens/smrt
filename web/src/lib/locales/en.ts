@@ -39,6 +39,15 @@ export const en = {
   'packs.flag.featured': 'featured',
   'packs.flag.authoring': 'editable',
   'packs.empty': 'No packs yet. Create one or bootstrap from an SC archive.',
+
+  'overview.packs': 'Packs',
+  'overview.packsSub': '{built} built / {unbuilt} unbuilt',
+  'overview.servers': 'Servers',
+  'overview.cache': 'Cache jars',
+  'overview.cacheSub': '{size} / {orphan} orphan',
+  'overview.authoring': 'With authoring config',
+  'overview.featured': 'Featured packs / servers',
+  'overview.takedown': 'In takedown',
 } as const;
 
 export type Dict = Record<keyof typeof en, string>;
