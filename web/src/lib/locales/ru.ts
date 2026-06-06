@@ -179,4 +179,11 @@ export const ru: Dict = {
   'crop.hint': 'Тяни мышкой, ползунок — масштаб',
   'crop.zoom': 'Масштаб',
   'crop.apply': 'Применить',
+
+  'pe.asset.resourcepack': 'Ресурспак',
+  'pe.asset.shader': 'Шейдер',
+  'pe.dropAssets': 'Перетащи сюда .zip / конфиг или нажми',
+  'mrp.search': 'Поиск на Modrinth...',
+  'mrp.searching': 'поиск...',
+  'mrp.noResults': 'Ничего не найдено.',
 };

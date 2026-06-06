@@ -272,9 +272,9 @@ export const api = {
   },
 
   // ── Modrinth search-to-add ──
-  modrinthSearch: (q: string, mc?: string) =>
+  modrinthSearch: (q: string, mc?: string, type?: string) =>
     getJson<ModrinthHit[]>(
-      `/v1/admin/modrinth/search?q=${encodeURIComponent(q)}${mc ? `&mc=${encodeURIComponent(mc)}` : ''}`,
+      `/v1/admin/modrinth/search?q=${encodeURIComponent(q)}${mc ? `&mc=${encodeURIComponent(mc)}` : ''}${type ? `&type=${encodeURIComponent(type)}` : ''}`,
     ),
   modrinthVersions: (id: string, mc?: string) =>
     getJson<ModrinthVersion[]>(
