@@ -66,9 +66,9 @@ try {
     await pItems[1].click();
     await sleep(350);
   }
-  const editBtn = await page.$('td.actions button');
-  if (editBtn) {
-    await editBtn.click();
+  const rowBtn = await page.$('tr.clickable');
+  if (rowBtn) {
+    await rowBtn.click();
     await sleep(500);
     await page.screenshot({ path: `${OUT}/smrt-pack-config.png` });
   }

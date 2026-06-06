@@ -95,10 +95,17 @@ impl Modrinth {
     /// Search Modrinth for mods matching [query], optionally narrowed to an MC
     /// version. Returns the top hits (project id / slug / title / icon) so the
     /// panel can add a mod without the operator pasting ids.
-    pub async fn search(&self, query: &str, mc: Option<&str>) -> Result<Vec<SearchHit>> {
+    pub async fn search(
+        &self,
+        query: &str,
+        mc: Option<&str>,
+        project_type: &str,
+    ) -> Result<Vec<SearchHit>> {
+        // project_type is one of Modrinth's known kinds (mod / resourcepack /
+        // shader); the caller picks it so the panel can browse packs, not just mods.
         let facets = match mc {
-            Some(v) => format!(r#"[["project_type:mod"],["versions:{v}"]]"#),
-            None => r#"[["project_type:mod"]]"#.to_string(),
+            Some(v) => format!(r#"[["project_type:{project_type}"],["versions:{v}"]]"#),
+            None => format!(r#"[["project_type:{project_type}"]]"#),
         };
         let resp = self
             .http
@@ -150,6 +157,28 @@ impl Modrinth {
             return Err(anyhow!("modrinth project versions HTTP {status}: {body}"));
         }
         resp.json().await.context("decode")
+    }
+
+    /// Generic GET for artifacts hosted outside Modrinth (GitHub release
+    /// assets), reusing the pooled client + UA. Follows redirects.
+    pub async fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        // cap the response so a huge or malicious release asset can't OOM the
+        // mirror; GitHub release downloads always send a content-length
+        const MAX_BYTES: u64 = 512 * 1024 * 1024;
+        let resp = self.http.get(url).send().await.context("asset GET")?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(anyhow!("asset HTTP {status} for {url}"));
+        }
+        if let Some(len) = resp.content_length()
+            && len > MAX_BYTES
+        {
+            return Err(anyhow!(
+                "asset at {url} is {len} bytes, over the {} MiB cap",
+                MAX_BYTES / 1024 / 1024
+            ));
+        }
+        Ok(resp.bytes().await.context("asset body")?.to_vec())
     }
 }
 

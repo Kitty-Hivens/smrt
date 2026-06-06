@@ -74,6 +74,34 @@ pub struct CacheInventoryEntry {
     pub size_bytes: u64,
 }
 
+/// Admin-only cache inventory enriched with where each jar is used. The public
+/// inventory stays lean (sha1 + size); usage cross-references authoring configs,
+/// which are not part of the public read API. A jar with no uses is an orphan.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct CacheUsageListing {
+    pub schema_version: u32,
+    pub entries: Vec<CacheUsageEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct CacheUsageEntry {
+    pub sha1: String,
+    #[ts(type = "number")]
+    pub size_bytes: u64,
+    /// Every (pack, filename) referencing this sha1 via an smrt_cache source.
+    /// Empty = orphan: on disk but no pack pulls it.
+    pub uses: Vec<CacheUse>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct CacheUse {
+    pub pack_id: String,
+    pub filename: String,
+}
+
 // ── Health ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, TS)]

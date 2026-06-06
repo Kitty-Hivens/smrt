@@ -4,7 +4,7 @@
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
   import type {
-    CacheInventoryEntry,
+    CacheUsageEntry,
     Featured,
     PackSummary,
     ServerEntry,
@@ -28,7 +28,7 @@
   let packs = $state<PackSummary[]>([]);
   let servers = $state<ServerEntry[]>([]);
   let featured = $state<Featured | null>(null);
-  let cache = $state<CacheInventoryEntry[]>([]);
+  let cache = $state<CacheUsageEntry[]>([]);
   let removed = $state<string[]>([]);
   let authoring = $state<string[]>([]);
   let err = $state('');
@@ -51,7 +51,7 @@
         api.packs(),
         api.servers(),
         api.featured().catch(featuredFallback),
-        api.cacheInventory(),
+        api.cacheUsage(),
         api.authoringPacks(),
         api.removed(),
       ]);
@@ -152,9 +152,14 @@
   );
   const summaryFor = (id: string) => packs.find((p) => p.pack_id === id);
 
+  // overview metrics
+  const orphanCount = $derived(cache.filter((e) => e.uses.length === 0).length);
+  const unbuiltCount = $derived(allPackIds.filter((id) => !summaryFor(id)).length);
+  const builtCount = $derived(allPackIds.length - unbuiltCount);
+
   async function newPack() {
     const id = (
-      await dialogs.prompt('New pack id (letters, digits, - _ .):', { title: 'New pack' })
+      await dialogs.prompt(t('packs.newPrompt'), { title: t('packs.new') })
     )?.trim();
     if (id) packEdit = id;
   }
@@ -169,37 +174,6 @@
     } while (n >= 1024 && i < u.length - 1);
     return `${n.toFixed(1)} ${u[i]}`;
   }
-
-  const endpoints: [string, string][] = [
-    ['GET', '/v1/health'],
-    ['GET', '/v1/packs'],
-    ['GET', '/v1/packs/:id'],
-    ['GET', '/v1/packs/:id/manifest'],
-    ['GET', '/v1/packs/:id/manifest/versions'],
-    ['GET', '/v1/packs/:id/manifest/:version'],
-    ['GET', '/v1/packs/:id/static/*path'],
-    ['GET', '/v1/servers'],
-    ['GET', '/v1/servers/:id'],
-    ['GET', '/v1/featured'],
-    ['GET', '/v1/cache/inventory'],
-    ['GET', '/v1/cache/:prefix/:sha.jar'],
-    ['GET', '/v1/admin/packs'],
-    ['GET PUT', '/v1/admin/packs/:id/config'],
-    ['GET PUT', '/v1/admin/packs/:id/curator'],
-    ['GET PUT', '/v1/admin/packs/:id/curator/structured'],
-    ['POST', '/v1/admin/packs/:id/build?dry_run'],
-    ['POST', '/v1/admin/packs/:id/bootstrap'],
-    ['POST', '/v1/admin/packs/:id/validate'],
-    ['GET', '/v1/admin/jobs/:id'],
-    ['GET', '/v1/admin/jobs/:id/events'],
-    ['POST', '/v1/admin/servers'],
-    ['DELETE', '/v1/admin/servers/:id'],
-    ['PUT DELETE', '/v1/admin/cache/:prefix/:file'],
-    ['GET', '/v1/admin/cache/removed'],
-    ['GET PUT DELETE', '/v1/admin/packs/:id/static/*path'],
-    ['POST', '/v1/admin/featured'],
-    ['GET', '/v1/admin/modrinth/search | versions | icon'],
-  ];
 
 </script>
 
@@ -216,41 +190,38 @@
     {#if route.section === 'overview'}
       <section class="tiles">
         <div class="tile panel">
-          <div class="n mono">{packs.length}</div>
-          <div class="l muted">packs</div>
+          <div class="n mono">{allPackIds.length}</div>
+          <div class="l muted">{t('overview.packs')}</div>
+          <div class="sub faint">
+            {t('overview.packsSub', { built: builtCount, unbuilt: unbuiltCount })}
+          </div>
         </div>
         <div class="tile panel">
           <div class="n mono">{servers.length}</div>
-          <div class="l muted">servers</div>
+          <div class="l muted">{t('overview.servers')}</div>
         </div>
         <div class="tile panel">
           <div class="n mono">{cache.length}</div>
-          <div class="l muted">cache jars / {fmtBytes(cacheBytes)}</div>
+          <div class="l muted">{t('overview.cache')}</div>
+          <div class="sub faint">
+            {t('overview.cacheSub', { size: fmtBytes(cacheBytes), orphan: orphanCount })}
+          </div>
         </div>
         <div class="tile panel">
           <div class="n mono">{authoring.length}</div>
-          <div class="l muted">with authoring config</div>
+          <div class="l muted">{t('overview.authoring')}</div>
         </div>
         <div class="tile panel">
           <div class="n mono">{featured?.featured_packs.length ?? 0} / {featured?.featured_servers.length ?? 0}</div>
-          <div class="l muted">featured packs / servers</div>
+          <div class="l muted">{t('overview.featured')}</div>
         </div>
+        {#if removed.length}
+          <div class="tile panel">
+            <div class="n mono">{removed.length}</div>
+            <div class="l muted">{t('overview.takedown')}</div>
+          </div>
+        {/if}
       </section>
-
-      <h2 class="sec">API surface</h2>
-      <div class="panel">
-        <table>
-          <thead><tr><th style="width:150px">Method</th><th>Path</th></tr></thead>
-          <tbody>
-            {#each endpoints as [method, path]}
-              <tr>
-                <td><span class="tag">{method}</span></td>
-                <td class="mono">{path}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
     {:else if route.section === 'packs'}
       {#if packEdit !== null}
         {#key packEdit}
@@ -264,33 +235,51 @@
         {/key}
       {:else}
         <div class="bar">
-          <button class="primary" onclick={newPack}>New pack</button>
+          <button class="primary" onclick={newPack}>{t('packs.new')}</button>
         </div>
         <div class="panel">
           <table>
             <thead>
-              <tr><th>Pack</th><th>MC</th><th>Latest</th><th>Tags</th><th>Flags</th><th style="width:80px"></th></tr>
+              <tr>
+                <th>{t('packs.col.pack')}</th>
+                <th>{t('packs.col.mc')}</th>
+                <th>{t('packs.col.latest')}</th>
+                <th>{t('packs.col.tags')}</th>
+                <th>{t('packs.col.flags')}</th>
+              </tr>
             </thead>
             <tbody>
               {#each allPackIds as id}
                 {@const p = summaryFor(id)}
-                <tr>
+                <tr
+                  class="clickable"
+                  role="button"
+                  tabindex="0"
+                  onclick={() => (packEdit = id)}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      packEdit = id;
+                    }
+                  }}
+                >
                   <td>
                     <div>{p?.display_name ?? id}</div>
-                    <div class="faint mono">{id}</div>
+                    {#if (p?.display_name ?? id) !== id}
+                      <div class="faint mono">{id}</div>
+                    {/if}
                   </td>
                   <td class="mono">{p?.minecraft_version ?? '-'}</td>
-                  <td class="mono">{p?.latest_pack_version ?? '(unbuilt)'}</td>
-                  <td>{#each p?.tags ?? [] as t}<span class="tag">{t}</span> {/each}</td>
+                  <td class="mono">{p?.latest_pack_version ?? t('packs.unbuilt')}</td>
+                  <td>{#each p?.tags ?? [] as tg}<span class="tag">{tg}</span> {/each}</td>
                   <td>
-                    {#if p?.featured}<span class="tag" style="color:var(--accent)">featured</span>{/if}
-                    {#if authoringSet.has(id)}<span class="tag" style="color:var(--ok)">authoring</span>{/if}
+                    {#if p?.featured}<span class="tag" style="color:var(--accent)">{t('packs.flag.featured')}</span>{/if}
+                    {#if authoringSet.has(id)}<span class="tag" style="color:var(--ok)">{t('packs.flag.authoring')}</span>{/if}
                   </td>
-                  <td class="actions"><button onclick={() => (packEdit = id)}>Edit</button></td>
                 </tr>
               {/each}
               {#if allPackIds.length === 0 && !loading}
-                <tr><td colspan="6" class="muted">No packs yet. Create one or bootstrap from an SC archive.</td></tr>
+                <tr><td colspan="5" class="muted">{t('packs.empty')}</td></tr>
               {/if}
             </tbody>
           </table>
@@ -444,6 +433,13 @@
   .body {
     min-width: 0;
   }
+  tr.clickable {
+    cursor: pointer;
+  }
+  tr.clickable:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
   .err {
     color: var(--danger);
     background: var(--danger-soft);
@@ -468,6 +464,10 @@
   .tile .l {
     font-size: 12px;
     margin-top: 4px;
+  }
+  .tile .sub {
+    font-size: 11px;
+    margin-top: 6px;
   }
   .sec {
     font-size: 13px;
