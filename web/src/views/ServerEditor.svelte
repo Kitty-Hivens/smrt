@@ -151,7 +151,4 @@
     gap: 8px;
     color: var(--fg);
   }
-  label.chk input {
-    width: auto;
-  }
 </style>

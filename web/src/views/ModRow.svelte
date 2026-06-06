@@ -104,6 +104,9 @@
   .chk {
     margin-top: 9px;
     width: auto;
+    height: auto;
+    appearance: auto;
+    -webkit-appearance: auto;
     accent-color: var(--p-accent);
   }
   .meta {

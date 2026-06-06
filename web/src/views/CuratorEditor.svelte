@@ -262,9 +262,6 @@
   td.ctr {
     text-align: center;
   }
-  td.ctr input {
-    width: auto;
-  }
   button.sm {
     padding: 3px 9px;
     font-size: 12px;

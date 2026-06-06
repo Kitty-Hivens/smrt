@@ -464,9 +464,6 @@
     color: var(--fg);
     align-self: end;
   }
-  .meta label.chk input {
-    width: auto;
-  }
   .sec-h {
     margin: 0 0 10px;
     gap: 12px;
@@ -493,9 +490,6 @@
   }
   td.ctr {
     text-align: center;
-  }
-  td.ctr input {
-    width: auto;
   }
   button.sm {
     padding: 3px 9px;

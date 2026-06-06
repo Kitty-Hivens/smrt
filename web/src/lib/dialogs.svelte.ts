@@ -1,6 +1,8 @@
 // Promise-based in-panel dialogs replacing window.confirm / window.prompt.
 // A single <DialogHost> renders the active request; callers `await` the result.
 
+import { t } from './i18n.svelte';
+
 interface ConfirmReq {
   kind: 'confirm';
   title: string;
@@ -39,7 +41,7 @@ export const dialogs = {
       settlePending();
       active = {
         kind: 'confirm',
-        title: opts.title ?? 'Confirm',
+        title: opts.title ?? t('dialog.confirmTitle'),
         message,
         danger: opts.danger ?? false,
         resolve,
@@ -55,7 +57,7 @@ export const dialogs = {
       settlePending();
       active = {
         kind: 'prompt',
-        title: opts.title ?? 'Input',
+        title: opts.title ?? t('dialog.inputTitle'),
         label,
         initial: opts.initial ?? '',
         placeholder: opts.placeholder ?? '',
