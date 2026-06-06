@@ -11,6 +11,7 @@
   } from '../lib/types';
   import ServerEditor from './ServerEditor.svelte';
   import PackEditor from './PackEditor.svelte';
+  import DropZone from './ui/DropZone.svelte';
 
   // the active section comes from the shared route store; the shell rail drives it
 
@@ -113,29 +114,30 @@
   let uploading = $state(false);
   let upMsg = $state('');
 
-  async function onUploadJar(e: Event) {
-    const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
+  async function onDropJars(files: File[]) {
     uploading = true;
     upMsg = '';
     try {
-      const sha1 = await api.uploadCacheJar(file);
-      upMsg = `Uploaded ${file.name} (${sha1.slice(0, 12)}...)`;
+      let n = 0;
+      for (const file of files) {
+        await api.uploadCacheJar(file);
+        n++;
+      }
+      upMsg = t('cache.uploaded', { count: n });
       await loadAll();
     } catch (x) {
       upMsg = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
     } finally {
       uploading = false;
-      input.value = '';
     }
   }
 
   async function delCacheJar(sha1: string) {
-    const ok = await dialogs.confirm(
-      `Delete jar ${sha1.slice(0, 12)}...? It is added to the removed-list (takedown) and cannot be re-uploaded.`,
-      { title: 'Delete cache jar', danger: true },
-    );
+    const name = nameOfCache(cache.find((e) => e.sha1 === sha1)) || `${sha1.slice(0, 12)}...`;
+    const ok = await dialogs.confirm(t('cache.deleteMsg', { name }), {
+      title: t('cache.deleteTitle'),
+      danger: true,
+    });
     if (!ok) return;
     try {
       await api.deleteCacheJar(sha1);
@@ -146,6 +148,25 @@
   }
 
   const cacheBytes = $derived(cache.reduce((n, e) => n + e.size_bytes, 0));
+
+  // a content-addressed jar has no stored name; show what a pack named it
+  const nameOfCache = (e?: CacheUsageEntry) => e?.uses[0]?.filename ?? '';
+  const usedByCache = (e: CacheUsageEntry) => [...new Set(e.uses.map((u) => u.pack_id))];
+  let cacheQ = $state('');
+  let cacheOrphansOnly = $state(false);
+  const shownCache = $derived(
+    cache.filter((e) => {
+      if (cacheOrphansOnly && e.uses.length > 0) return false;
+      const needle = cacheQ.trim().toLowerCase();
+      if (!needle) return true;
+      return (
+        e.sha1.includes(needle) ||
+        nameOfCache(e).toLowerCase().includes(needle) ||
+        e.uses.some((u) => u.pack_id.toLowerCase().includes(needle))
+      );
+    }),
+  );
+
   const authoringSet = $derived(new Set(authoring));
   const allPackIds = $derived(
     [...new Set([...packs.map((p) => p.pack_id), ...authoring])].sort(),
@@ -368,43 +389,66 @@
         </div>
       </div>
     {:else if route.section === 'cache'}
-      <div class="bar row">
-        <label class="upbtn">
-          {uploading ? 'uploading...' : 'Upload jar'}
-          <input type="file" accept=".jar" onchange={onUploadJar} disabled={uploading} hidden />
+      <DropZone
+        accept=".jar"
+        label={uploading ? t('cache.uploading') : t('cache.drop')}
+        busy={uploading}
+        onFiles={onDropJars}
+      />
+      <div class="cache-bar">
+        <input class="search" bind:value={cacheQ} placeholder={t('cache.search')} />
+        <label class="orphan-toggle">
+          <input type="checkbox" bind:checked={cacheOrphansOnly} />
+          {t('cache.orphansOnly')}
         </label>
+        <span class="grow-r muted mono">
+          {t('cache.count', { count: cache.length, size: fmtBytes(cacheBytes) })}
+        </span>
         {#if upMsg}<span class="muted mono">{upMsg}</span>{/if}
-      </div>
-      <div class="cache-head muted">
-        {cache.length} jars, {fmtBytes(cacheBytes)} total
       </div>
       <div class="panel">
         <table>
           <thead>
-            <tr><th>sha1</th><th style="width:140px">size</th><th style="width:90px"></th></tr>
+            <tr>
+              <th>{t('cache.col.name')}</th>
+              <th>{t('cache.col.usedBy')}</th>
+              <th style="width:120px">{t('cache.col.size')}</th>
+              <th style="width:90px"></th>
+            </tr>
           </thead>
           <tbody>
-            {#each cache as c}
+            {#each shownCache as c (c.sha1)}
               <tr>
-                <td class="mono">{c.sha1}</td>
+                <td>
+                  <div class="row gap">
+                    <span>{nameOfCache(c) || t('cache.noName')}</span>
+                    {#if c.uses.length === 0}<span class="tag orphan">{t('cache.orphan')}</span>{/if}
+                  </div>
+                  <div class="faint mono">{c.sha1}</div>
+                </td>
+                <td>
+                  {#each usedByCache(c) as pid}<span class="tag">{pid}</span> {/each}
+                </td>
                 <td class="mono">{fmtBytes(c.size_bytes)}</td>
                 <td class="actions">
-                  <button class="danger" onclick={() => delCacheJar(c.sha1)}>Delete</button>
+                  <button class="danger" onclick={() => delCacheJar(c.sha1)}>{t('common.delete')}</button>
                 </td>
               </tr>
             {/each}
-            {#if cache.length === 0 && !loading}
-              <tr><td colspan="3" class="muted">Cache is empty. Upload a jar to seed it.</td></tr>
+            {#if shownCache.length === 0 && !loading}
+              <tr>
+                <td colspan="4" class="muted">
+                  {cacheQ.trim() || cacheOrphansOnly ? t('cache.noMatch') : t('cache.empty')}
+                </td>
+              </tr>
             {/if}
           </tbody>
         </table>
       </div>
 
       {#if removed.length}
-        <h2 class="sec rm">Removed (takedown)</h2>
-        <div class="cache-head muted">
-          {removed.length} sha1{removed.length === 1 ? '' : 's'} blocked from re-ingestion (removed.txt)
-        </div>
+        <h2 class="sec rm">{t('cache.removedTitle')}</h2>
+        <div class="cache-head muted">{t('cache.removedSub', { count: removed.length })}</div>
         <div class="panel">
           <table>
             <thead><tr><th>sha1</th></tr></thead>
@@ -520,16 +564,34 @@
     padding: 5px 0;
     font-size: 13px;
   }
-  .upbtn {
-    display: inline-block;
-    font-size: 13px;
-    color: var(--fg);
-    background: var(--panel-2);
-    border: 1px solid var(--seam-bright);
-    padding: 7px 14px;
-    cursor: pointer;
+  .cache-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin: 14px 0;
   }
-  .upbtn:hover {
-    border-color: var(--accent);
+  .search {
+    flex: 1;
+    max-width: 360px;
+  }
+  .orphan-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--fg-dim);
+    white-space: nowrap;
+  }
+  .grow-r {
+    margin-left: auto;
+  }
+  .row.gap {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .tag.orphan {
+    color: var(--warn);
+    border-color: color-mix(in srgb, var(--warn) 45%, transparent);
   }
 </style>

@@ -122,6 +122,24 @@ export const en = {
   'gh.asset': 'Asset (file name)',
   'gh.add': 'Download and add',
   'gh.adding': 'downloading...',
+
+  'cache.drop': 'Drop .jar files here, or click to choose',
+  'cache.uploading': 'Uploading...',
+  'cache.uploaded': 'Uploaded {count}',
+  'cache.search': 'Filter by name, sha1 or pack...',
+  'cache.orphansOnly': 'Orphans only',
+  'cache.count': '{count} jars · {size}',
+  'cache.col.name': 'Name',
+  'cache.col.usedBy': 'Used by',
+  'cache.col.size': 'Size',
+  'cache.noName': '(no name)',
+  'cache.orphan': 'orphan',
+  'cache.empty': 'Cache is empty. Drop a jar to seed it.',
+  'cache.noMatch': 'Nothing matches.',
+  'cache.deleteTitle': 'Delete cache jar',
+  'cache.deleteMsg': 'Delete {name}? It is added to the takedown list and cannot be re-uploaded.',
+  'cache.removedTitle': 'Removed (takedown)',
+  'cache.removedSub': '{count} sha1 blocked from re-ingestion',
 } as const;
 
 export type Dict = Record<keyof typeof en, string>;
