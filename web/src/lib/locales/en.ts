@@ -174,6 +174,12 @@ export const en = {
   'be.empty': 'No assets uploaded yet.',
   'be.deleteTitle': 'Delete asset',
   'be.deleteMsg': 'Delete {file}?',
+
+  'crop.titleIcon': 'Crop icon',
+  'crop.titleBanner': 'Crop banner',
+  'crop.hint': 'Drag to move, slider to zoom',
+  'crop.zoom': 'Zoom',
+  'crop.apply': 'Apply',
 } as const;
 
 export type Dict = Record<keyof typeof en, string>;

@@ -173,4 +173,10 @@ export const ru: Dict = {
   'be.empty': 'Ассетов пока нет.',
   'be.deleteTitle': 'Удалить ассет',
   'be.deleteMsg': 'Удалить {file}?',
+
+  'crop.titleIcon': 'Обрезка иконки',
+  'crop.titleBanner': 'Обрезка баннера',
+  'crop.hint': 'Тяни мышкой, ползунок — масштаб',
+  'crop.zoom': 'Масштаб',
+  'crop.apply': 'Применить',
 };

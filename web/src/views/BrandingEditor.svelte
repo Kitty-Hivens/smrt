@@ -3,6 +3,7 @@
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
   import DropZone from './ui/DropZone.svelte';
+  import ImageCropper from './ImageCropper.svelte';
 
   let { packId }: { packId: string } = $props();
 
@@ -13,6 +14,9 @@
   let files = $state<string[]>([]);
   let busy = $state(false);
   let err = $state('');
+  // a raster icon/banner drop opens the cropper before upload
+  let crop = $state<{ file: File; aspect: number; target: 'icon' | 'banner' } | null>(null);
+  const RASTER = /^image\/(png|jpeg|webp|gif)$/;
 
   async function load() {
     err = '';
@@ -35,21 +39,51 @@
     return `_nexira/${file.name}`;
   }
 
-  async function onDrop(dropped: File[]) {
-    // icon / banner are single-target; an asset drop may carry many
-    const list = dest === 'asset' ? dropped : dropped.slice(0, 1);
+  async function uploadOne(relPath: string, data: File | Blob) {
     busy = true;
     err = '';
     try {
-      for (const file of list) {
-        await api.uploadStatic(packId, destFor(file), file);
-      }
+      const name = relPath.split('/').pop() || 'file';
+      const f = data instanceof File ? data : new File([data], name, { type: data.type });
+      await api.uploadStatic(packId, relPath, f);
       await load();
     } catch (x) {
       err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
     } finally {
       busy = false;
     }
+  }
+
+  async function onDrop(dropped: File[]) {
+    if (dest === 'asset') {
+      // an asset drop may carry many; no crop
+      busy = true;
+      err = '';
+      try {
+        for (const file of dropped) await api.uploadStatic(packId, destFor(file), file);
+        await load();
+      } catch (x) {
+        err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+      } finally {
+        busy = false;
+      }
+      return;
+    }
+    // icon / banner: crop a raster image first; svg / non-raster goes as-is
+    const file = dropped[0];
+    if (!file) return;
+    if (RASTER.test(file.type)) {
+      crop = { file, aspect: dest === 'icon' ? 1 : 3, target: dest };
+    } else {
+      await uploadOne(destFor(file), file);
+    }
+  }
+
+  function onCropApply(blob: Blob, ext: string) {
+    if (!crop) return;
+    const relPath = `_nexira/${crop.target}.${ext}`;
+    crop = null;
+    uploadOne(relPath, blob);
   }
 
   async function del(f: string) {
@@ -126,6 +160,17 @@
   {/each}
   {#if files.length === 0}<div class="muted">{t('be.empty')}</div>{/if}
 </div>
+
+{#if crop}
+  <ImageCropper
+    file={crop.file}
+    aspect={crop.aspect}
+    maxOut={crop.target === 'icon' ? 512 : 1500}
+    title={crop.target === 'icon' ? t('crop.titleIcon') : t('crop.titleBanner')}
+    onApply={onCropApply}
+    onCancel={() => (crop = null)}
+  />
+{/if}
 
 <style>
   .hint {
