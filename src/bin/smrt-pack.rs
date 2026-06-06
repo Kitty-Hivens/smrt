@@ -189,6 +189,33 @@ enum RegistryCmd {
         #[arg(long, default_value = "/var/lib/smrt")]
         storage: PathBuf,
     },
+    /// Mark a pack's provenance (sc | hivens) as an operator decision.
+    Provenance {
+        #[arg(long, default_value = "/var/lib/smrt")]
+        storage: PathBuf,
+        #[arg(long)]
+        pack: String,
+        #[arg(long = "as", value_parser = ["sc", "hivens"])]
+        provenance: String,
+    },
+    /// Add (or --remove) a mutual authored conflict between two mods, by modid.
+    Conflict {
+        #[arg(long, default_value = "/var/lib/smrt")]
+        storage: PathBuf,
+        #[arg(long)]
+        a: String,
+        #[arg(long)]
+        b: String,
+        #[arg(long)]
+        remove: bool,
+    },
+    /// Snapshot the registry DB to a file (VACUUM INTO).
+    Backup {
+        #[arg(long, default_value = "/var/lib/smrt")]
+        storage: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -292,6 +319,18 @@ async fn main() -> Result<()> {
             RegistryCmd::Harvest { storage } => run_registry_harvest(&storage).await,
             RegistryCmd::Stats { storage } => run_registry_stats(&storage),
             RegistryCmd::Orphans { storage } => run_registry_orphans(&storage),
+            RegistryCmd::Provenance {
+                storage,
+                pack,
+                provenance,
+            } => run_registry_provenance(&storage, &pack, &provenance),
+            RegistryCmd::Conflict {
+                storage,
+                a,
+                b,
+                remove,
+            } => run_registry_conflict(&storage, &a, &b, remove),
+            RegistryCmd::Backup { storage, out } => run_registry_backup(&storage, &out),
         },
     }
 }
@@ -335,6 +374,27 @@ fn run_registry_orphans(storage: &Path) -> Result<()> {
         );
     }
     println!("{} orphan(s)", orphans.len());
+    Ok(())
+}
+
+fn run_registry_provenance(storage: &Path, pack: &str, provenance: &str) -> Result<()> {
+    let registry = Registry::open(storage.join("registry.db"))?;
+    registry.set_provenance(pack, provenance)?;
+    info!(pack, provenance, "set pack provenance");
+    Ok(())
+}
+
+fn run_registry_conflict(storage: &Path, a: &str, b: &str, remove: bool) -> Result<()> {
+    let registry = Registry::open(storage.join("registry.db"))?;
+    registry.set_conflict(a, b, remove)?;
+    info!(a, b, remove, "set authored conflict");
+    Ok(())
+}
+
+fn run_registry_backup(storage: &Path, out: &Path) -> Result<()> {
+    let registry = Registry::open(storage.join("registry.db"))?;
+    registry.backup_into(out)?;
+    info!(out = %out.display(), "registry backup written");
     Ok(())
 }
 
