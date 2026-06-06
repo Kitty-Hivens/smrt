@@ -121,4 +121,11 @@ export const ru: Dict = {
   'gh.asset': 'Файл (имя ассета)',
   'gh.add': 'Скачать и добавить',
   'gh.adding': 'скачиваю...',
+
+  'pe.asset.resourcepack': 'Ресурспак',
+  'pe.asset.shader': 'Шейдер',
+  'pe.dropAssets': 'Перетащи сюда .zip / конфиг или нажми',
+  'mrp.search': 'Поиск на Modrinth...',
+  'mrp.searching': 'поиск...',
+  'mrp.noResults': 'Ничего не найдено.',
 };
