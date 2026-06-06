@@ -160,6 +160,20 @@ export const en = {
   'se.descHint': 'Markdown',
   'se.discord': 'Discord URL',
   'se.website': 'Website URL',
+
+  'be.hint': 'Upload pack branding and static assets, then point curator pack_meta (icon_url / banner_url / gallery_urls) at the public URL.',
+  'be.dropAs': 'Drop as',
+  'be.icon': 'Icon',
+  'be.banner': 'Banner',
+  'be.asset': 'Asset',
+  'be.dropIcon': 'Drop an image for the pack icon',
+  'be.dropBanner': 'Drop an image for the pack banner',
+  'be.dropAsset': 'Drop images or files, saved by their own name',
+  'be.formats': 'Images: png, jpg, webp, gif, svg',
+  'be.open': 'open',
+  'be.empty': 'No assets uploaded yet.',
+  'be.deleteTitle': 'Delete asset',
+  'be.deleteMsg': 'Delete {file}?',
 } as const;
 
 export type Dict = Record<keyof typeof en, string>;

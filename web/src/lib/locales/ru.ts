@@ -159,4 +159,18 @@ export const ru: Dict = {
   'se.descHint': 'Markdown',
   'se.discord': 'Discord URL',
   'se.website': 'URL сайта',
+
+  'be.hint': 'Загрузи оформление и статичные ассеты пака, затем укажи публичный URL в pack_meta куратора (icon_url / banner_url / gallery_urls).',
+  'be.dropAs': 'Куда',
+  'be.icon': 'Иконка',
+  'be.banner': 'Баннер',
+  'be.asset': 'Ассет',
+  'be.dropIcon': 'Перетащи картинку для иконки пака',
+  'be.dropBanner': 'Перетащи картинку для баннера пака',
+  'be.dropAsset': 'Перетащи картинки или файлы, сохранятся под своими именами',
+  'be.formats': 'Картинки: png, jpg, webp, gif, svg',
+  'be.open': 'открыть',
+  'be.empty': 'Ассетов пока нет.',
+  'be.deleteTitle': 'Удалить ассет',
+  'be.deleteMsg': 'Удалить {file}?',
 };
