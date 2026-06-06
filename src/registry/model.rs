@@ -81,23 +81,24 @@ pub struct OrphanJar {
     pub filename: Option<String>,
 }
 
-/// Q3: one version of a mod.
+/// Q3: one version of a mod, with every loader it targets (`any` for a
+/// loader-agnostic jar).
 #[derive(Debug, Clone, Serialize)]
 pub struct VersionRow {
     pub version: String,
-    pub target: String,
+    pub targets: Vec<String>,
     pub sha1: String,
     pub size_bytes: i64,
     pub source: String,
 }
 
-/// Q4: an artifact eligible for a build loader, with specificity (0 exact,
-/// 1 ancestor/family, 2 any) so the most-specific row per mod wins.
+/// Q4: an artifact eligible for a build loader, with its best-match specificity
+/// (0 exact, 1 ancestor/family, 2 any) across the artifact's targets so the
+/// most-specific artifact per mod wins.
 #[derive(Debug, Clone, Serialize)]
 pub struct EligibleArtifact {
     pub mod_id: i64,
     pub version: String,
-    pub target: String,
     pub sha1: String,
     pub specificity: i64,
 }

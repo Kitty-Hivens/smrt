@@ -116,7 +116,8 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
             continue;
         }
         let mod_id = upsert::upsert_mod_by_alias(conn, &aliases, now)?;
-        let target = jar.loaders.first().map(String::as_str).unwrap_or("any");
+        // every loader the artifact suits; empty -> 'any' (handled downstream)
+        let targets: Vec<&str> = jar.loaders.iter().map(String::as_str).collect();
         let version = jar.version.as_deref().unwrap_or("unknown");
         let mc_versions = if jar.mc_versions.is_empty() {
             None
@@ -127,7 +128,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
             conn,
             mod_id,
             version,
-            target,
+            &targets,
             &jar.sha1,
             jar.size_bytes,
             jar.filename.as_deref(),
@@ -491,5 +492,81 @@ mod tests {
             "jei".into(),
         ]);
         assert_eq!(got, vec!["appleskin".to_string(), "jei".to_string()]);
+    }
+
+    fn jar(sha: &str, modid: &str, version: Option<&str>, loaders: Vec<String>) -> JarSeed {
+        JarSeed {
+            sha1: sha.into(),
+            size_bytes: 1,
+            modid: Some(modid.into()),
+            version: version.map(Into::into),
+            project_id: None,
+            loaders,
+            mc_versions: vec![],
+            requires: vec![],
+            filename: Some(format!("{sha}.jar")),
+        }
+    }
+
+    // #1: two distinct jars of one mod with no version metadata both become
+    // version='unknown'; the old UNIQUE(mod_id, version, target) crashed the
+    // harvest on the second. sha1 is the only identity now.
+    #[test]
+    fn write_scan_allows_two_unversioned_jars_of_one_mod() {
+        let r = Registry::open_in_memory().unwrap();
+        let scan = ScanData {
+            jars: vec![
+                jar("sha_x", "dup", None, vec!["forge".into()]),
+                jar("sha_y", "dup", None, vec!["forge".into()]),
+            ],
+            packs: vec![],
+        };
+        let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        assert_eq!(rep.mods, 1, "same modid -> one identity");
+        assert_eq!(rep.mod_versions, 2, "two distinct jars are two artifacts");
+    }
+
+    // #2: a jar published for several loaders records every target; an empty
+    // loader set falls back to 'any'; a re-harvest replaces the set, not appends.
+    #[test]
+    fn write_scan_records_target_set_with_any_fallback_and_replace() {
+        let r = Registry::open_in_memory().unwrap();
+        let scan = ScanData {
+            jars: vec![
+                jar(
+                    "sha_multi",
+                    "multi",
+                    Some("1"),
+                    vec!["forge".into(), "fabric".into()],
+                ),
+                jar("sha_any", "tweak", Some("1"), vec![]),
+            ],
+            packs: vec![],
+        };
+        r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        r.with_conn(|c| {
+            let mut multi = queries::versions_of_mod(c, "modid", "multi")?[0]
+                .targets
+                .clone();
+            multi.sort();
+            assert_eq!(multi, vec!["fabric".to_string(), "forge".to_string()]);
+            let tweak = queries::versions_of_mod(c, "modid", "tweak")?;
+            assert_eq!(tweak[0].targets, vec!["any".to_string()], "empty -> any");
+            Ok(())
+        })
+        .unwrap();
+
+        // upstream dropped fabric support: the set shrinks, doesn't accumulate
+        let scan2 = ScanData {
+            jars: vec![jar("sha_multi", "multi", Some("1"), vec!["forge".into()])],
+            packs: vec![],
+        };
+        r.with_txn(|c| write_scan(c, &scan2, "T1")).unwrap();
+        r.with_conn(|c| {
+            let multi = queries::versions_of_mod(c, "modid", "multi")?;
+            assert_eq!(multi[0].targets, vec!["forge".to_string()], "set replaced");
+            Ok(())
+        })
+        .unwrap();
     }
 }
