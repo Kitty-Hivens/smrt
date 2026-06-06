@@ -332,7 +332,9 @@ struct GithubIngest {
 }
 
 fn safe_seg(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '+'))
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '+'))
 }
 
 // Fetch a GitHub release asset server-side and cache it by content hash, so a
