@@ -154,7 +154,7 @@
 
   async function newPack() {
     const id = (
-      await dialogs.prompt('New pack id (letters, digits, - _ .):', { title: 'New pack' })
+      await dialogs.prompt(t('packs.newPrompt'), { title: t('packs.new') })
     )?.trim();
     if (id) packEdit = id;
   }
@@ -264,33 +264,49 @@
         {/key}
       {:else}
         <div class="bar">
-          <button class="primary" onclick={newPack}>New pack</button>
+          <button class="primary" onclick={newPack}>{t('packs.new')}</button>
         </div>
         <div class="panel">
           <table>
             <thead>
-              <tr><th>Pack</th><th>MC</th><th>Latest</th><th>Tags</th><th>Flags</th><th style="width:80px"></th></tr>
+              <tr>
+                <th>{t('packs.col.pack')}</th>
+                <th>{t('packs.col.mc')}</th>
+                <th>{t('packs.col.latest')}</th>
+                <th>{t('packs.col.tags')}</th>
+                <th>{t('packs.col.flags')}</th>
+              </tr>
             </thead>
             <tbody>
               {#each allPackIds as id}
                 {@const p = summaryFor(id)}
-                <tr>
+                <tr
+                  class="clickable"
+                  role="button"
+                  tabindex="0"
+                  onclick={() => (packEdit = id)}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      packEdit = id;
+                    }
+                  }}
+                >
                   <td>
                     <div>{p?.display_name ?? id}</div>
                     <div class="faint mono">{id}</div>
                   </td>
                   <td class="mono">{p?.minecraft_version ?? '-'}</td>
-                  <td class="mono">{p?.latest_pack_version ?? '(unbuilt)'}</td>
-                  <td>{#each p?.tags ?? [] as t}<span class="tag">{t}</span> {/each}</td>
+                  <td class="mono">{p?.latest_pack_version ?? t('packs.unbuilt')}</td>
+                  <td>{#each p?.tags ?? [] as tg}<span class="tag">{tg}</span> {/each}</td>
                   <td>
-                    {#if p?.featured}<span class="tag" style="color:var(--accent)">featured</span>{/if}
-                    {#if authoringSet.has(id)}<span class="tag" style="color:var(--ok)">authoring</span>{/if}
+                    {#if p?.featured}<span class="tag" style="color:var(--accent)">{t('packs.flag.featured')}</span>{/if}
+                    {#if authoringSet.has(id)}<span class="tag" style="color:var(--ok)">{t('packs.flag.authoring')}</span>{/if}
                   </td>
-                  <td class="actions"><button onclick={() => (packEdit = id)}>Edit</button></td>
                 </tr>
               {/each}
               {#if allPackIds.length === 0 && !loading}
-                <tr><td colspan="6" class="muted">No packs yet. Create one or bootstrap from an SC archive.</td></tr>
+                <tr><td colspan="5" class="muted">{t('packs.empty')}</td></tr>
               {/if}
             </tbody>
           </table>
@@ -443,6 +459,13 @@
   }
   .body {
     min-width: 0;
+  }
+  tr.clickable {
+    cursor: pointer;
+  }
+  tr.clickable:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
   .err {
     color: var(--danger);

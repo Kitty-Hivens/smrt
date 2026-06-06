@@ -27,6 +27,18 @@ export const en = {
   'dialog.ok': 'OK',
   'dialog.cancel': 'Cancel',
   'dialog.delete': 'Delete',
+
+  'packs.new': 'New pack',
+  'packs.newPrompt': 'New pack id (letters, digits, - _ .):',
+  'packs.col.pack': 'Pack',
+  'packs.col.mc': 'MC',
+  'packs.col.latest': 'Latest',
+  'packs.col.tags': 'Tags',
+  'packs.col.flags': 'Flags',
+  'packs.unbuilt': '(unbuilt)',
+  'packs.flag.featured': 'featured',
+  'packs.flag.authoring': 'editable',
+  'packs.empty': 'No packs yet. Create one or bootstrap from an SC archive.',
 } as const;
 
 export type Dict = Record<keyof typeof en, string>;

@@ -26,4 +26,16 @@ export const ru: Dict = {
   'dialog.ok': 'ОК',
   'dialog.cancel': 'Отмена',
   'dialog.delete': 'Удалить',
+
+  'packs.new': 'Новый пак',
+  'packs.newPrompt': 'ID нового пака (буквы, цифры, - _ .):',
+  'packs.col.pack': 'Пак',
+  'packs.col.mc': 'MC',
+  'packs.col.latest': 'Последняя',
+  'packs.col.tags': 'Теги',
+  'packs.col.flags': 'Флаги',
+  'packs.unbuilt': '(не собран)',
+  'packs.flag.featured': 'рекомендуемый',
+  'packs.flag.authoring': 'редактируемый',
+  'packs.empty': 'Паков пока нет. Создай или загрузи из SC-архива.',
 };
