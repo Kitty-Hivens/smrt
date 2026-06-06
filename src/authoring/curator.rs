@@ -728,6 +728,12 @@ pub async fn apply_extras(
     for em in extras_mods {
         match resolve_modrinth_latest_for_mc(modrinth, &em.slug, mc_version).await {
             Ok((project_id, version_id, filename)) => {
+                // idempotent: re-running the curator over an already-built pack
+                // (e.g. a reconstructed, post-curator config) must not duplicate
+                // an extra that is already declared
+                if config.mods.iter().any(|m| m.filename == filename) {
+                    continue;
+                }
                 let display = Some(Display {
                     name: em
                         .name_override
@@ -761,6 +767,11 @@ pub async fn apply_extras(
     for ea in extras_assets {
         match resolve_modrinth_latest_for_mc(modrinth, &ea.slug, mc_version).await {
             Ok((project_id, version_id, filename)) => {
+                let dest = format!("{}/{}", ea.dest_dir.trim_end_matches('/'), filename);
+                // idempotent: skip an extra asset already declared in the config
+                if config.assets.iter().any(|a| a.dest == dest) {
+                    continue;
+                }
                 let display = Some(Display {
                     name: ea
                         .name_override
@@ -779,7 +790,6 @@ pub async fn apply_extras(
                     role: None,
                     requires: Vec::new(),
                 });
-                let dest = format!("{}/{}", ea.dest_dir.trim_end_matches('/'), filename);
                 config.assets.push(crate::domain::DeclaredAsset {
                     dest,
                     required: ea.required,
