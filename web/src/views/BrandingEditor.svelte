@@ -1,13 +1,22 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
+  import { t } from '../lib/i18n.svelte';
+  import DropZone from './ui/DropZone.svelte';
+  import ImageCropper from './ImageCropper.svelte';
 
   let { packId }: { packId: string } = $props();
 
+  // where a dropped file lands: the two branding images get stable names so the
+  // curator URL stays put; everything else keeps its own filename
+  type Dest = 'icon' | 'banner' | 'asset';
+  let dest = $state<Dest>('asset');
   let files = $state<string[]>([]);
-  let relPath = $state('_nexira/icon.png');
   let busy = $state(false);
   let err = $state('');
+  // a raster icon/banner drop opens the cropper before upload
+  let crop = $state<{ file: File; aspect: number; target: 'icon' | 'banner' } | null>(null);
+  const RASTER = /^image\/(png|jpeg|webp|gif)$/;
 
   async function load() {
     err = '';
@@ -22,26 +31,64 @@
   }
   load();
 
-  async function onUpload(e: Event) {
-    const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file || !relPath.trim()) return;
+  const ext = (name: string) => name.split('.').pop()?.toLowerCase() || 'png';
+
+  function destFor(file: File): string {
+    if (dest === 'icon') return `_nexira/icon.${ext(file.name)}`;
+    if (dest === 'banner') return `_nexira/banner.${ext(file.name)}`;
+    return `_nexira/${file.name}`;
+  }
+
+  async function uploadOne(relPath: string, data: File | Blob) {
     busy = true;
     err = '';
     try {
-      await api.uploadStatic(packId, relPath.trim(), file);
+      const name = relPath.split('/').pop() || 'file';
+      const f = data instanceof File ? data : new File([data], name, { type: data.type });
+      await api.uploadStatic(packId, relPath, f);
       await load();
     } catch (x) {
       err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
     } finally {
       busy = false;
-      input.value = '';
     }
   }
 
+  async function onDrop(dropped: File[]) {
+    if (dest === 'asset') {
+      // an asset drop may carry many; no crop
+      busy = true;
+      err = '';
+      try {
+        for (const file of dropped) await api.uploadStatic(packId, destFor(file), file);
+        await load();
+      } catch (x) {
+        err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+      } finally {
+        busy = false;
+      }
+      return;
+    }
+    // icon / banner: crop a raster image first; svg / non-raster goes as-is
+    const file = dropped[0];
+    if (!file) return;
+    if (RASTER.test(file.type)) {
+      crop = { file, aspect: dest === 'icon' ? 1 : 3, target: dest };
+    } else {
+      await uploadOne(destFor(file), file);
+    }
+  }
+
+  function onCropApply(blob: Blob, ext: string) {
+    if (!crop) return;
+    const relPath = `_nexira/${crop.target}.${ext}`;
+    crop = null;
+    uploadOne(relPath, blob);
+  }
+
   async function del(f: string) {
-    const ok = await dialogs.confirm(`Delete static asset "${f}"?`, {
-      title: 'Delete asset',
+    const ok = await dialogs.confirm(t('be.deleteMsg', { file: f }), {
+      title: t('be.deleteTitle'),
       danger: true,
     });
     if (!ok) return;
@@ -54,21 +101,43 @@
   }
 
   const isImage = (f: string) => /\.(png|jpe?g|gif|webp|svg)$/i.test(f);
+
+  const modes: Dest[] = ['icon', 'banner', 'asset'];
+  const modeKey: Record<Dest, Parameters<typeof t>[0]> = {
+    icon: 'be.icon',
+    banner: 'be.banner',
+    asset: 'be.asset',
+  };
+  const dropLabel = $derived(
+    busy
+      ? t('pe.uploading')
+      : dest === 'icon'
+        ? t('be.dropIcon')
+        : dest === 'banner'
+          ? t('be.dropBanner')
+          : t('be.dropAsset'),
+  );
 </script>
 
-<p class="muted hint">
-  Pack branding + static assets (icon / banner / gallery / configs). Upload here,
-  then reference the public URL in curator <span class="mono">pack_meta</span>
-  (icon_url / banner_url / gallery_urls).
-</p>
+<p class="muted hint">{t('be.hint')}</p>
 
-<div class="up panel">
-  <label class="path">destination path<input class="mono" bind:value={relPath} placeholder="_nexira/icon.png" /></label>
-  <label class="upbtn">
-    {busy ? 'uploading...' : 'Choose file + upload'}
-    <input type="file" onchange={onUpload} disabled={busy || !relPath.trim()} hidden />
-  </label>
+<div class="modes" role="group" aria-label={t('be.dropAs')}>
+  <span class="ml">{t('be.dropAs')}</span>
+  {#each modes as m}
+    <button class="mode" class:active={dest === m} aria-pressed={dest === m} onclick={() => (dest = m)}>
+      {t(modeKey[m])}
+    </button>
+  {/each}
 </div>
+
+<DropZone
+  label={dropLabel}
+  accept={dest === 'asset' ? undefined : 'image/*'}
+  multiple={dest === 'asset'}
+  {busy}
+  onFiles={onDrop}
+/>
+<div class="formats faint">{t('be.formats')}</div>
 
 {#if err}<div class="err mono">{err}</div>{/if}
 
@@ -83,58 +152,72 @@
       <div class="meta">
         <div class="fn mono" title={f}>{f}</div>
         <div class="row2">
-          <a class="mono" href={api.staticUrl(packId, f)} target="_blank" rel="noreferrer">open</a>
-          <button class="danger sm" onclick={() => del(f)}>delete</button>
+          <a class="mono" href={api.staticUrl(packId, f)} target="_blank" rel="noreferrer">{t('be.open')}</a>
+          <button class="danger sm" onclick={() => del(f)}>{t('common.delete')}</button>
         </div>
       </div>
     </div>
   {/each}
-  {#if files.length === 0}<div class="muted">No static assets uploaded yet.</div>{/if}
+  {#if files.length === 0}<div class="muted">{t('be.empty')}</div>{/if}
 </div>
+
+{#if crop}
+  <ImageCropper
+    file={crop.file}
+    aspect={crop.aspect}
+    maxOut={crop.target === 'icon' ? 512 : 1500}
+    title={crop.target === 'icon' ? t('crop.titleIcon') : t('crop.titleBanner')}
+    onApply={onCropApply}
+    onCancel={() => (crop = null)}
+  />
+{/if}
 
 <style>
   .hint {
     font-size: 12px;
-    margin: 0 0 14px;
+    margin: 0 0 var(--space-3);
     max-width: 720px;
+    line-height: 1.5;
   }
-  .up {
+  .modes {
     display: flex;
-    align-items: flex-end;
-    gap: 14px;
-    padding: 14px;
-    margin-bottom: 16px;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
   }
-  .path {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
+  .ml {
     font-size: 12px;
     color: var(--fg-dim);
-    flex: 1;
+    margin-right: var(--space-1);
   }
-  .upbtn {
-    display: inline-block;
-    font-size: 13px;
-    color: var(--fg);
-    background: var(--panel-2);
-    border: 1px solid var(--seam-bright);
-    padding: 8px 14px;
-    cursor: pointer;
-    white-space: nowrap;
+  .mode {
+    padding: 5px 12px;
+    font-size: 12.5px;
+    color: var(--fg-dim);
+    background: transparent;
   }
-  .upbtn:hover {
-    border-color: var(--accent);
+  .mode.active {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    border-color: var(--accent-dim);
+  }
+  .formats {
+    font-size: 11px;
+    margin: var(--space-2) 0 var(--space-4);
   }
   .err {
     color: var(--danger);
+    background: var(--danger-soft);
+    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+    border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3);
     font-size: 12px;
-    margin-bottom: 12px;
+    margin-bottom: var(--space-3);
   }
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 12px;
+    gap: var(--space-3);
   }
   .card {
     overflow: hidden;

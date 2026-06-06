@@ -22,7 +22,6 @@
     overview: 'nav.overview',
     packs: 'nav.packs',
     servers: 'nav.servers',
-    featured: 'nav.featured',
     cache: 'nav.cache',
   };
 </script>

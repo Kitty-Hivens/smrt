@@ -1,6 +1,9 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { api, ApiError } from '../lib/api';
+  import { t } from '../lib/i18n.svelte';
+  import Section from './ui/Section.svelte';
+  import Field from './ui/Field.svelte';
   import type { ServerEntry } from '../lib/types';
 
   let {
@@ -73,51 +76,79 @@
   }
 </script>
 
-<form class="panel editor" onsubmit={save}>
+<form class="editor" onsubmit={save}>
   <div class="hd">
-    <h2 class="ttl">{isNew ? 'New server' : `Edit ${f.server_id}`}</h2>
+    <h2 class="ttl">{isNew ? t('servers.new') : t('se.edit', { id: f.server_id })}</h2>
     <div class="spacer"></div>
-    <button type="button" onclick={onCancel}>Cancel</button>
+    <button type="button" onclick={onCancel}>{t('dialog.cancel')}</button>
     <button class="primary" type="submit" disabled={busy || !f.server_id || !f.pack_id}>
-      {busy ? 'saving...' : 'Save'}
+      {busy ? t('se.saving') : isNew ? t('se.create') : t('se.save')}
     </button>
   </div>
   {#if err}<div class="err mono">{err}</div>{/if}
-  <div class="grid">
-    <label>
-      server_id
-      <input bind:value={f.server_id} disabled={!isNew} placeholder="main" />
-    </label>
-    <label>
-      pack_id
-      <input bind:value={f.pack_id} list="packids" placeholder="Industrial" />
-      <datalist id="packids">{#each packIds as p}<option value={p}></option>{/each}</datalist>
-    </label>
-    <label>display_name<input bind:value={f.display_name} /></label>
-    <label>owner_display<input bind:value={f.owner_display} /></label>
-    <label class="wide">tagline<input bind:value={f.tagline} /></label>
-    <label class="wide">banner_url<input bind:value={f.banner_url} placeholder="https://..." /></label>
-    <label class="wide">tags (comma-separated)<input bind:value={tagsStr} placeholder="tech, economy" /></label>
-    <label>discord_url<input bind:value={f.discord_url} placeholder="https://discord.gg/..." /></label>
-    <label>website_url<input bind:value={f.website_url} placeholder="https://..." /></label>
-    <label class="wide">
-      description_md
-      <textarea rows="5" bind:value={f.description_md}></textarea>
-    </label>
-    <label class="chk"><input type="checkbox" bind:checked={f.featured} /> featured</label>
-  </div>
+
+  <Section title={t('pe.basics')}>
+    <div class="grid">
+      <Field label={t('se.serverId')} hint={t('se.serverIdHint')}>
+        <input bind:value={f.server_id} disabled={!isNew} placeholder="main" />
+      </Field>
+      <Field label={t('packs.col.pack')}>
+        <input bind:value={f.pack_id} list="packids" placeholder="Industrial" />
+        <datalist id="packids">{#each packIds as p}<option value={p}></option>{/each}</datalist>
+      </Field>
+      <Field label={t('pe.displayName')}>
+        <input bind:value={f.display_name} />
+      </Field>
+      <Field label={t('servers.col.owner')}>
+        <input bind:value={f.owner_display} />
+      </Field>
+      <label class="chk">
+        <input type="checkbox" bind:checked={f.featured} />
+        {t('pe.featured')}
+      </label>
+    </div>
+  </Section>
+
+  <Section title={t('se.card')}>
+    <div class="grid">
+      <Field label={t('pe.tagline')} wide>
+        <input bind:value={f.tagline} />
+      </Field>
+      <Field label={t('se.banner')} wide>
+        <input bind:value={f.banner_url} placeholder="https://..." />
+      </Field>
+      <Field label={t('pe.tags')} hint={t('pe.tagsHint')} wide>
+        <input bind:value={tagsStr} placeholder="tech, economy" />
+      </Field>
+      <Field label={t('se.description')} hint={t('se.descHint')} wide>
+        <textarea rows="5" bind:value={f.description_md}></textarea>
+      </Field>
+    </div>
+  </Section>
+
+  <Section title={t('se.links')}>
+    <div class="grid">
+      <Field label={t('se.discord')}>
+        <input bind:value={f.discord_url} placeholder="https://discord.gg/..." />
+      </Field>
+      <Field label={t('se.website')}>
+        <input bind:value={f.website_url} placeholder="https://..." />
+      </Field>
+    </div>
+  </Section>
 </form>
 
 <style>
   .editor {
-    padding: 18px;
-    margin-bottom: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
   }
   .hd {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 14px;
+    gap: var(--space-3);
   }
   .ttl {
     font-size: 15px;
@@ -127,28 +158,23 @@
   }
   .err {
     color: var(--danger);
+    background: var(--danger-soft);
+    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3) var(--space-4);
     font-size: 12px;
-    margin-bottom: 12px;
   }
   .grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 12px 16px;
+    gap: var(--space-3) var(--space-4);
   }
-  label {
+  .chk {
     display: flex;
-    flex-direction: column;
-    gap: 5px;
-    font-size: 12px;
-    color: var(--fg-dim);
-  }
-  label.wide {
-    grid-column: 1 / -1;
-  }
-  label.chk {
-    flex-direction: row;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
+    font-size: 13px;
     color: var(--fg);
+    grid-column: 1 / -1;
   }
 </style>
