@@ -294,7 +294,9 @@
                 >
                   <td>
                     <div>{p?.display_name ?? id}</div>
-                    <div class="faint mono">{id}</div>
+                    {#if (p?.display_name ?? id) !== id}
+                      <div class="faint mono">{id}</div>
+                    {/if}
                   </td>
                   <td class="mono">{p?.minecraft_version ?? '-'}</td>
                   <td class="mono">{p?.latest_pack_version ?? t('packs.unbuilt')}</td>
