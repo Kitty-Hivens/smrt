@@ -2,12 +2,12 @@
 //! connection sits behind a `std::sync::Mutex` and every caller runs its closure
 //! inside `tokio::task::spawn_blocking` (same idiom as the unzip/build paths).
 
-use anyhow::{Context, Result};
-use rusqlite::Connection;
+use anyhow::{Context, Result, bail};
+use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
 
-use super::migrations;
+use super::{authored, migrations, queries, upsert};
 
 pub struct Registry {
     conn: Mutex<Connection>,
@@ -65,5 +65,43 @@ impl Registry {
         let out = f(&tx)?;
         tx.commit().context("commit registry txn")?;
         Ok(out)
+    }
+
+    // ── authored moderation API (the precious layer; CLI + admin HTTP) ──────
+
+    /// Set a pack's provenance as an operator decision (`source='authored'`,
+    /// preserved across re-harvests). Blocking; wrap in `spawn_blocking` from
+    /// async callers.
+    pub fn set_provenance(&self, pack_id: &str, provenance: &str) -> Result<()> {
+        if provenance != "sc" && provenance != "hivens" {
+            bail!("provenance must be 'sc' or 'hivens'");
+        }
+        let now = upsert::now_rfc3339();
+        self.with_txn(|c| authored::set_pack_provenance(c, pack_id, provenance, &now))
+    }
+
+    /// Add or remove a mutual authored conflict between two mods (by modid).
+    /// Both mods must already be in the registry (harvest first).
+    pub fn set_conflict(&self, a_modid: &str, b_modid: &str, remove: bool) -> Result<()> {
+        let now = upsert::now_rfc3339();
+        self.with_txn(|c| {
+            let a = queries::mod_id_for_alias(c, "modid", a_modid)?.ok_or_else(|| {
+                anyhow::anyhow!("mod '{a_modid}' not in registry (harvest first)")
+            })?;
+            let b = queries::mod_id_for_alias(c, "modid", b_modid)?.ok_or_else(|| {
+                anyhow::anyhow!("mod '{b_modid}' not in registry (harvest first)")
+            })?;
+            authored::set_authored_conflict(c, a, a_modid, b, b_modid, &now, remove)
+        })
+    }
+
+    /// Snapshot the whole DB to `dest` via `VACUUM INTO` (a single-file backup
+    /// of the precious authored rows). Blocking.
+    pub fn backup_into(&self, dest: &Path) -> Result<()> {
+        let guard = self.conn.lock().expect("registry mutex poisoned");
+        guard
+            .execute("VACUUM INTO ?1", params![dest.to_string_lossy().as_ref()])
+            .with_context(|| format!("VACUUM INTO {}", dest.display()))?;
+        Ok(())
     }
 }

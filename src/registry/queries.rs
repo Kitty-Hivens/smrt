@@ -80,37 +80,51 @@ pub fn orphan_jars(conn: &Connection) -> Result<Vec<OrphanJar>> {
     Ok(rows)
 }
 
-/// Q3 -- all versions of the mod identified by `(alias_source, key)`.
+/// Q3 -- all versions of the mod identified by `(alias_source, key)`, each with
+/// its full target set folded in from `mod_version_target`.
 pub fn versions_of_mod(
     conn: &Connection,
     alias_source: &str,
     external_key: &str,
 ) -> Result<Vec<VersionRow>> {
     let mut stmt = conn.prepare(
-        "SELECT mv.version, mv.target, mv.sha1, mv.size_bytes, mv.source
+        "SELECT mv.id, mv.version, mv.sha1, mv.size_bytes, mv.source, mvt.target
          FROM mod_alias a
          JOIN mod_version mv ON mv.mod_id = a.mod_id
+         LEFT JOIN mod_version_target mvt ON mvt.mod_version_id = mv.id
          WHERE a.source = ?1 AND a.external_key = ?2
-         ORDER BY mv.version, mv.target",
+         ORDER BY mv.version, mv.id, mvt.target",
     )?;
-    let rows = stmt
-        .query_map(params![alias_source, external_key], |r| {
-            Ok(VersionRow {
-                version: r.get(0)?,
-                target: r.get(1)?,
+    // rows for one artifact are contiguous (ORDER BY mv.id); fold targets in
+    let mut out: Vec<VersionRow> = Vec::new();
+    let mut cur_id: Option<i64> = None;
+    let mut rows = stmt.query(params![alias_source, external_key])?;
+    while let Some(r) = rows.next()? {
+        let id: i64 = r.get(0)?;
+        let target: Option<String> = r.get(5)?;
+        if cur_id != Some(id) {
+            cur_id = Some(id);
+            out.push(VersionRow {
+                version: r.get(1)?,
+                targets: Vec::new(),
                 sha1: r.get(2)?,
                 size_bytes: r.get(3)?,
                 source: r.get(4)?,
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+            });
+        }
+        if let Some(t) = target {
+            out.last_mut().unwrap().targets.push(t);
+        }
+    }
+    Ok(out)
 }
 
-/// Q4 -- artifacts eligible for a build whose loader is `loader`. Eligible iff
-/// `target = 'any'`, `target = loader`, or `loader` inherits `target` through
-/// the `loader_parent` family DAG. Ordered most-specific first per mod (the
-/// caller picks the first row per `mod_id`).
+/// Q4 -- artifacts eligible for a build whose loader is `loader`. An artifact is
+/// eligible iff one of its targets is `any`, equals `loader`, or is an ancestor
+/// `loader` inherits through the `loader_parent` family DAG. Each eligible
+/// artifact reports its best-match `specificity` (the most specific of its
+/// targets) and the result is ordered most-specific first per mod, so the caller
+/// picks the first row per `mod_id`.
 pub fn eligible_for_loader(conn: &Connection, loader: &str) -> Result<Vec<EligibleArtifact>> {
     let mut stmt = conn.prepare(
         "WITH RECURSIVE ancestors(id) AS (
@@ -119,12 +133,14 @@ pub fn eligible_for_loader(conn: &Connection, loader: &str) -> Result<Vec<Eligib
             SELECT lp.parent_id FROM loader_parent lp
             JOIN ancestors anc ON lp.child_id = anc.id
          )
-         SELECT mv.mod_id, mv.version, mv.target, mv.sha1,
-                CASE WHEN mv.target = ?1 THEN 0
-                     WHEN mv.target = 'any' THEN 2
-                     ELSE 1 END AS specificity
+         SELECT mv.mod_id, mv.version, mv.sha1,
+                MIN(CASE WHEN mvt.target = ?1 THEN 0
+                         WHEN mvt.target = 'any' THEN 2
+                         ELSE 1 END) AS specificity
          FROM mod_version mv
-         WHERE mv.target = 'any' OR mv.target IN (SELECT id FROM ancestors)
+         JOIN mod_version_target mvt ON mvt.mod_version_id = mv.id
+         WHERE mvt.target = 'any' OR mvt.target IN (SELECT id FROM ancestors)
+         GROUP BY mv.id
          ORDER BY mv.mod_id, specificity",
     )?;
     let rows = stmt
@@ -132,9 +148,8 @@ pub fn eligible_for_loader(conn: &Connection, loader: &str) -> Result<Vec<Eligib
             Ok(EligibleArtifact {
                 mod_id: r.get(0)?,
                 version: r.get(1)?,
-                target: r.get(2)?,
-                sha1: r.get(3)?,
-                specificity: r.get(4)?,
+                sha1: r.get(2)?,
+                specificity: r.get(3)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;

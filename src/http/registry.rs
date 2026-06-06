@@ -12,10 +12,11 @@ use crate::registry::model::{EligibleArtifact, ModUse, OrphanJar, RegistryStats,
 use crate::registry::queries;
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 use axum::middleware::from_fn_with_state;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -31,8 +32,30 @@ pub fn router(state: AppState) -> Router {
             "/v1/admin/registry/mods/:alias_source/:external_key/uses",
             get(get_mod_uses),
         )
+        // authored moderation (Phase 2)
+        .route(
+            "/v1/admin/registry/packs/:pack_id/provenance",
+            put(put_provenance),
+        )
+        .route("/v1/admin/registry/conflicts", post(post_conflict))
+        .route("/v1/admin/registry/backup", post(post_backup))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
         .with_state(state)
+}
+
+/// Run a blocking registry write off the async runtime.
+async fn run_write<T>(
+    state: &AppState,
+    f: impl FnOnce(&crate::registry::Registry) -> anyhow::Result<T> + Send + 'static,
+) -> Result<T, ApiError>
+where
+    T: Send + 'static,
+{
+    let reg = state.registry.clone();
+    let res = tokio::task::spawn_blocking(move || f(&reg))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("registry write task: {e}")))?;
+    Ok(res?)
 }
 
 /// Run a registry read off the async runtime (rusqlite is blocking).
@@ -98,4 +121,64 @@ async fn get_mod_uses(
         })
         .await?,
     ))
+}
+
+// ── authored moderation (Phase 2) ────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ProvenanceBody {
+    provenance: String,
+}
+
+async fn put_provenance(
+    State(state): State<AppState>,
+    Path(pack_id): Path<String>,
+    Json(body): Json<ProvenanceBody>,
+) -> Result<StatusCode, ApiError> {
+    if body.provenance != "sc" && body.provenance != "hivens" {
+        return Err(ApiError::BadRequest(
+            "provenance must be 'sc' or 'hivens'".into(),
+        ));
+    }
+    run_write(&state, move |reg| {
+        reg.set_provenance(&pack_id, &body.provenance)
+    })
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct ConflictBody {
+    a_modid: String,
+    b_modid: String,
+    #[serde(default)]
+    remove: bool,
+}
+
+async fn post_conflict(
+    State(state): State<AppState>,
+    Json(b): Json<ConflictBody>,
+) -> Result<StatusCode, ApiError> {
+    run_write(&state, move |reg| {
+        reg.set_conflict(&b.a_modid, &b.b_modid, b.remove)
+    })
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Serialize)]
+struct BackupResult {
+    path: String,
+}
+
+async fn post_backup(State(state): State<AppState>) -> Result<Json<BackupResult>, ApiError> {
+    let dir = state.config.storage_dir.join("backups");
+    std::fs::create_dir_all(&dir).map_err(|e| ApiError::Internal(e.into()))?;
+    let stamp = time::OffsetDateTime::now_utc().unix_timestamp();
+    let dest = dir.join(format!("registry-{stamp}.db"));
+    let target = dest.clone();
+    run_write(&state, move |reg| reg.backup_into(&target)).await?;
+    Ok(Json(BackupResult {
+        path: dest.to_string_lossy().into_owned(),
+    }))
 }
