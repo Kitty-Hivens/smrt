@@ -192,19 +192,21 @@ pub fn upsert_pack_build(
     loader_id: Option<&str>,
     loader_version: Option<&str>,
     java_major: Option<i64>,
+    fingerprint: Option<&str>,
     is_latest: bool,
     now: &str,
 ) -> Result<i64> {
     conn.execute(
         "INSERT INTO pack_build
            (pack_id, pack_version, mc_version, loader_id, loader_version, java_major,
-            is_latest, source, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'harvested', ?8)
+            fingerprint, is_latest, source, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'harvested', ?9)
          ON CONFLICT(pack_id, pack_version) DO UPDATE SET
            mc_version = excluded.mc_version,
            loader_id = excluded.loader_id,
            loader_version = excluded.loader_version,
            java_major = excluded.java_major,
+           fingerprint = excluded.fingerprint,
            is_latest = excluded.is_latest
          WHERE pack_build.source NOT IN ('curator', 'authored')",
         params![
@@ -214,6 +216,7 @@ pub fn upsert_pack_build(
             loader_id,
             loader_version,
             java_major,
+            fingerprint,
             is_latest,
             now
         ],

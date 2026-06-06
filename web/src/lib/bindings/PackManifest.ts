@@ -5,4 +5,14 @@ import type { LoaderSpec } from "./LoaderSpec";
 import type { MinecraftSpec } from "./MinecraftSpec";
 import type { ModEntry } from "./ModEntry";
 
-export type PackManifest = { schema_version: number, pack_id: string, pack_version: string, generated_at: string, minecraft: MinecraftSpec, loader: LoaderSpec, java: JavaSpec, mods: Array<ModEntry>, assets: Array<AssetEntry>, };
+export type PackManifest = { schema_version: number, pack_id: string, pack_version: string, generated_at: string, 
+/**
+ * Content fingerprint: a stable hash of what actually lands in an instance
+ * (artifact hashes + install flags + loader/java/mc), independent of the
+ * `pack_version` label and `generated_at`. Two builds with identical
+ * content share a fingerprint; a launcher uses it as the reliable "did the
+ * content change?" signal rather than trusting a hand-assigned version
+ * bump. Additive (absent on manifests built before it landed; old clients
+ * ignore it), so the schema version stays at 2.
+ */
+fingerprint?: string, minecraft: MinecraftSpec, loader: LoaderSpec, java: JavaSpec, mods: Array<ModEntry>, assets: Array<AssetEntry>, };

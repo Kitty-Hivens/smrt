@@ -14,6 +14,16 @@ pub struct PackManifest {
     pub pack_id: String,
     pub pack_version: String,
     pub generated_at: String,
+    /// Content fingerprint: a stable hash of what actually lands in an instance
+    /// (artifact hashes + install flags + loader/java/mc), independent of the
+    /// `pack_version` label and `generated_at`. Two builds with identical
+    /// content share a fingerprint; a launcher uses it as the reliable "did the
+    /// content change?" signal rather than trusting a hand-assigned version
+    /// bump. Additive (absent on manifests built before it landed; old clients
+    /// ignore it), so the schema version stays at 2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fingerprint: Option<String>,
     pub minecraft: MinecraftSpec,
     pub loader: LoaderSpec,
     pub java: JavaSpec,
@@ -322,6 +332,41 @@ mod tests {
         assert!(
             pm.mods[0].display.is_none(),
             "manifests written before the display field landed must still parse"
+        );
+        assert!(
+            pm.fingerprint.is_none(),
+            "a manifest from before the fingerprint field must parse with None"
+        );
+    }
+
+    #[test]
+    fn fingerprint_round_trips_and_is_omitted_when_absent() {
+        let json = r#"{
+            "schema_version": 2,
+            "pack_id": "Industrial",
+            "pack_version": "2026.06.06",
+            "generated_at": "2026-06-06T00:00:00Z",
+            "fingerprint": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+            "minecraft": {"version": "1.12.2"},
+            "loader": {"name": "forge", "version": "14.23.5.2922"},
+            "java": {"major": 8},
+            "mods": []
+        }"#;
+        let pm: PackManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            pm.fingerprint.as_deref(),
+            Some("da39a3ee5e6b4b0d3255bfef95601890afd80709")
+        );
+
+        // a None fingerprint must not serialize (forward-compat; no churn)
+        let bare = PackManifest {
+            fingerprint: None,
+            ..pm
+        };
+        let s = serde_json::to_string(&bare).unwrap();
+        assert!(
+            !s.contains("fingerprint"),
+            "absent fingerprint must omit: {s}"
         );
     }
 }
