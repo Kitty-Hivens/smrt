@@ -147,6 +147,23 @@ export const api = {
   },
   deleteCacheJar: (sha1: string) =>
     send('DELETE', `/v1/admin/cache/${sha1.slice(0, 2)}/${sha1}.jar`),
+
+  // server-side fetch of a GitHub release asset into the cache, returning its
+  // content hash; the caller adds it as a normal smrt_cache mod
+  async ingestGithub(
+    repo: string,
+    tag: string,
+    asset: string,
+  ): Promise<{ sha1: string; size_bytes: number }> {
+    const r = await fetch('/v1/admin/cache/github', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo, tag, asset }),
+    });
+    if (!r.ok) throw await toError(r);
+    return (await r.json()) as { sha1: string; size_bytes: number };
+  },
   removed: () => getJson<{ schema_version: number; removed: string[] }>('/v1/admin/cache/removed'),
 
   // ── authoring: config, curator, build ──

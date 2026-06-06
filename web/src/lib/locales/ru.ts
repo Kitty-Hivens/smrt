@@ -112,4 +112,13 @@ export const ru: Dict = {
   'cachePick.noName': '(без имени)',
   'cachePick.noMatch': 'Ничего не найдено.',
   'cachePick.orphan': 'ничей',
+
+  'pe.fromGithub': 'С GitHub',
+  'gh.title': 'Добавить из GitHub-релиза',
+  'gh.hint': 'Скачивает ассет релиза в кэш зеркала и добавляет модом.',
+  'gh.repo': 'Репозиторий (owner/name)',
+  'gh.tag': 'Тег',
+  'gh.asset': 'Файл (имя ассета)',
+  'gh.add': 'Скачать и добавить',
+  'gh.adding': 'скачиваю...',
 };

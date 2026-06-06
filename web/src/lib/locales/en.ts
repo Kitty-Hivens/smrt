@@ -113,6 +113,15 @@ export const en = {
   'cachePick.noName': '(no name)',
   'cachePick.noMatch': 'Nothing matches.',
   'cachePick.orphan': 'orphan',
+
+  'pe.fromGithub': 'From GitHub',
+  'gh.title': 'Add from GitHub release',
+  'gh.hint': 'Downloads the release asset into the mirror cache and adds it as a mod.',
+  'gh.repo': 'Repository (owner/name)',
+  'gh.tag': 'Tag',
+  'gh.asset': 'Asset (file name)',
+  'gh.add': 'Download and add',
+  'gh.adding': 'downloading...',
 } as const;
 
 export type Dict = Record<keyof typeof en, string>;

@@ -9,6 +9,7 @@ use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
+use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 
 // Mod jars and curated assets routinely run 5-50 MB. Axum's 2 MiB default
@@ -47,6 +48,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/admin/packs/:pack_id/validate", post(validate_pack))
         .route("/v1/admin/cache/removed", get(list_removed))
         .route("/v1/admin/cache/inventory", get(list_cache_usage))
+        .route("/v1/admin/cache/github", post(ingest_github))
         .route("/v1/admin/modrinth/search", get(modrinth_search))
         .route("/v1/admin/modrinth/versions", get(modrinth_versions))
         .route("/v1/admin/modrinth/icon", get(modrinth_icon))
@@ -307,6 +309,55 @@ async fn list_cache_usage(
         schema_version: SCHEMA_VERSION,
         entries,
     }))
+}
+
+#[derive(serde::Deserialize)]
+struct GithubIngest {
+    repo: String,
+    tag: String,
+    asset: String,
+}
+
+fn safe_seg(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '+'))
+}
+
+// Fetch a GitHub release asset server-side and cache it by content hash, so a
+// pack can pull a GitHub-only mod (open-smrt-network, hidemymods) as a normal
+// smrt_cache source -- no new wire source type. Bounded to github.com release
+// downloads: repo/tag/asset are validated path tokens, not an arbitrary URL,
+// so this is not an open SSRF sink.
+async fn ingest_github(
+    State(state): State<AppState>,
+    Json(req): Json<GithubIngest>,
+) -> Result<(StatusCode, Json<PutCacheResponse>), ApiError> {
+    let repo = req.repo.trim();
+    let tag = req.tag.trim();
+    let asset = req.asset.trim();
+    let repo_ok = repo.matches('/').count() == 1 && repo.split('/').all(safe_seg);
+    if !repo_ok || !safe_seg(tag) || !safe_seg(asset) {
+        return Err(ApiError::BadRequest(
+            "repo (owner/name), tag and asset must be plain tokens".into(),
+        ));
+    }
+    let url = format!("https://github.com/{repo}/releases/download/{tag}/{asset}");
+    let bytes = state
+        .modrinth
+        .fetch_bytes(&url)
+        .await
+        .map_err(ApiError::Internal)?;
+    let mut hasher = Sha1::new();
+    hasher.update(&bytes);
+    let sha1 = hex::encode(hasher.finalize());
+    state.storage.save_cache_jar(&sha1, &bytes).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(PutCacheResponse {
+            schema_version: SCHEMA_VERSION,
+            sha1,
+            size_bytes: bytes.len() as u64,
+        }),
+    ))
 }
 
 // ── authoring inputs ───────────────────────────────────────────────────────

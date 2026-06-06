@@ -151,6 +151,17 @@ impl Modrinth {
         }
         resp.json().await.context("decode")
     }
+
+    /// Generic GET for artifacts hosted outside Modrinth (GitHub release
+    /// assets), reusing the pooled client + UA. Follows redirects.
+    pub async fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        let resp = self.http.get(url).send().await.context("asset GET")?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(anyhow!("asset HTTP {status} for {url}"));
+        }
+        Ok(resp.bytes().await.context("asset body")?.to_vec())
+    }
 }
 
 #[derive(Serialize)]
