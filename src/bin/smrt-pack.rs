@@ -6,9 +6,11 @@ use smrt::authoring::{
     infer_requires_from_mcmod_info, load_curator, load_pack_meta, load_role_table,
 };
 use smrt::domain::{LoaderSpec, PackConfig, PackManifest, PackSummary};
+use smrt::registry::Registry;
 use smrt::storage::Storage;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tracing::{info, warn};
 
 const DEFAULT_MIRROR_BASE: &str = "https://smrt.hivens.dev";
@@ -159,6 +161,34 @@ enum Cmd {
         #[arg(long)]
         out: PathBuf,
     },
+
+    /// Mod-identity registry: harvest the cache + manifests into SQLite, or
+    /// inspect it.
+    Registry {
+        #[command(subcommand)]
+        sub: RegistryCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum RegistryCmd {
+    /// Scan the cache + published manifests, read mcmod.info, resolve Modrinth
+    /// identity, and reconcile into the registry DB. Idempotent; never
+    /// clobbers authored rows.
+    Harvest {
+        #[arg(long, default_value = "/var/lib/smrt")]
+        storage: PathBuf,
+    },
+    /// Print registry counts (mods / versions / relations / packs / builds / orphans).
+    Stats {
+        #[arg(long, default_value = "/var/lib/smrt")]
+        storage: PathBuf,
+    },
+    /// List cached artifacts no build references.
+    Orphans {
+        #[arg(long, default_value = "/var/lib/smrt")]
+        storage: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -258,7 +288,54 @@ async fn main() -> Result<()> {
             summary,
             out,
         } => run_reconstruct_config(&manifest, &summary, &out),
+        Cmd::Registry { sub } => match sub {
+            RegistryCmd::Harvest { storage } => run_registry_harvest(&storage).await,
+            RegistryCmd::Stats { storage } => run_registry_stats(&storage),
+            RegistryCmd::Orphans { storage } => run_registry_orphans(&storage),
+        },
     }
+}
+
+// ── registry ────────────────────────────────────────────────────────────────
+
+async fn run_registry_harvest(storage: &Path) -> Result<()> {
+    let store = Storage::new(storage.to_path_buf());
+    let modrinth = Modrinth::new()?;
+    let registry = Arc::new(Registry::open(storage.join("registry.db"))?);
+    let report = authoring::harvest::run_harvest(&store, &modrinth, registry).await?;
+    info!(
+        jars = report.jars_scanned,
+        no_identity = report.jars_no_identity,
+        mods = report.mods,
+        versions = report.mod_versions,
+        relations = report.relations,
+        builds = report.builds,
+        "harvest complete"
+    );
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn run_registry_stats(storage: &Path) -> Result<()> {
+    let registry = Registry::open(storage.join("registry.db"))?;
+    let stats = registry.with_conn(smrt::registry::queries::stats)?;
+    println!("{}", serde_json::to_string_pretty(&stats)?);
+    Ok(())
+}
+
+fn run_registry_orphans(storage: &Path) -> Result<()> {
+    let registry = Registry::open(storage.join("registry.db"))?;
+    let orphans = registry.with_conn(smrt::registry::queries::orphan_jars)?;
+    for o in &orphans {
+        println!(
+            "{}  {:>11} B  {}",
+            o.sha1,
+            o.size_bytes,
+            o.filename.as_deref().unwrap_or("(no name)")
+        );
+    }
+    println!("{} orphan(s)", orphans.len());
+    Ok(())
 }
 
 fn run_reconstruct_config(manifest_path: &Path, summary_path: &Path, out: &Path) -> Result<()> {

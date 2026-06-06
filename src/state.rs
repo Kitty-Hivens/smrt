@@ -1,6 +1,7 @@
 use crate::authoring::Modrinth;
 use crate::config::Config;
 use crate::jobs::JobRegistry;
+use crate::registry::Registry;
 use crate::storage::Storage;
 use std::sync::Arc;
 
@@ -12,16 +13,24 @@ pub struct AppState {
     /// One shared Modrinth client (pooled connections) for the admin proxy
     /// handlers, instead of a fresh TLS handshake per request.
     pub modrinth: Arc<Modrinth>,
+    /// Mod-identity registry (embedded SQLite under the storage root).
+    pub registry: Arc<Registry>,
 }
 
 impl AppState {
     pub fn new(config: Config) -> anyhow::Result<Self> {
+        // the registry db lives next to cache/ + packs/; the parent must exist
+        // before SQLite can create the file.
+        std::fs::create_dir_all(&config.storage_dir).ok();
         let storage = Arc::new(Storage::new(config.storage_dir.clone()));
+        let registry = Arc::new(Registry::open(config.storage_dir.join("registry.db"))?);
+        let modrinth = Arc::new(Modrinth::new()?);
         Ok(Self {
             storage,
+            modrinth,
+            registry,
             config: Arc::new(config),
             jobs: Arc::new(JobRegistry::default()),
-            modrinth: Arc::new(Modrinth::new()?),
         })
     }
 }

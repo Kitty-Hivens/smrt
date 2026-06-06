@@ -1,0 +1,223 @@
+//! Idempotent writers. Every write is keyed by a natural key and guards the
+//! precious layer: harvested rows refresh, but `curator`/`authored` rows are
+//! never clobbered (the `WHERE source NOT IN (...)` on each upsert). Call inside
+//! `Registry::with_conn_mut` (a write transaction).
+
+use super::model::{RelKind, Source};
+use anyhow::Result;
+use rusqlite::{Connection, OptionalExtension, params};
+
+pub fn now_rfc3339() -> String {
+    use time::OffsetDateTime;
+    use time::format_description::well_known::Rfc3339;
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}
+
+/// Resolve a logical mod from any of its external keys, creating it if none
+/// match, and attach any missing aliases. This is how a jar carrying both a
+/// `modid` and a Modrinth `project_id` collapses to one identity, and how two
+/// jars of the same mod share it. (First-found wins; if two supplied aliases
+/// already point at *different* mods they stay separate -- a true merge is a
+/// Phase 2 concern.)
+pub fn upsert_mod_by_alias(conn: &Connection, aliases: &[(&str, &str)], now: &str) -> Result<i64> {
+    let mut found: Option<i64> = None;
+    for (src, key) in aliases {
+        if let Some(id) = conn
+            .query_row(
+                "SELECT mod_id FROM mod_alias WHERE source = ?1 AND external_key = ?2",
+                params![src, key],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+        {
+            found = Some(id);
+            break;
+        }
+    }
+    let mod_id = match found {
+        Some(id) => id,
+        None => {
+            conn.execute(
+                "INSERT INTO mods (source, confidence, created_at, updated_at)
+                 VALUES ('harvested', 10, ?1, ?1)",
+                params![now],
+            )?;
+            conn.last_insert_rowid()
+        }
+    };
+    for (src, key) in aliases {
+        conn.execute(
+            "INSERT INTO mod_alias (mod_id, source, external_key) VALUES (?1, ?2, ?3)
+             ON CONFLICT(source, external_key) DO NOTHING",
+            params![mod_id, src, key],
+        )?;
+    }
+    Ok(mod_id)
+}
+
+/// Upsert an artifact keyed by its content hash. Returns the `mod_version` id.
+/// A precious (`curator`/`authored`) row with this sha1 is left untouched.
+#[allow(clippy::too_many_arguments)]
+pub fn upsert_mod_version(
+    conn: &Connection,
+    mod_id: i64,
+    version: &str,
+    target: &str,
+    sha1: &str,
+    size_bytes: i64,
+    filename: Option<&str>,
+    mc_versions: Option<&str>,
+    now: &str,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO mod_version
+           (mod_id, version, target, sha1, size_bytes, filename, mc_versions,
+            source, confidence, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'harvested', 10, ?8, ?8)
+         ON CONFLICT(sha1) DO UPDATE SET
+           mod_id = excluded.mod_id,
+           version = excluded.version,
+           target = excluded.target,
+           size_bytes = excluded.size_bytes,
+           filename = excluded.filename,
+           mc_versions = excluded.mc_versions,
+           updated_at = excluded.updated_at
+         WHERE mod_version.source NOT IN ('curator', 'authored')",
+        params![
+            mod_id,
+            version,
+            target,
+            sha1,
+            size_bytes,
+            filename,
+            mc_versions,
+            now
+        ],
+    )?;
+    Ok(conn.query_row(
+        "SELECT id FROM mod_version WHERE sha1 = ?1",
+        params![sha1],
+        |r| r.get(0),
+    )?)
+}
+
+pub fn mod_version_id_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT id FROM mod_version WHERE sha1 = ?1",
+            params![sha1],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
+/// Insert a sourced assertion; de-duped by the (from, target, kind, source,
+/// range) unique index, so a re-harvest adds nothing.
+pub fn upsert_relation(
+    conn: &Connection,
+    from_mod_id: i64,
+    target_modid: &str,
+    version_range: Option<&str>,
+    kind: RelKind,
+    source: Source,
+    now: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO relation
+           (from_mod_id, target_modid, target_version_range, kind, source, confidence, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            from_mod_id,
+            target_modid,
+            version_range,
+            kind.as_str(),
+            source.as_str(),
+            source.rank(),
+            now
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn upsert_pack(conn: &Connection, pack_id: &str, provenance: &str, now: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO pack (id, provenance, source, created_at, updated_at)
+         VALUES (?1, ?2, 'harvested', ?3, ?3)
+         ON CONFLICT(id) DO UPDATE SET
+           provenance = excluded.provenance, updated_at = excluded.updated_at
+         WHERE pack.source NOT IN ('curator', 'authored')",
+        params![pack_id, provenance, now],
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn upsert_pack_build(
+    conn: &Connection,
+    pack_id: &str,
+    pack_version: &str,
+    mc_version: &str,
+    loader_id: Option<&str>,
+    loader_version: Option<&str>,
+    java_major: Option<i64>,
+    is_latest: bool,
+    now: &str,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO pack_build
+           (pack_id, pack_version, mc_version, loader_id, loader_version, java_major,
+            is_latest, source, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'harvested', ?8)
+         ON CONFLICT(pack_id, pack_version) DO UPDATE SET
+           mc_version = excluded.mc_version,
+           loader_id = excluded.loader_id,
+           loader_version = excluded.loader_version,
+           java_major = excluded.java_major,
+           is_latest = excluded.is_latest
+         WHERE pack_build.source NOT IN ('curator', 'authored')",
+        params![
+            pack_id,
+            pack_version,
+            mc_version,
+            loader_id,
+            loader_version,
+            java_major,
+            is_latest,
+            now
+        ],
+    )?;
+    Ok(conn.query_row(
+        "SELECT id FROM pack_build WHERE pack_id = ?1 AND pack_version = ?2",
+        params![pack_id, pack_version],
+        |r| r.get(0),
+    )?)
+}
+
+pub fn link_build_mod(
+    conn: &Connection,
+    build_id: i64,
+    mod_version_id: i64,
+    filename: &str,
+    required: bool,
+    default_enabled: bool,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO pack_build_mod
+           (build_id, mod_version_id, filename, required, default_enabled, source)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'harvested')
+         ON CONFLICT(build_id, mod_version_id) DO UPDATE SET
+           filename = excluded.filename,
+           required = excluded.required,
+           default_enabled = excluded.default_enabled",
+        params![
+            build_id,
+            mod_version_id,
+            filename,
+            required,
+            default_enabled
+        ],
+    )?;
+    Ok(())
+}
