@@ -636,7 +636,7 @@ fn validate_rel_path(rel: &str) -> Result<&str, ApiError> {
 /// Boolean core of [validate_rel_path], shared with the authoring layer so its
 /// curator- and archive-driven writes reject the same traversal the HTTP layer
 /// does. Allows nested dirs and real-world resourcepack/shaderpack filenames
-/// (spaces, parens, plus, comma) but forbids `..`, leading dots per segment,
+/// (spaces, parens, plus, comma, square brackets) but forbids `..`, leading dots per segment,
 /// absolute paths, and backslashes. ASCII-only -- non-ASCII filenames break
 /// some Forge launchers on Windows.
 pub(crate) fn is_safe_rel_path(rel: &str) -> bool {
@@ -651,7 +651,7 @@ pub(crate) fn is_safe_rel_path(rel: &str) -> bool {
             && !segment.starts_with('.')
             && segment.chars().all(|c| {
                 c.is_ascii_alphanumeric()
-                    || matches!(c, '-' | '_' | '.' | ' ' | '(' | ')' | '+' | ',')
+                    || matches!(c, '-' | '_' | '.' | ' ' | '(' | ')' | '+' | ',' | '[' | ']')
             })
     })
 }
@@ -666,6 +666,9 @@ mod tests {
         assert!(is_safe_rel_path("_nexira/icon.png"));
         assert!(is_safe_rel_path("resourcepacks/Chocapic13 V7.1 High.zip"));
         assert!(is_safe_rel_path("config/foamfix.cfg"));
+        // real resourcepack names carry square-bracketed version ranges; the URL
+        // layer percent-encodes them, so the dest validator must allow them too
+        assert!(is_safe_rel_path("resourcepacks/NewDefault+v1.82[MC1.9-1.12.2].zip"));
         assert!(!is_safe_rel_path("../etc/passwd"));
         assert!(!is_safe_rel_path("a/../../b"));
         assert!(!is_safe_rel_path("/abs/path"));
