@@ -95,10 +95,17 @@ impl Modrinth {
     /// Search Modrinth for mods matching [query], optionally narrowed to an MC
     /// version. Returns the top hits (project id / slug / title / icon) so the
     /// panel can add a mod without the operator pasting ids.
-    pub async fn search(&self, query: &str, mc: Option<&str>) -> Result<Vec<SearchHit>> {
+    pub async fn search(
+        &self,
+        query: &str,
+        mc: Option<&str>,
+        project_type: &str,
+    ) -> Result<Vec<SearchHit>> {
+        // project_type is one of Modrinth's known kinds (mod / resourcepack /
+        // shader); the caller picks it so the panel can browse packs, not just mods.
         let facets = match mc {
-            Some(v) => format!(r#"[["project_type:mod"],["versions:{v}"]]"#),
-            None => r#"[["project_type:mod"]]"#.to_string(),
+            Some(v) => format!(r#"[["project_type:{project_type}"],["versions:{v}"]]"#),
+            None => format!(r#"[["project_type:{project_type}"]]"#),
         };
         let resp = self
             .http

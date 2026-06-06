@@ -168,6 +168,10 @@ async fn save_featured(
 struct SearchQuery {
     q: String,
     mc: Option<String>,
+    // Modrinth project kind: mod (default) / resourcepack / shader, so the
+    // panel can browse packs for assets, not just mods.
+    #[serde(rename = "type")]
+    kind: Option<String>,
 }
 
 async fn modrinth_search(
@@ -176,7 +180,7 @@ async fn modrinth_search(
 ) -> Result<Json<Vec<modrinth::SearchHit>>, ApiError> {
     let hits = state
         .modrinth
-        .search(&q.q, q.mc.as_deref())
+        .search(&q.q, q.mc.as_deref(), q.kind.as_deref().unwrap_or("mod"))
         .await
         .map_err(ApiError::Internal)?;
     Ok(Json(hits))
