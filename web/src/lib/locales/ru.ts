@@ -179,6 +179,7 @@ export const ru: Dict = {
   'crop.hint': 'Тяни мышкой, ползунок — масштаб',
   'crop.zoom': 'Масштаб',
   'crop.apply': 'Применить',
+  'crop.failed': 'Не удалось загрузить картинку.',
 
   'pe.asset.resourcepack': 'Ресурспак',
   'pe.asset.shader': 'Шейдер',

@@ -71,17 +71,19 @@
   async function onDropJars(files: File[]) {
     uploading = true;
     upMsg = '';
+    let n = 0;
     try {
-      let n = 0;
       for (const file of files) {
+        if (!file.name.toLowerCase().endsWith('.jar')) continue;
         await api.uploadCacheJar(file);
         n++;
       }
       upMsg = t('cache.uploaded', { count: n });
-      await loadAll();
     } catch (x) {
       upMsg = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
     } finally {
+      // refresh even on partial failure so the jars that did upload appear
+      await loadAll();
       uploading = false;
     }
   }
@@ -120,6 +122,7 @@
       );
     }),
   );
+  const shownBytes = $derived(shownCache.reduce((n, e) => n + e.size_bytes, 0));
 
   const authoringSet = $derived(new Set(authoring));
   const allPackIds = $derived(
@@ -298,6 +301,7 @@
                   tabindex="0"
                   onclick={() => (serverEdit = s)}
                   onkeydown={(e) => {
+                    if (e.target !== e.currentTarget) return;
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
                       serverEdit = s;
@@ -344,7 +348,7 @@
           {t('cache.orphansOnly')}
         </label>
         <span class="grow-r muted mono">
-          {t('cache.count', { count: cache.length, size: fmtBytes(cacheBytes) })}
+          {t('cache.count', { count: shownCache.length, size: fmtBytes(shownBytes) })}
         </span>
         {#if upMsg}<span class="muted mono">{upMsg}</span>{/if}
       </div>

@@ -5,7 +5,6 @@ import type {
   AuthoringPacksListing,
   CacheInventory,
   CacheUsageListing,
-  Featured,
   Curator,
   Health,
   JobResult,
@@ -121,7 +120,6 @@ export const api = {
   health: () => getJson<Health>('/v1/health'),
   packs: () => getJson<PackListing>('/v1/packs'),
   servers: () => getJson<ServerListing>('/v1/servers'),
-  featured: () => getJson<Featured>('/v1/featured'),
   cacheInventory: () => getJson<CacheInventory>('/v1/cache/inventory'),
   // admin-only: same jars, enriched with which pack/filename uses each sha1
   cacheUsage: () => getJson<CacheUsageListing>('/v1/admin/cache/inventory'),
@@ -130,7 +128,6 @@ export const api = {
   // ── admin writes ──
   saveServer: (e: ServerEntry) => send('POST', '/v1/admin/servers', e),
   deleteServer: (id: string) => send('DELETE', `/v1/admin/servers/${encodeURIComponent(id)}`),
-  saveFeatured: (f: Featured) => send('POST', '/v1/admin/featured', f),
 
   // Content-addressed: hash client-side and PUT under the sha1 path. The
   // mirror re-verifies the body hashes to the claimed sha1.
