@@ -524,6 +524,12 @@ mod tests {
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.mods, 1, "same modid -> one identity");
         assert_eq!(rep.mod_versions, 2, "two distinct jars are two artifacts");
+        r.with_conn(|c| {
+            // both reachable as two versions of the one mod
+            assert_eq!(queries::versions_of_mod(c, "modid", "dup")?.len(), 2);
+            Ok(())
+        })
+        .unwrap();
     }
 
     // #2: a jar published for several loaders records every target; an empty
@@ -565,6 +571,51 @@ mod tests {
         r.with_conn(|c| {
             let multi = queries::versions_of_mod(c, "modid", "multi")?;
             assert_eq!(multi[0].targets, vec!["forge".to_string()], "set replaced");
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // an authored artifact keeps its hand-set targets even when a re-harvest
+    // reports a different loader set (the precious skip in set_mod_version_targets)
+    #[test]
+    fn write_scan_preserves_authored_targets() {
+        let r = Registry::open_in_memory().unwrap();
+        let scan = ScanData {
+            jars: vec![jar(
+                "sha_p",
+                "pmod",
+                Some("1"),
+                vec!["forge".into(), "fabric".into()],
+            )],
+            packs: vec![],
+        };
+        r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        r.with_txn(|c| {
+            c.execute(
+                "UPDATE mod_version SET source = 'authored' WHERE sha1 = 'sha_p'",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        // re-harvest now sees only forge upstream; the authored targets must hold
+        let scan2 = ScanData {
+            jars: vec![jar("sha_p", "pmod", Some("1"), vec!["forge".into()])],
+            packs: vec![],
+        };
+        r.with_txn(|c| write_scan(c, &scan2, "T1")).unwrap();
+        r.with_conn(|c| {
+            let mut t = queries::versions_of_mod(c, "modid", "pmod")?[0]
+                .targets
+                .clone();
+            t.sort();
+            assert_eq!(
+                t,
+                vec!["fabric".to_string(), "forge".to_string()],
+                "authored targets survive re-harvest"
+            );
             Ok(())
         })
         .unwrap();

@@ -76,6 +76,9 @@ CREATE INDEX idx_mv_mod ON mod_version(mod_id);
 -- published for several loaders (Modrinth lists them as a set) gets one row per
 -- target; a loader-agnostic tweaker gets a single 'any' row. target is plain
 -- TEXT, NOT a hard FK, so 'any' and uncatalogued loaders store cleanly.
+-- INVARIANT: every mod_version has >= 1 row here (harvest falls back to 'any').
+-- Q4 (eligible_for_loader) inner-joins this table, so a target-less artifact
+-- would be invisible to eligibility -- any future writer must keep the fallback.
 CREATE TABLE mod_version_target (
   mod_version_id INTEGER NOT NULL REFERENCES mod_version(id) ON DELETE CASCADE,
   target         TEXT NOT NULL,
