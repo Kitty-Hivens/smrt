@@ -1,5 +1,6 @@
 <script lang="ts">
   import ModIcon from './ModIcon.svelte';
+  import { t } from '../lib/i18n.svelte';
   import { formatBytes, modName } from '../lib/preview';
   import { safeUrl } from '../lib/markdown';
   import type { DepEdge, MissingReq } from '../lib/preview';
@@ -36,7 +37,7 @@
     type="checkbox"
     checked={enabled}
     disabled={locked}
-    title={locked ? 'Required -- always installed' : 'Optional -- toggle to preview'}
+    title={locked ? t('mr.lockedHint') : t('mr.optionalHint')}
     onchange={(e) => onToggle(e.currentTarget.checked)}
   />
   <ModIcon name={mod.filename} iconUrl={d?.icon_url} source={mod.source} size={34} />
@@ -44,24 +45,25 @@
     <div class="l1">
       <span class="nm">{modName(mod)}</span>
       {#if d?.category}<span class="chip cat">{d.category}</span>{/if}
-      {#if locked}<span class="chip req">required</span>{:else}<span class="chip opt">optional</span
+      {#if locked}<span class="chip req">{t('mr.required')}</span>{:else}<span class="chip opt"
+          >{t('mr.optional')}</span
         >{/if}
       {#if d?.license}<span class="chip lic">{d.license}</span>{/if}
-      {#if conflicts.length}<span class="chip warn" title="Conflicts with {conflicts.join(', ')}"
-          >conflicts</span
+      {#if conflicts.length}<span class="chip warn" title={t('mr.conflictsWith', { list: conflicts.join(', ') })}
+          >{t('mr.conflicts')}</span
         >{/if}
     </div>
     <div class="l2 mono">
       <span>{mod.filename}</span>
       <span class="faint">{formatBytes(mod.size_bytes)}</span>
       {#if mod.source.type === 'modrinth'}<span class="faint">modrinth</span>{/if}
-      {#if d?.url}<a href={safeUrl(d.url)} target="_blank" rel="noopener noreferrer">learn more</a>{/if}
+      {#if d?.url}<a href={safeUrl(d.url)} target="_blank" rel="noopener noreferrer">{t('mr.learnMore')}</a>{/if}
     </div>
     {#if d?.description}<div class="desc">{d.description}</div>{/if}
   </div>
   {#if depCount > 0}
     <button class="exp" class:open={expanded} onclick={() => (expanded = !expanded)}>
-      {depCount} dep{depCount === 1 ? '' : 's'}<span class="caret"></span>
+      {t('mr.deps', { n: depCount })}<span class="caret"></span>
     </button>
   {/if}
 </div>
@@ -72,14 +74,14 @@
         <span class="dot ok"></span>
         <span class="mono">{e.to}</span>
         {#if e.versionRange}<span class="chip vr mono">{e.versionRange}</span>{/if}
-        {#if e.optional}<span class="chip optdep">optional</span>{/if}
+        {#if e.optional}<span class="chip optdep">{t('mr.optional')}</span>{/if}
       </div>
     {/each}
     {#each missing as m (m.requires)}
       <div class="dep">
         <span class="dot bad"></span>
         <span class="mono">{m.requires}</span>
-        <span class="chip warn">missing</span>
+        <span class="chip warn">{t('mr.missing')}</span>
       </div>
     {/each}
   </div>
