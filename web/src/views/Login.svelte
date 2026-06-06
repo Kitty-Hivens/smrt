@@ -22,7 +22,12 @@
 <div class="wrap">
   <div class="locale" role="group" aria-label={t('shell.locale')}>
     {#each LOCALES as loc}
-      <button class="loc" class:active={i18n.locale === loc} onclick={() => i18n.set(loc)}>
+      <button
+        class="loc"
+        class:active={i18n.locale === loc}
+        aria-pressed={i18n.locale === loc}
+        onclick={() => i18n.set(loc)}
+      >
         {loc.toUpperCase()}
       </button>
     {/each}

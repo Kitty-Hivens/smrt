@@ -34,7 +34,12 @@
     <ul class="nav">
       {#each SECTIONS as s}
         <li>
-          <button class="item" class:active={route.section === s} onclick={() => route.go(s)}>
+          <button
+            class="item"
+            class:active={route.section === s}
+            aria-current={route.section === s ? 'page' : undefined}
+            onclick={() => route.go(s)}
+          >
             {t(navKey[s])}
           </button>
         </li>
@@ -58,7 +63,12 @@
       <div class="spacer"></div>
       <div class="locale" role="group" aria-label={t('shell.locale')}>
         {#each LOCALES as loc}
-          <button class="loc" class:active={i18n.locale === loc} onclick={() => i18n.set(loc)}>
+          <button
+            class="loc"
+            class:active={i18n.locale === loc}
+            aria-pressed={i18n.locale === loc}
+            onclick={() => i18n.set(loc)}
+          >
             {loc.toUpperCase()}
           </button>
         {/each}

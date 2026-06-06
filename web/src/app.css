@@ -44,7 +44,7 @@
   --radius-md: 9px;
   --radius-lg: 14px;
 
-  --ring: 0 0 0 2px var(--accent-soft);
+  --ring: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
 
   --mono: 'JetBrains Mono', 'SF Mono', ui-monospace, 'Cascadia Code', monospace;
   --sans: ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
