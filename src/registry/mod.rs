@@ -7,6 +7,7 @@
 //! from jars + Modrinth) stay distinct from authored rows (manual moderation,
 //! Phase 2) and a re-harvest never clobbers the authored ones.
 
+pub(crate) mod authored;
 mod db;
 mod migrations;
 pub mod model;
