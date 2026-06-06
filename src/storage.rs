@@ -56,12 +56,18 @@ impl Storage {
     }
 
     pub async fn load_pack_summary(&self, pack_id: &str) -> Result<PackSummary, ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
         let path = self.root.join("packs").join(pack_id).join("summary.json");
         let bytes = fs::read(&path).await.map_err(|_| ApiError::NotFound)?;
         serde_json::from_slice(&bytes).map_err(json_err)
     }
 
     pub async fn load_latest_manifest(&self, pack_id: &str) -> Result<PackManifest, ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
         let path = self
             .root
             .join("packs")
@@ -77,6 +83,9 @@ impl Storage {
         pack_id: &str,
         version: &str,
     ) -> Result<PackManifest, ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
         if !is_safe_version(version) {
             return Err(ApiError::BadRequest("invalid version slug".into()));
         }
@@ -91,6 +100,9 @@ impl Storage {
     }
 
     pub async fn list_manifest_versions(&self, pack_id: &str) -> Result<Vec<String>, ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
         let path = self.root.join("packs").join(pack_id).join("manifests");
         let mut out = Vec::new();
         let mut entries = fs::read_dir(&path).await.map_err(|_| ApiError::NotFound)?;
@@ -660,6 +672,17 @@ pub(crate) fn is_safe_rel_path(rel: &str) -> bool {
 mod tests {
     use super::*;
     use crate::domain::{LoaderSpec, PackConfig};
+
+    #[test]
+    fn safe_id_rejects_traversal() {
+        // the guard added to the public pack-read paths leans on this
+        assert!(!is_safe_id("../x"));
+        assert!(!is_safe_id(".."));
+        assert!(!is_safe_id("../../etc/passwd"));
+        assert!(!is_safe_id("a/b"));
+        assert!(is_safe_id("Industrial"));
+        assert!(is_safe_id("pack_1.0"));
+    }
 
     #[test]
     fn rel_path_rejects_traversal_accepts_real_filenames() {

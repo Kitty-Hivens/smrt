@@ -222,6 +222,10 @@ fn is_removed_sha1(root: &Path, sha1: &str) -> bool {
 }
 
 pub(super) fn write_to_static(static_dir: &Path, rel_path: &str, bytes: &[u8]) -> Result<()> {
+    // co-locate the traversal guard with the write so no caller can escape static/
+    if !is_safe_rel_path(rel_path) {
+        bail!("unsafe static rel_path: {rel_path}");
+    }
     let path = static_dir.join(rel_path);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).context("creating static parent dir")?;
@@ -247,7 +251,8 @@ pub(super) fn cache_jar_path(storage: &Path, sha1: &str) -> Result<PathBuf> {
 }
 
 pub(super) fn static_asset_path(storage: &Path, pack_id: &str, rel_path: &str) -> Result<PathBuf> {
-    if rel_path.contains("..") || rel_path.starts_with('/') {
+    // same guard as the HTTP/write layers, not a weaker bespoke check
+    if !is_safe_rel_path(rel_path) {
         bail!("invalid static rel_path: {rel_path}");
     }
     Ok(storage
