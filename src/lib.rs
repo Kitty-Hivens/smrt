@@ -14,5 +14,6 @@ pub mod config;
 pub mod domain;
 pub mod http;
 pub mod jobs;
+pub mod registry;
 pub mod state;
 pub mod storage;

@@ -711,6 +711,60 @@ pub struct ExtraAddReport {
     pub assets_failed: Vec<(String, String)>,
 }
 
+/// True if the pack already declares a mod from this Modrinth project, at any
+/// version/filename. Keeps [apply_extras] idempotent across upstream version
+/// bumps -- a new version changes the filename, so a filename-only check would
+/// re-add the same mod (two jars of one modid -> broken FML handshake).
+fn pack_has_modrinth_mod(mods: &[crate::domain::DeclaredMod], project_id: &str) -> bool {
+    mods.iter().any(|m| {
+        matches!(&m.source, crate::domain::SourceDecl::Modrinth { project_id: pid, .. } if pid == project_id)
+    })
+}
+
+fn pack_has_modrinth_asset(assets: &[crate::domain::DeclaredAsset], project_id: &str) -> bool {
+    assets.iter().any(|a| {
+        matches!(&a.source, crate::domain::SourceDecl::Modrinth { project_id: pid, .. } if pid == project_id)
+    })
+}
+
+#[cfg(test)]
+mod extras_dedup_tests {
+    use super::*;
+    use crate::domain::{DeclaredMod, SourceDecl};
+
+    fn mr(filename: &str, project_id: &str) -> DeclaredMod {
+        DeclaredMod {
+            filename: filename.into(),
+            required: true,
+            default_enabled: true,
+            source: SourceDecl::Modrinth {
+                project_id: project_id.into(),
+                version_id: "v".into(),
+            },
+            display: None,
+            note: None,
+        }
+    }
+
+    #[test]
+    fn modrinth_mod_dedup_ignores_filename() {
+        let mods = vec![mr("appleskin-2.5.jar", "EsAfb37o")];
+        // a version bump changes the filename but not the project -> still a dup
+        assert!(pack_has_modrinth_mod(&mods, "EsAfb37o"));
+        assert!(!pack_has_modrinth_mod(&mods, "other"));
+        // a smrt_cache mod is never a Modrinth-project match
+        let cache = vec![DeclaredMod {
+            filename: "x.jar".into(),
+            required: true,
+            default_enabled: true,
+            source: SourceDecl::SmrtCache { sha1: "abc".into() },
+            display: None,
+            note: None,
+        }];
+        assert!(!pack_has_modrinth_mod(&cache, "EsAfb37o"));
+    }
+}
+
 /// Resolves each [`ExtraMod`] / [`ExtraAsset`] via Modrinth and appends
 /// the resulting entries to the config. Modrinth lookups use the
 /// project's latest 1.12.2 version (we follow MC version of the pack
@@ -730,8 +784,12 @@ pub async fn apply_extras(
             Ok((project_id, version_id, filename)) => {
                 // idempotent: re-running the curator over an already-built pack
                 // (e.g. a reconstructed, post-curator config) must not duplicate
-                // an extra that is already declared
-                if config.mods.iter().any(|m| m.filename == filename) {
+                // an extra that is already declared -- by filename, AND by
+                // Modrinth project so an upstream version bump (new filename,
+                // same project) doesn't add a second copy of the same mod.
+                if config.mods.iter().any(|m| m.filename == filename)
+                    || pack_has_modrinth_mod(&config.mods, &project_id)
+                {
                     continue;
                 }
                 let display = Some(Display {
@@ -768,8 +826,11 @@ pub async fn apply_extras(
         match resolve_modrinth_latest_for_mc(modrinth, &ea.slug, mc_version).await {
             Ok((project_id, version_id, filename)) => {
                 let dest = format!("{}/{}", ea.dest_dir.trim_end_matches('/'), filename);
-                // idempotent: skip an extra asset already declared in the config
-                if config.assets.iter().any(|a| a.dest == dest) {
+                // idempotent: skip by dest AND by Modrinth project (version bump
+                // changes the filename -> the dest -- so dest alone would re-add)
+                if config.assets.iter().any(|a| a.dest == dest)
+                    || pack_has_modrinth_asset(&config.assets, &project_id)
+                {
                     continue;
                 }
                 let display = Some(Display {

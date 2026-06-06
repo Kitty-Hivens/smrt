@@ -221,6 +221,20 @@ pub struct Version {
     #[serde(default)]
     pub loaders: Vec<String>,
     pub files: Vec<VersionFile>,
+    /// Project-level deps (required/optional/incompatible/embedded). Additive,
+    /// no wire impact; the registry harvest reads these for relation facts.
+    #[serde(default)]
+    pub dependencies: Vec<Dependency>,
+}
+
+/// A Modrinth version dependency. `project_id` is the target (Modrinth
+/// namespace); `dependency_type` is required|optional|incompatible|embedded.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Dependency {
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub dependency_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
