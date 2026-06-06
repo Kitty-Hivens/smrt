@@ -162,10 +162,21 @@ impl Modrinth {
     /// Generic GET for artifacts hosted outside Modrinth (GitHub release
     /// assets), reusing the pooled client + UA. Follows redirects.
     pub async fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        // cap the response so a huge or malicious release asset can't OOM the
+        // mirror; GitHub release downloads always send a content-length
+        const MAX_BYTES: u64 = 512 * 1024 * 1024;
         let resp = self.http.get(url).send().await.context("asset GET")?;
         let status = resp.status();
         if !status.is_success() {
             return Err(anyhow!("asset HTTP {status} for {url}"));
+        }
+        if let Some(len) = resp.content_length()
+            && len > MAX_BYTES
+        {
+            return Err(anyhow!(
+                "asset at {url} is {len} bytes, over the {} MiB cap",
+                MAX_BYTES / 1024 / 1024
+            ));
         }
         Ok(resp.bytes().await.context("asset body")?.to_vec())
     }

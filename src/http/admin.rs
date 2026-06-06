@@ -178,9 +178,15 @@ async fn modrinth_search(
     State(state): State<AppState>,
     Query(q): Query<SearchQuery>,
 ) -> Result<Json<Vec<modrinth::SearchHit>>, ApiError> {
+    // clamp to the Modrinth project kinds we support; unknown -> mod
+    let kind = match q.kind.as_deref() {
+        Some("resourcepack") => "resourcepack",
+        Some("shader") => "shader",
+        _ => "mod",
+    };
     let hits = state
         .modrinth
-        .search(&q.q, q.mc.as_deref(), q.kind.as_deref().unwrap_or("mod"))
+        .search(&q.q, q.mc.as_deref(), kind)
         .await
         .map_err(ApiError::Internal)?;
     Ok(Json(hits))
@@ -276,9 +282,12 @@ async fn list_cache_usage(
     for pid in pack_ids {
         let cfg = match state.storage.load_pack_config(&pid).await {
             Ok(c) => c,
-            // a pack listed without a readable config just contributes no uses
-            Err(ApiError::NotFound) => continue,
-            Err(e) => return Err(e),
+            // a pack whose config is missing OR malformed just contributes no
+            // uses; one unreadable config must not sink the whole listing
+            Err(e) => {
+                tracing::warn!(pack = %pid, error = %e, "skipping pack in cache usage");
+                continue;
+            }
         };
         for m in &cfg.mods {
             if let SourceDecl::SmrtCache { sha1 } = &m.source {
