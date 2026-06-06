@@ -44,6 +44,7 @@
   let tx = $state(0);
   let ty = $state(0);
   let busy = $state(false);
+  let loadErr = $state(false);
 
   function clampPan() {
     tx = Math.min(0, Math.max(FW - nat.w * scale, tx));
@@ -98,17 +99,19 @@
     const sh = FH / scale;
     const sx = -tx / scale;
     const sy = -ty / scale;
-    const outW = Math.min(sw, maxOut);
-    const outH = outW / aspect;
+    // derive height from the rounded width so the output keeps the exact aspect
+    // and never collapses to a zero dimension on a tiny crop
+    const cw = Math.max(1, Math.round(Math.min(sw, maxOut)));
+    const ch = Math.max(1, Math.round(cw / aspect));
     const canvas = document.createElement('canvas');
-    canvas.width = Math.round(outW);
-    canvas.height = Math.round(outH);
+    canvas.width = cw;
+    canvas.height = ch;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
       busy = false;
       return;
     }
-    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cw, ch);
     // canvas cannot encode gif; jpeg/webp pass through, everything else -> png
     const outType =
       file.type === 'image/jpeg' || file.type === 'image/webp' ? file.type : 'image/png';
@@ -128,6 +131,7 @@
   <div class="dlg panel" onclick={(e) => e.stopPropagation()} role="presentation">
     <h3 class="ttl">{title}</h3>
     <p class="hint muted">{t('crop.hint')}</p>
+    {#if loadErr}<p class="loaderr">{t('crop.failed')}</p>{/if}
 
     <div
       class="frame"
@@ -135,6 +139,7 @@
       onpointerdown={onDown}
       onpointermove={onMove}
       onpointerup={onUp}
+      onpointercancel={onUp}
       role="presentation"
     >
       {#if url}
@@ -143,6 +148,7 @@
           bind:this={img}
           src={url}
           onload={onImgLoad}
+          onerror={() => (loadErr = true)}
           class="src"
           class:ready
           style="transform: translate({tx}px, {ty}px) scale({scale}); transform-origin: 0 0;"
@@ -196,6 +202,11 @@
   .hint {
     font-size: 12px;
     margin: 0;
+  }
+  .loaderr {
+    font-size: 12px;
+    margin: 0;
+    color: var(--danger);
   }
   .frame {
     position: relative;

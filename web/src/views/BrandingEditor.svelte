@@ -17,6 +17,8 @@
   // a raster icon/banner drop opens the cropper before upload
   let crop = $state<{ file: File; aspect: number; target: 'icon' | 'banner' } | null>(null);
   const RASTER = /^image\/(png|jpeg|webp|gif)$/;
+  // some OSes report an empty file.type for a valid image; fall back to the name
+  const isRaster = (f: File) => RASTER.test(f.type) || /\.(png|jpe?g|webp|gif)$/i.test(f.name);
 
   async function load() {
     err = '';
@@ -54,6 +56,21 @@
     }
   }
 
+  // icon/banner must resolve to one file: drop any prior extension first so a
+  // re-upload in another format can't leave a stale image the curator points at
+  async function putBranding(target: 'icon' | 'banner', relPath: string, data: File | Blob) {
+    for (const f of files) {
+      if (f.startsWith(`_nexira/${target}.`) && f !== relPath) {
+        try {
+          await api.deleteStatic(packId, f);
+        } catch {
+          // best-effort cleanup; the upload below is what matters
+        }
+      }
+    }
+    await uploadOne(relPath, data);
+  }
+
   async function onDrop(dropped: File[]) {
     if (dest === 'asset') {
       // an asset drop may carry many; no crop
@@ -72,18 +89,19 @@
     // icon / banner: crop a raster image first; svg / non-raster goes as-is
     const file = dropped[0];
     if (!file) return;
-    if (RASTER.test(file.type)) {
+    if (isRaster(file)) {
       crop = { file, aspect: dest === 'icon' ? 1 : 3, target: dest };
     } else {
-      await uploadOne(destFor(file), file);
+      await putBranding(dest, destFor(file), file);
     }
   }
 
-  function onCropApply(blob: Blob, ext: string) {
+  function onCropApply(blob: Blob, outExt: string) {
     if (!crop) return;
-    const relPath = `_nexira/${crop.target}.${ext}`;
+    const target = crop.target;
+    const relPath = `_nexira/${target}.${outExt}`;
     crop = null;
-    uploadOne(relPath, blob);
+    putBranding(target, relPath, blob);
   }
 
   async function del(f: string) {

@@ -42,7 +42,9 @@
     else arr.push(v);
   }
   function setRec(rec: Partial<Record<string, string>>, k: string, v: string) {
-    if (v.trim()) rec[k] = v.trim();
+    // store the raw value so mid-edit whitespace is typeable; blank removes the
+    // key. Trimming on every keystroke would fight the one-way `value=` binding.
+    if (v.trim()) rec[k] = v;
     else delete rec[k];
   }
 

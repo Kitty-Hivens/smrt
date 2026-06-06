@@ -180,6 +180,7 @@ export const en = {
   'crop.hint': 'Drag to move, slider to zoom',
   'crop.zoom': 'Zoom',
   'crop.apply': 'Apply',
+  'crop.failed': 'Could not load this image.',
 
   'pe.asset.resourcepack': 'Resource pack',
   'pe.asset.shader': 'Shader',
