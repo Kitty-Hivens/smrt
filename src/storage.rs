@@ -668,7 +668,9 @@ mod tests {
         assert!(is_safe_rel_path("config/foamfix.cfg"));
         // real resourcepack names carry square-bracketed version ranges; the URL
         // layer percent-encodes them, so the dest validator must allow them too
-        assert!(is_safe_rel_path("resourcepacks/NewDefault+v1.82[MC1.9-1.12.2].zip"));
+        assert!(is_safe_rel_path(
+            "resourcepacks/NewDefault+v1.82[MC1.9-1.12.2].zip"
+        ));
         assert!(!is_safe_rel_path("../etc/passwd"));
         assert!(!is_safe_rel_path("a/../../b"));
         assert!(!is_safe_rel_path("/abs/path"));
