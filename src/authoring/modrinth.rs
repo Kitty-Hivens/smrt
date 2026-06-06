@@ -1,7 +1,8 @@
 use anyhow::{Context, Result, anyhow};
-use reqwest::Client;
+use reqwest::{Client, redirect::Policy};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::Duration;
 
 const MODRINTH_BASE: &str = "https://api.modrinth.com";
 const USER_AGENT: &str = "Kitty-Hivens/smrt-pack (+https://github.com/Kitty-Hivens/smrt)";
@@ -15,6 +16,8 @@ impl Modrinth {
     pub fn new() -> Result<Self> {
         let http = Client::builder()
             .user_agent(USER_AGENT)
+            .connect_timeout(Duration::from_secs(30))
+            .redirect(Policy::limited(5))
             .build()
             .context("modrinth http client")?;
         Ok(Self { http })
@@ -103,10 +106,13 @@ impl Modrinth {
     ) -> Result<Vec<SearchHit>> {
         // project_type is one of Modrinth's known kinds (mod / resourcepack /
         // shader); the caller picks it so the panel can browse packs, not just mods.
-        let facets = match mc {
-            Some(v) => format!(r#"[["project_type:{project_type}"],["versions:{v}"]]"#),
-            None => format!(r#"[["project_type:{project_type}"]]"#),
-        };
+        // build the facets as JSON so an mc/query value carrying quotes or
+        // brackets can't reshape the structure sent upstream
+        let mut groups: Vec<Vec<String>> = vec![vec![format!("project_type:{project_type}")]];
+        if let Some(v) = mc {
+            groups.push(vec![format!("versions:{v}")]);
+        }
+        let facets = serde_json::to_string(&groups).context("encode facets")?;
         let resp = self
             .http
             .get(format!("{MODRINTH_BASE}/v2/search"))
@@ -165,11 +171,13 @@ impl Modrinth {
         // cap the response so a huge or malicious release asset can't OOM the
         // mirror; GitHub release downloads always send a content-length
         const MAX_BYTES: u64 = 512 * 1024 * 1024;
-        let resp = self.http.get(url).send().await.context("asset GET")?;
+        let mut resp = self.http.get(url).send().await.context("asset GET")?;
         let status = resp.status();
         if !status.is_success() {
             return Err(anyhow!("asset HTTP {status} for {url}"));
         }
+        // content-length is an early reject; a missing or lying header is still
+        // bounded by counting the bytes we actually read
         if let Some(len) = resp.content_length()
             && len > MAX_BYTES
         {
@@ -178,7 +186,17 @@ impl Modrinth {
                 MAX_BYTES / 1024 / 1024
             ));
         }
-        Ok(resp.bytes().await.context("asset body")?.to_vec())
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = resp.chunk().await.context("asset body")? {
+            if buf.len() as u64 + chunk.len() as u64 > MAX_BYTES {
+                return Err(anyhow!(
+                    "asset at {url} exceeds the {} MiB cap",
+                    MAX_BYTES / 1024 / 1024
+                ));
+            }
+            buf.extend_from_slice(&chunk);
+        }
+        Ok(buf)
     }
 }
 
