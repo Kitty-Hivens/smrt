@@ -4,6 +4,7 @@
 import type {
   AuthoringPacksListing,
   CacheInventory,
+  CacheUsageListing,
   Featured,
   Curator,
   Health,
@@ -122,6 +123,8 @@ export const api = {
   servers: () => getJson<ServerListing>('/v1/servers'),
   featured: () => getJson<Featured>('/v1/featured'),
   cacheInventory: () => getJson<CacheInventory>('/v1/cache/inventory'),
+  // admin-only: same jars, enriched with which pack/filename uses each sha1
+  cacheUsage: () => getJson<CacheUsageListing>('/v1/admin/cache/inventory'),
   authoringPacks: () => getJson<AuthoringPacksListing>('/v1/admin/packs'),
 
   // ── admin writes ──

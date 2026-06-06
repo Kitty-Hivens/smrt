@@ -9,6 +9,7 @@ use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
+use std::collections::HashMap;
 
 // Mod jars and curated assets routinely run 5-50 MB. Axum's 2 MiB default
 // trips every realistic upload; the nginx layer is already gated at 100 MB
@@ -45,6 +46,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/admin/featured", post(save_featured))
         .route("/v1/admin/packs/:pack_id/validate", post(validate_pack))
         .route("/v1/admin/cache/removed", get(list_removed))
+        .route("/v1/admin/cache/inventory", get(list_cache_usage))
         .route("/v1/admin/modrinth/search", get(modrinth_search))
         .route("/v1/admin/modrinth/versions", get(modrinth_versions))
         .route("/v1/admin/modrinth/icon", get(modrinth_icon))
@@ -251,6 +253,59 @@ async fn list_removed(State(state): State<AppState>) -> Result<Json<RemovedListi
     Ok(Json(RemovedListing {
         schema_version: SCHEMA_VERSION,
         removed,
+    }))
+}
+
+// Enrich the cache inventory with where each jar is used, by reverse-indexing
+// every authoring config's smrt_cache sources. Admin-only: it exposes which
+// pack pulls which jar (and under what filename), which the public inventory
+// must not. A jar with no uses is an orphan -- safe to take down.
+async fn list_cache_usage(
+    State(state): State<AppState>,
+) -> Result<Json<CacheUsageListing>, ApiError> {
+    let inventory = state.storage.list_cache_inventory().await?;
+    let pack_ids = state.storage.list_authoring_packs().await?;
+
+    let mut uses: HashMap<String, Vec<CacheUse>> = HashMap::new();
+    for pid in pack_ids {
+        let cfg = match state.storage.load_pack_config(&pid).await {
+            Ok(c) => c,
+            // a pack listed without a readable config just contributes no uses
+            Err(ApiError::NotFound) => continue,
+            Err(e) => return Err(e),
+        };
+        for m in &cfg.mods {
+            if let SourceDecl::SmrtCache { sha1 } = &m.source {
+                uses.entry(sha1.clone()).or_default().push(CacheUse {
+                    pack_id: pid.clone(),
+                    filename: m.filename.clone(),
+                });
+            }
+        }
+        for a in &cfg.assets {
+            if let SourceDecl::SmrtCache { sha1 } = &a.source {
+                uses.entry(sha1.clone()).or_default().push(CacheUse {
+                    pack_id: pid.clone(),
+                    filename: a.dest.clone(),
+                });
+            }
+        }
+    }
+
+    let entries = inventory
+        .into_iter()
+        .map(|e| {
+            let uses = uses.remove(&e.sha1).unwrap_or_default();
+            CacheUsageEntry {
+                sha1: e.sha1,
+                size_bytes: e.size_bytes,
+                uses,
+            }
+        })
+        .collect();
+    Ok(Json(CacheUsageListing {
+        schema_version: SCHEMA_VERSION,
+        entries,
     }))
 }
 

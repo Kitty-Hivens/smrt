@@ -17,6 +17,9 @@ export type { ServerListing } from './bindings/ServerListing';
 export type { Featured } from './bindings/Featured';
 export type { CacheInventory } from './bindings/CacheInventory';
 export type { CacheInventoryEntry } from './bindings/CacheInventoryEntry';
+export type { CacheUsageListing } from './bindings/CacheUsageListing';
+export type { CacheUsageEntry } from './bindings/CacheUsageEntry';
+export type { CacheUse } from './bindings/CacheUse';
 
 // authoring config
 export type { PackConfig } from './bindings/PackConfig';
