@@ -15,8 +15,8 @@ pub mod reconstruct;
 pub mod validate;
 
 pub use bootstrap::{BootstrapArgs, bootstrap};
-pub use reconstruct::reconstruct_config;
 pub use build::{build_manifest, make_pack_summary};
 pub use curator::*;
 pub use modrinth::*;
+pub use reconstruct::reconstruct_config;
 pub use validate::{ValidateReport, validate};

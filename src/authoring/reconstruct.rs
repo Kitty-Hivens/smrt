@@ -139,7 +139,8 @@ mod tests {
                 size_bytes: 30,
                 required: false,
                 source: Source::SmrtStatic {
-                    url: "https://m/v1/packs/Industrial/static/shaderpacks/BSL%20(v8%2B).zip".into(),
+                    url: "https://m/v1/packs/Industrial/static/shaderpacks/BSL%20(v8%2B).zip"
+                        .into(),
                 },
                 display: None,
             }],
