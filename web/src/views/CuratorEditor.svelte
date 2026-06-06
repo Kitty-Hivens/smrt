@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { t } from '../lib/i18n.svelte';
   import type { Curator } from '../lib/types';
   import ModrinthPicker from './ModrinthPicker.svelte';
 
@@ -55,7 +56,7 @@
       .filter(Boolean);
     try {
       await api.saveCuratorStructured(packId, $state.snapshot(curator));
-      msg = 'Saved -- section comments kept.';
+      msg = t('cur.savedStructured');
       rawText = await api.curator(packId);
     } catch (e) {
       msg = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
@@ -69,7 +70,7 @@
     msg = '';
     try {
       await api.saveCurator(packId, rawText);
-      msg = 'Saved verbatim.';
+      msg = t('cur.savedRaw');
       const c = await api.curatorStructured(packId);
       curator = c;
       galleryStr = c.pack_meta.gallery_urls.join('\n');
@@ -83,16 +84,16 @@
 
 <div class="bar row">
   <div class="seg-group">
-    <button class="seg" class:active={view === 'structured'} onclick={() => (view = 'structured')}>Structured</button>
-    <button class="seg" class:active={view === 'raw'} onclick={() => (view = 'raw')}>Raw</button>
+    <button class="seg" class:active={view === 'structured'} onclick={() => (view = 'structured')}>{t('cur.structured')}</button>
+    <button class="seg" class:active={view === 'raw'} onclick={() => (view = 'raw')}>{t('cur.raw')}</button>
   </div>
   {#if view === 'structured'}
     <button class="primary" onclick={saveStructured} disabled={busy || !curator}>
-      {busy ? 'saving...' : 'Save curator'}
+      {busy ? t('cur.saving') : t('cur.save')}
     </button>
   {:else}
     <button class="primary" onclick={saveRaw} disabled={busy}>
-      {busy ? 'saving...' : 'Save curator.toml'}
+      {busy ? t('cur.saving') : t('cur.saveRaw')}
     </button>
   {/if}
   {#if msg}<span class="muted mono">{msg}</span>{/if}
@@ -101,34 +102,26 @@
 {#if err}<div class="err mono">{err}</div>{/if}
 
 {#if loading}
-  <div class="muted mono">loading...</div>
+  <div class="muted mono">{t('common.loading')}</div>
 {:else if view === 'raw'}
-  <p class="muted hint">
-    Full-fidelity TOML -- every comment kept verbatim. The omnibus file:
-    default_off, mark_optional, incompatible, substitute, role_table,
-    category_table, extra_mods/assets, drop_assets, hidemymods.
-  </p>
+  <p class="muted hint">{t('cur.rawHint')}</p>
   <textarea class="curator mono" bind:value={rawText} spellcheck="false" placeholder="# curator.toml"></textarea>
 {:else if curator}
-  <p class="muted hint">
-    Structured edits re-serialize the managed tables (section comments kept,
-    inner per-line comments may not). substitute / incompatible / drop_assets /
-    hidemymods live in the Raw view.
-  </p>
+  <p class="muted hint">{t('cur.structHint')}</p>
 
-  <div class="sec-h"><h3>Pack meta</h3></div>
+  <div class="sec-h"><h3>{t('cur.packMeta')}</h3></div>
   <div class="panel meta">
-    <label>icon_url<input class="mono" bind:value={curator.pack_meta.icon_url} placeholder="https://.../icon.png" /></label>
-    <label>banner_url<input class="mono" bind:value={curator.pack_meta.banner_url} placeholder="https://.../banner.png" /></label>
-    <label class="wide">gallery_urls (one per line)<textarea class="mono" rows="3" bind:value={galleryStr}></textarea></label>
-    <label class="wide">description_md<textarea class="mono" rows="5" bind:value={curator.pack_meta.description_md}></textarea></label>
+    <label>{t('cur.iconUrl')}<input class="mono" bind:value={curator.pack_meta.icon_url} placeholder="https://.../icon.png" /></label>
+    <label>{t('cur.bannerUrl')}<input class="mono" bind:value={curator.pack_meta.banner_url} placeholder="https://.../banner.png" /></label>
+    <label class="wide">{t('cur.gallery')}<textarea class="mono" rows="3" bind:value={galleryStr}></textarea></label>
+    <label class="wide">{t('cur.description')}<textarea class="mono" rows="5" bind:value={curator.pack_meta.description_md}></textarea></label>
   </div>
 
-  <div class="sec-h"><h3>Per-mod rules <span class="faint">({mods.length} mods)</span></h3></div>
+  <div class="sec-h"><h3>{t('cur.perMod')} <span class="faint">({t('cur.modsN', { n: mods.length })})</span></h3></div>
   <div class="panel scroll">
     <table>
       <thead>
-        <tr><th>mod</th><th style="width:70px">optional</th><th style="width:80px">default-off</th><th>category</th><th>role</th></tr>
+        <tr><th>{t('cur.col.mod')}</th><th style="width:70px">{t('cur.col.optional')}</th><th style="width:80px">{t('cur.col.defaultOff')}</th><th>{t('cur.col.category')}</th><th>{t('cur.col.role')}</th></tr>
       </thead>
       <tbody>
         {#each mods as m}
@@ -140,18 +133,18 @@
             <td><input value={curator.role_table[m] ?? ''} oninput={(e) => setRec(curator!.role_table, m, e.currentTarget.value)} placeholder="-" /></td>
           </tr>
         {/each}
-        {#if mods.length === 0}<tr><td colspan="5" class="muted">No mods in the config yet.</td></tr>{/if}
+        {#if mods.length === 0}<tr><td colspan="5" class="muted">{t('cur.noMods')}</td></tr>{/if}
       </tbody>
     </table>
   </div>
 
   <div class="sec-h row">
-    <h3>Extra mods <span class="faint">({curator.extra_mods.length})</span></h3>
-    <button onclick={() => (extraPicker = true)}>Add from Modrinth</button>
+    <h3>{t('cur.extraMods')} <span class="faint">({curator.extra_mods.length})</span></h3>
+    <button onclick={() => (extraPicker = true)}>{t('cur.addModrinth')}</button>
   </div>
   <div class="panel scroll">
     <table>
-      <thead><tr><th>slug</th><th style="width:60px">req</th><th>category</th><th>description</th><th style="width:44px"></th></tr></thead>
+      <thead><tr><th>{t('cur.col.slug')}</th><th style="width:60px">{t('cur.col.req')}</th><th>{t('cur.col.category')}</th><th>{t('cur.col.description')}</th><th style="width:44px"></th></tr></thead>
       <tbody>
         {#each curator.extra_mods as em, i}
           <tr>
@@ -162,7 +155,7 @@
             <td class="ctr"><button class="danger sm" onclick={() => curator!.extra_mods.splice(i, 1)}>x</button></td>
           </tr>
         {/each}
-        {#if curator.extra_mods.length === 0}<tr><td colspan="5" class="muted">No extra mods. Add one from Modrinth.</td></tr>{/if}
+        {#if curator.extra_mods.length === 0}<tr><td colspan="5" class="muted">{t('cur.noExtra')}</td></tr>{/if}
       </tbody>
     </table>
   </div>
