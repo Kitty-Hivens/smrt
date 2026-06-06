@@ -24,7 +24,8 @@ mod tests {
     const NOW: &str = "2026-06-06T00:00:00Z";
 
     // A registry with two forge mods (one referenced by a build, one orphan),
-    // an `any` tweaker, a cleanroom-only artifact, a pack build, and a relation.
+    // an `any` tweaker, a cleanroom-only artifact, a forge+fabric multi-loader
+    // jar, a pack build, and a relation.
     fn fixture() -> Registry {
         let r = Registry::open_in_memory().unwrap();
         r.with_conn_mut(|c| {
@@ -38,7 +39,7 @@ mod tests {
                 c,
                 apple,
                 "2.5.1",
-                "forge",
+                &["forge"],
                 "sha_apple",
                 1000,
                 Some("appleskin.jar"),
@@ -51,7 +52,7 @@ mod tests {
                 c,
                 jei,
                 "4.16",
-                "forge",
+                &["forge"],
                 "sha_jei",
                 2000,
                 Some("jei.jar"),
@@ -64,7 +65,7 @@ mod tests {
                 c,
                 tw,
                 "1.0",
-                "any",
+                &["any"],
                 "sha_tweak",
                 300,
                 Some("tweak.jar"),
@@ -77,10 +78,23 @@ mod tests {
                 c,
                 cr,
                 "1.0",
-                "cleanroom",
+                &["cleanroom"],
                 "sha_cr",
                 400,
                 Some("cr.jar"),
+                None,
+                NOW,
+            )?;
+            // a single jar published for two loaders at once (Modrinth set)
+            let multi = upsert::upsert_mod_by_alias(c, &[("modid", "multimod")], NOW)?;
+            upsert::upsert_mod_version(
+                c,
+                multi,
+                "3.0",
+                &["forge", "fabric"],
+                "sha_multi",
+                600,
+                Some("multi.jar"),
                 None,
                 NOW,
             )?;
@@ -90,7 +104,7 @@ mod tests {
                 c,
                 orph,
                 "0.1",
-                "forge",
+                &["forge"],
                 "sha_orphan",
                 50,
                 Some("orphan.jar"),
@@ -184,7 +198,13 @@ mod tests {
             let vs = queries::versions_of_mod(c, "modid", "appleskin")?;
             assert_eq!(vs.len(), 1);
             assert_eq!(vs[0].version, "2.5.1");
-            assert_eq!(vs[0].target, "forge");
+            assert_eq!(vs[0].targets, vec!["forge".to_string()]);
+            // the multi-loader jar folds both targets into one version row
+            let ms = queries::versions_of_mod(c, "modid", "multimod")?;
+            assert_eq!(ms.len(), 1);
+            let mut t = ms[0].targets.clone();
+            t.sort();
+            assert_eq!(t, vec!["fabric".to_string(), "forge".to_string()]);
             Ok(())
         })
         .unwrap();
@@ -194,23 +214,32 @@ mod tests {
     fn q4_family_reachability_is_directional() {
         let r = fixture();
         r.with_conn(|c| {
-            let targets = |loader: &str| -> Vec<String> {
+            let eligible = |loader: &str| -> Vec<String> {
                 queries::eligible_for_loader(c, loader)
                     .unwrap()
                     .into_iter()
-                    .map(|e| e.target)
+                    .map(|e| e.sha1)
                     .collect()
             };
-            // cleanroom build inherits forge -> forge + cleanroom + any all eligible
-            let cr = targets("cleanroom");
-            assert!(cr.contains(&"forge".to_string()));
-            assert!(cr.contains(&"cleanroom".to_string()));
-            assert!(cr.contains(&"any".to_string()));
-            // forge build does NOT pick up the cleanroom-only artifact
-            let fo = targets("forge");
-            assert!(fo.contains(&"forge".to_string()));
-            assert!(fo.contains(&"any".to_string()));
-            assert!(!fo.contains(&"cleanroom".to_string()));
+            // cleanroom inherits forge -> forge + cleanroom + any + the multi jar
+            let cr = eligible("cleanroom");
+            for s in ["sha_apple", "sha_tweak", "sha_cr", "sha_multi"] {
+                assert!(cr.contains(&s.to_string()), "cleanroom should see {s}");
+            }
+            // forge build does NOT pick up the cleanroom-only artifact, but does
+            // see the forge+fabric jar (eligibility is per-target)
+            let fo = eligible("forge");
+            assert!(fo.contains(&"sha_apple".to_string()));
+            assert!(fo.contains(&"sha_tweak".to_string())); // any
+            assert!(fo.contains(&"sha_multi".to_string())); // forge of forge+fabric
+            assert!(!fo.contains(&"sha_cr".to_string()));
+            // fabric sees the multi jar via its fabric target + the any tweaker,
+            // and none of the forge-only artifacts
+            let fa = eligible("fabric");
+            assert!(fa.contains(&"sha_multi".to_string()));
+            assert!(fa.contains(&"sha_tweak".to_string()));
+            assert!(!fa.contains(&"sha_apple".to_string()));
+            assert!(!fa.contains(&"sha_cr".to_string()));
             Ok(())
         })
         .unwrap();
@@ -228,7 +257,7 @@ mod tests {
             // a re-harvest of the same sha1 must not overwrite it
             let jei = queries::mod_id_for_alias(c, "modid", "jei")?.unwrap();
             upsert::upsert_mod_version(
-                c, jei, "9.9.9", "forge", "sha_jei", 2000, Some("jei.jar"), None, NOW,
+                c, jei, "9.9.9", &["forge"], "sha_jei", 2000, Some("jei.jar"), None, NOW,
             )?;
             let v: String =
                 c.query_row("SELECT version FROM mod_version WHERE sha1 = 'sha_jei'", [], |r| {

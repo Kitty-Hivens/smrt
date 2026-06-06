@@ -103,9 +103,9 @@ mod tests {
         // harvest two mods + a pack (source='harvested')
         r.with_txn(|c| {
             let a = upsert::upsert_mod_by_alias(c, &[("modid", "amod")], "T0")?;
-            upsert::upsert_mod_version(c, a, "1", "forge", "sha_a", 1, None, None, "T0")?;
+            upsert::upsert_mod_version(c, a, "1", &["forge"], "sha_a", 1, None, None, "T0")?;
             let b = upsert::upsert_mod_by_alias(c, &[("modid", "bmod")], "T0")?;
-            upsert::upsert_mod_version(c, b, "1", "forge", "sha_b", 1, None, None, "T0")?;
+            upsert::upsert_mod_version(c, b, "1", &["forge"], "sha_b", 1, None, None, "T0")?;
             upsert::upsert_pack(c, "P", "hivens", "T0")?;
             Ok(())
         })

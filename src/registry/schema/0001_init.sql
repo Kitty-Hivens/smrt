@@ -8,8 +8,8 @@ CREATE TABLE registry_meta (
 );
 
 -- loader taxonomy: what we KNOW about a loader (family parents, java). A loader
--- id used as a mod_version.target or pack_build.loader_id need NOT have a row
--- here (open taxonomy); this table only carries the family DAG + runtime facts.
+-- id used as a mod_version_target.target or pack_build.loader_id need NOT have a
+-- row here (open taxonomy); this table only carries the family DAG + runtime facts.
 CREATE TABLE loader (
   id          TEXT PRIMARY KEY,
   display     TEXT NOT NULL,
@@ -48,14 +48,16 @@ CREATE TABLE mod_alias (
 );
 CREATE INDEX idx_mod_alias_mod ON mod_alias(mod_id);
 
--- concrete artifact (a jar), keyed by (mod, version, target). target is a
--- compatibility PREDICATE: a loader id OR 'any'. Plain TEXT, NOT a hard FK, so
--- 'any' and loaders we have not catalogued still store cleanly.
+-- concrete artifact (a jar). sha1 is the ONLY identity: the same bytes are one
+-- artifact, different bytes are different artifacts -- even when they share a
+-- version label (a rebuild, or two jars both lacking version metadata). There is
+-- deliberately no (mod_id, version) uniqueness; that would crash a harvest of two
+-- such jars. Compatibility targets live in mod_version_target (a jar can suit
+-- several loaders), not a column, since one sha1 can't be several rows.
 CREATE TABLE mod_version (
   id           INTEGER PRIMARY KEY,
   mod_id       INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,
   version      TEXT NOT NULL,
-  target       TEXT NOT NULL DEFAULT 'any',
   sha1         TEXT NOT NULL,
   size_bytes   INTEGER NOT NULL,
   filename     TEXT,
@@ -64,13 +66,22 @@ CREATE TABLE mod_version (
   confidence   INTEGER NOT NULL DEFAULT 10,
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL,
-  UNIQUE (mod_id, version, target),
   CHECK (source IN ('harvested','jar-meta','modrinth','inferred','curator','authored'))
 );
 -- sha1 is a content address: the same bytes cannot be two artifacts.
 CREATE UNIQUE INDEX idx_mv_sha1 ON mod_version(sha1);
 CREATE INDEX idx_mv_mod ON mod_version(mod_id);
-CREATE INDEX idx_mv_target ON mod_version(target);
+
+-- a mod_version's compatibility targets: each a loader id OR 'any'. A jar
+-- published for several loaders (Modrinth lists them as a set) gets one row per
+-- target; a loader-agnostic tweaker gets a single 'any' row. target is plain
+-- TEXT, NOT a hard FK, so 'any' and uncatalogued loaders store cleanly.
+CREATE TABLE mod_version_target (
+  mod_version_id INTEGER NOT NULL REFERENCES mod_version(id) ON DELETE CASCADE,
+  target         TEXT NOT NULL,
+  PRIMARY KEY (mod_version_id, target)
+);
+CREATE INDEX idx_mvt_target ON mod_version_target(target);
 
 -- packs + builds. Loader is per-build (migration model A). loader_id is a plain
 -- string (open taxonomy), advisory against the loader table.

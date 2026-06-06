@@ -74,13 +74,14 @@ mod tests {
         let tables: i64 = conn
             .query_row(
                 "SELECT count(*) FROM sqlite_master WHERE type = 'table'
-                 AND name IN ('mods','mod_alias','mod_version','pack','pack_build',
-                              'pack_build_mod','relation','loader','loader_parent','registry_meta')",
+                 AND name IN ('mods','mod_alias','mod_version','mod_version_target','pack',
+                              'pack_build','pack_build_mod','relation','loader','loader_parent',
+                              'registry_meta')",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(tables, 10);
+        assert_eq!(tables, 11);
 
         let loaders: i64 = conn
             .query_row("SELECT count(*) FROM loader", [], |r| r.get(0))

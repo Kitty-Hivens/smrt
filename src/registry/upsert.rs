@@ -57,14 +57,17 @@ pub fn upsert_mod_by_alias(conn: &Connection, aliases: &[(&str, &str)], now: &st
     Ok(mod_id)
 }
 
-/// Upsert an artifact keyed by its content hash. Returns the `mod_version` id.
-/// A precious (`curator`/`authored`) row with this sha1 is left untouched.
+/// Upsert an artifact keyed by its content hash, and (re)record its
+/// compatibility `targets` (loader ids, or `any` when the set is empty).
+/// Returns the `mod_version` id. A precious (`curator`/`authored`) row with this
+/// sha1 is left untouched -- its columns AND its hand-set targets both survive a
+/// re-harvest.
 #[allow(clippy::too_many_arguments)]
 pub fn upsert_mod_version(
     conn: &Connection,
     mod_id: i64,
     version: &str,
-    target: &str,
+    targets: &[&str],
     sha1: &str,
     size_bytes: i64,
     filename: Option<&str>,
@@ -73,13 +76,12 @@ pub fn upsert_mod_version(
 ) -> Result<i64> {
     conn.execute(
         "INSERT INTO mod_version
-           (mod_id, version, target, sha1, size_bytes, filename, mc_versions,
+           (mod_id, version, sha1, size_bytes, filename, mc_versions,
             source, confidence, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'harvested', 10, ?8, ?8)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'harvested', 10, ?7, ?7)
          ON CONFLICT(sha1) DO UPDATE SET
            mod_id = excluded.mod_id,
            version = excluded.version,
-           target = excluded.target,
            size_bytes = excluded.size_bytes,
            filename = excluded.filename,
            mc_versions = excluded.mc_versions,
@@ -88,7 +90,6 @@ pub fn upsert_mod_version(
         params![
             mod_id,
             version,
-            target,
             sha1,
             size_bytes,
             filename,
@@ -96,11 +97,40 @@ pub fn upsert_mod_version(
             now
         ],
     )?;
-    Ok(conn.query_row(
-        "SELECT id FROM mod_version WHERE sha1 = ?1",
+    let (id, precious): (i64, bool) = conn.query_row(
+        "SELECT id, source IN ('curator', 'authored') FROM mod_version WHERE sha1 = ?1",
         params![sha1],
-        |r| r.get(0),
-    )?)
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    set_mod_version_targets(conn, id, targets, precious)?;
+    Ok(id)
+}
+
+/// Replace a mod_version's target set with `targets` (empty -> `any`). Skipped
+/// for precious rows: an authored artifact's hand-set targets are not a
+/// harvested fact and must not be reset. Idempotent for harvested rows.
+fn set_mod_version_targets(
+    conn: &Connection,
+    mod_version_id: i64,
+    targets: &[&str],
+    precious: bool,
+) -> Result<()> {
+    if precious {
+        return Ok(());
+    }
+    conn.execute(
+        "DELETE FROM mod_version_target WHERE mod_version_id = ?1",
+        params![mod_version_id],
+    )?;
+    let any = ["any"];
+    let effective: &[&str] = if targets.is_empty() { &any } else { targets };
+    for t in effective {
+        conn.execute(
+            "INSERT OR IGNORE INTO mod_version_target (mod_version_id, target) VALUES (?1, ?2)",
+            params![mod_version_id, t],
+        )?;
+    }
+    Ok(())
 }
 
 pub fn mod_version_id_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<i64>> {
