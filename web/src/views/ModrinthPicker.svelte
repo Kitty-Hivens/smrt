@@ -1,13 +1,16 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { t } from '../lib/i18n.svelte';
   import type { ModrinthHit } from '../lib/types';
 
   let {
     mc,
+    projectType = 'mod',
     onPick,
     onClose,
   }: {
     mc?: string;
+    projectType?: string;
     onPick: (sel: { project_id: string; slug: string; version_id: string; title: string }) => void;
     onClose: () => void;
   } = $props();
@@ -32,7 +35,7 @@
     busy = true;
     err = '';
     try {
-      hits = await api.modrinthSearch(q.trim(), mc);
+      hits = await api.modrinthSearch(q.trim(), mc, projectType);
     } catch (e) {
       err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
     } finally {
@@ -61,11 +64,11 @@
 <div class="overlay" onclick={onClose} role="presentation">
   <div class="picker panel" onclick={(e) => e.stopPropagation()} role="presentation">
     <div class="ph row">
-      <input bind:value={q} oninput={onInput} placeholder={`Search Modrinth${mc ? ` (${mc})` : ''}...`} />
-      <button onclick={onClose}>Close</button>
+      <input bind:value={q} oninput={onInput} placeholder={t('mrp.search')} />
+      <button onclick={onClose}>{t('common.close')}</button>
     </div>
     {#if err}<div class="err mono">{err}</div>{/if}
-    {#if busy}<div class="muted s">searching...</div>{/if}
+    {#if busy}<div class="muted s">{t('mrp.searching')}</div>{/if}
     <div class="hits scroll">
       {#each hits as h}
         <button class="hit" onclick={() => pick(h)} disabled={resolving === h.project_id}>
@@ -77,7 +80,7 @@
           {#if resolving === h.project_id}<span class="muted mono rs">resolving...</span>{/if}
         </button>
       {/each}
-      {#if hits.length === 0 && q.trim() && !busy}<div class="muted s">No results.</div>{/if}
+      {#if hits.length === 0 && q.trim() && !busy}<div class="muted s">{t('mrp.noResults')}</div>{/if}
     </div>
   </div>
 </div>

@@ -122,6 +122,13 @@ export const en = {
   'gh.asset': 'Asset (file name)',
   'gh.add': 'Download and add',
   'gh.adding': 'downloading...',
+
+  'pe.asset.resourcepack': 'Resource pack',
+  'pe.asset.shader': 'Shader',
+  'pe.dropAssets': 'Drop a .zip / config here, or click to choose',
+  'mrp.search': 'Search Modrinth...',
+  'mrp.searching': 'searching...',
+  'mrp.noResults': 'No results.',
 } as const;
 
 export type Dict = Record<keyof typeof en, string>;
