@@ -139,6 +139,27 @@ export const en = {
   'cache.deleteMsg': 'Delete {name}? It is added to the takedown list and cannot be re-uploaded.',
   'cache.removedTitle': 'Removed (takedown)',
   'cache.removedSub': '{count} sha1 blocked from re-ingestion',
+
+  'servers.new': 'New server',
+  'servers.col.server': 'Server',
+  'servers.col.owner': 'Owner',
+  'servers.empty': 'No servers curated yet.',
+  'servers.deleteTitle': 'Delete server',
+  'servers.deleteMsg': 'Delete server {id}? Removes its metadata from the mirror.',
+
+  'se.edit': 'Edit {id}',
+  'se.create': 'Create',
+  'se.save': 'Save',
+  'se.saving': 'saving...',
+  'se.serverId': 'Server id',
+  'se.serverIdHint': 'Unique, set once at creation',
+  'se.card': 'Card',
+  'se.links': 'Links',
+  'se.banner': 'Banner URL',
+  'se.description': 'Description',
+  'se.descHint': 'Markdown',
+  'se.discord': 'Discord URL',
+  'se.website': 'Website URL',
 } as const;
 
 export type Dict = Record<keyof typeof en, string>;

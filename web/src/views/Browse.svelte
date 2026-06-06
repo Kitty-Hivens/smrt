@@ -52,8 +52,8 @@
   loadAll();
 
   async function delServer(id: string) {
-    const ok = await dialogs.confirm(`Delete server "${id}"? Removes its metadata from the mirror.`, {
-      title: 'Delete server',
+    const ok = await dialogs.confirm(t('servers.deleteMsg', { id }), {
+      title: t('servers.deleteTitle'),
       danger: true,
     });
     if (!ok) return;
@@ -277,36 +277,59 @@
         {/key}
       {:else}
         <div class="bar">
-          <button class="primary" onclick={() => (serverEdit = 'new')}>New server</button>
+          <button class="primary" onclick={() => (serverEdit = 'new')}>{t('servers.new')}</button>
+        </div>
+        <div class="panel">
+          <table>
+            <thead>
+              <tr>
+                <th>{t('servers.col.server')}</th>
+                <th>{t('packs.col.pack')}</th>
+                <th>{t('servers.col.owner')}</th>
+                <th>{t('packs.col.flags')}</th>
+                <th style="width:90px"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each servers as s}
+                <tr
+                  class="clickable"
+                  role="button"
+                  tabindex="0"
+                  onclick={() => (serverEdit = s)}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      serverEdit = s;
+                    }
+                  }}
+                >
+                  <td>
+                    <div>{s.display_name}</div>
+                    <div class="faint mono">{s.server_id}</div>
+                  </td>
+                  <td class="mono">{s.pack_id}</td>
+                  <td>{s.owner_display}</td>
+                  <td>
+                    {#if s.featured}<span class="tag" style="color:var(--accent)">{t('packs.flag.featured')}</span>{/if}
+                  </td>
+                  <td class="actions">
+                    <button
+                      class="danger"
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        delServer(s.server_id);
+                      }}>{t('common.delete')}</button>
+                  </td>
+                </tr>
+              {/each}
+              {#if servers.length === 0 && !loading}
+                <tr><td colspan="5" class="muted">{t('servers.empty')}</td></tr>
+              {/if}
+            </tbody>
+          </table>
         </div>
       {/if}
-      <div class="panel">
-        <table>
-          <thead>
-            <tr><th>Server</th><th>Pack</th><th>Owner</th><th>Flags</th><th style="width:160px"></th></tr>
-          </thead>
-          <tbody>
-            {#each servers as s}
-              <tr>
-                <td>
-                  <div>{s.display_name}</div>
-                  <div class="faint mono">{s.server_id}</div>
-                </td>
-                <td class="mono">{s.pack_id}</td>
-                <td>{s.owner_display}</td>
-                <td>{#if s.featured}<span class="tag" style="color:var(--accent)">featured</span>{/if}</td>
-                <td class="actions">
-                  <button onclick={() => (serverEdit = s)}>Edit</button>
-                  <button class="danger" onclick={() => delServer(s.server_id)}>Delete</button>
-                </td>
-              </tr>
-            {/each}
-            {#if servers.length === 0 && !loading}
-              <tr><td colspan="5" class="muted">No servers curated yet.</td></tr>
-            {/if}
-          </tbody>
-        </table>
-      </div>
     {:else if route.section === 'cache'}
       <DropZone
         accept=".jar"
