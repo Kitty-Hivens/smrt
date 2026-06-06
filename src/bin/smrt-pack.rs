@@ -5,7 +5,7 @@ use smrt::authoring::{
     apply_role_table as enrich_apply_role_table, enrich_from_mcmod_info,
     infer_requires_from_mcmod_info, load_curator, load_pack_meta, load_role_table,
 };
-use smrt::domain::{LoaderSpec, PackConfig};
+use smrt::domain::{LoaderSpec, PackConfig, PackManifest, PackSummary};
 use smrt::storage::Storage;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -147,6 +147,18 @@ enum Cmd {
         #[arg(long = "skip", default_values = [".DS_Store", "Thumbs.db"])]
         skip: Vec<String>,
     },
+
+    /// Reconstruct an editable authoring config from a published manifest +
+    /// summary, to migrate a CLI-era pack (no `authoring/` inputs) into the
+    /// panel's editable format. Pair with a curator that folds in pack-meta.
+    ReconstructConfig {
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        summary: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -241,7 +253,27 @@ async fn main() -> Result<()> {
             token_file,
             skip,
         } => run_upload_static(&pack_id, &dir, &mirror_base, &token_file, &skip).await,
+        Cmd::ReconstructConfig {
+            manifest,
+            summary,
+            out,
+        } => run_reconstruct_config(&manifest, &summary, &out),
     }
+}
+
+fn run_reconstruct_config(manifest_path: &Path, summary_path: &Path, out: &Path) -> Result<()> {
+    let manifest: PackManifest = read_json(manifest_path)?;
+    let summary: PackSummary = read_json(summary_path)?;
+    let cfg = authoring::reconstruct_config(&manifest, &summary);
+    let json = serde_json::to_vec_pretty(&cfg).context("encoding reconstructed config")?;
+    fs::write(out, &json).with_context(|| format!("writing {}", out.display()))?;
+    info!(
+        out = %out.display(),
+        mods = cfg.mods.len(),
+        assets = cfg.assets.len(),
+        "reconstructed editable config from manifest + summary"
+    );
+    Ok(())
 }
 
 // ── build + validate (thin wrappers over authoring::) ──────────────────────

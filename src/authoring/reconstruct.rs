@@ -1,0 +1,190 @@
+//! Reconstruct an editable `PackConfig` from a published `PackManifest` +
+//! `PackSummary`. Packs onboarded through the old CLI pipeline never had their
+//! config persisted under `authoring/`, so the panel can't open them. This
+//! rebuilds the authoring config from what the mirror already holds, so the
+//! operator can edit and rebuild the pack through the control panel.
+
+use crate::domain::{
+    AssetEntry, DeclaredAsset, DeclaredMod, ModEntry, PackConfig, PackManifest, PackSummary,
+    Source, SourceDecl,
+};
+
+/// The manifest carries the launch facts (mc / loader / java) and the resolved
+/// mods + assets; the summary carries the card metadata (name / tagline / tags
+/// / featured). Together they reproduce the authoring config the build consumes.
+pub fn reconstruct_config(manifest: &PackManifest, summary: &PackSummary) -> PackConfig {
+    PackConfig {
+        pack_id: summary.pack_id.clone(),
+        display_name: summary.display_name.clone(),
+        tagline: summary.tagline.clone(),
+        minecraft_version: manifest.minecraft.version.clone(),
+        loader: manifest.loader.clone(),
+        java_major: manifest.java.major,
+        tags: summary.tags.clone(),
+        featured: summary.featured,
+        mods: manifest.mods.iter().map(reconstruct_mod).collect(),
+        assets: manifest.assets.iter().map(reconstruct_asset).collect(),
+    }
+}
+
+fn reconstruct_mod(m: &ModEntry) -> DeclaredMod {
+    DeclaredMod {
+        filename: m.filename.clone(),
+        required: m.required,
+        default_enabled: m.default_enabled,
+        source: source_decl(&m.source, &m.sha1),
+        display: m.display.clone(),
+        note: None,
+    }
+}
+
+fn reconstruct_asset(a: &AssetEntry) -> DeclaredAsset {
+    DeclaredAsset {
+        dest: a.dest.clone(),
+        required: a.required,
+        source: source_decl(&a.source, &a.sha1),
+        display: a.display.clone(),
+        note: None,
+    }
+}
+
+/// A wire `Source` carries a served URL (cache / static) or Modrinth ids; the
+/// authoring `SourceDecl` carries the hash / rel_path the build re-resolves
+/// from. The entry's own sha1 is the cached jar's content hash, so a cache
+/// source needs no URL parse; a static source recovers its rel_path from the
+/// `/static/<rel>` tail.
+fn source_decl(source: &Source, sha1: &str) -> SourceDecl {
+    match source {
+        Source::Modrinth {
+            project_id,
+            version_id,
+        } => SourceDecl::Modrinth {
+            project_id: project_id.clone(),
+            version_id: version_id.clone(),
+        },
+        Source::SmrtCache { .. } => SourceDecl::SmrtCache {
+            sha1: sha1.to_string(),
+        },
+        Source::SmrtStatic { url } => SourceDecl::SmrtStatic {
+            rel_path: rel_from_static_url(url),
+        },
+    }
+}
+
+/// Recover the static rel_path from a served URL `.../static/<rel>`, whose
+/// segments were percent-encoded by `static_url`. Falls back to the raw tail
+/// if the marker is absent.
+fn rel_from_static_url(url: &str) -> String {
+    let tail = url.split("/static/").nth(1).unwrap_or(url);
+    tail.split('/')
+        .map(|seg| {
+            percent_encoding::percent_decode_str(seg)
+                .decode_utf8_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{Display, JavaSpec, LoaderSpec, MinecraftSpec};
+
+    fn manifest() -> PackManifest {
+        PackManifest {
+            schema_version: 2,
+            pack_id: "Industrial".into(),
+            pack_version: "2026.05.30.1".into(),
+            generated_at: "now".into(),
+            minecraft: MinecraftSpec {
+                version: "1.12.2".into(),
+            },
+            loader: LoaderSpec {
+                name: "forge".into(),
+                version: "14.23.5.2922".into(),
+            },
+            java: JavaSpec { major: 8 },
+            mods: vec![
+                ModEntry {
+                    filename: "jei.jar".into(),
+                    sha1: "a".repeat(40),
+                    size_bytes: 10,
+                    required: true,
+                    default_enabled: true,
+                    source: Source::Modrinth {
+                        project_id: "P".into(),
+                        version_id: "V".into(),
+                    },
+                    display: Some(Display {
+                        name: Some("JEI".into()),
+                        ..Default::default()
+                    }),
+                },
+                ModEntry {
+                    filename: "open-smrt.jar".into(),
+                    sha1: "b".repeat(40),
+                    size_bytes: 20,
+                    required: true,
+                    default_enabled: false,
+                    source: Source::SmrtCache {
+                        url: "https://m/v1/cache/bb/bbb.jar".into(),
+                    },
+                    display: None,
+                },
+            ],
+            assets: vec![AssetEntry {
+                dest: "shaderpacks/BSL (v8+).zip".into(),
+                sha1: "c".repeat(40),
+                size_bytes: 30,
+                required: false,
+                source: Source::SmrtStatic {
+                    url: "https://m/v1/packs/Industrial/static/shaderpacks/BSL%20(v8%2B).zip".into(),
+                },
+                display: None,
+            }],
+        }
+    }
+
+    fn summary() -> PackSummary {
+        PackSummary {
+            pack_id: "Industrial".into(),
+            display_name: "Industrial".into(),
+            tagline: "tag".into(),
+            minecraft_version: "1.12.2".into(),
+            latest_pack_version: "2026.05.30.1".into(),
+            tags: vec!["tech".into()],
+            featured: false,
+            icon_url: None,
+            banner_url: None,
+            gallery_urls: vec![],
+            description_md: None,
+        }
+    }
+
+    #[test]
+    fn reconstructs_launch_facts_and_sources() {
+        let cfg = reconstruct_config(&manifest(), &summary());
+        assert_eq!(cfg.minecraft_version, "1.12.2");
+        assert_eq!(cfg.java_major, 8);
+        assert_eq!(cfg.loader.version, "14.23.5.2922");
+        assert_eq!(cfg.mods.len(), 2);
+        // modrinth keeps ids; cache keeps the entry's own sha1
+        match &cfg.mods[0].source {
+            SourceDecl::Modrinth { project_id, .. } => assert_eq!(project_id, "P"),
+            _ => panic!("expected modrinth"),
+        }
+        match &cfg.mods[1].source {
+            SourceDecl::SmrtCache { sha1 } => assert_eq!(sha1, &"b".repeat(40)),
+            _ => panic!("expected cache"),
+        }
+        assert!(!cfg.mods[1].default_enabled);
+        // static asset recovers a percent-decoded rel_path
+        match &cfg.assets[0].source {
+            SourceDecl::SmrtStatic { rel_path } => {
+                assert_eq!(rel_path, "shaderpacks/BSL (v8+).zip")
+            }
+            _ => panic!("expected static"),
+        }
+    }
+}
