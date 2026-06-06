@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { t } from '../lib/i18n.svelte';
   import JobLog from './JobLog.svelte';
 
   let { packId }: { packId: string } = $props();
@@ -28,18 +29,14 @@
 <div class="bc">
   <div class="bar">
     <button class="primary" onclick={build} disabled={busy}>
-      {busy ? 'building...' : 'Build pack'}
+      {busy ? t('bld.building') : t('bld.build')}
     </button>
     <label class="ver">
-      pack_version
-      <input class="mono" bind:value={packVersion} placeholder="(today's date)" />
+      {t('bld.version')}
+      <input class="mono" bind:value={packVersion} placeholder={t('bld.versionPlaceholder')} />
     </label>
   </div>
-  <p class="muted hint">
-    Loads the pack's config + curator, applies the curator chain, resolves
-    sources, and publishes the manifest. Runs on the mirror; the log is live.
-    Leave pack_version blank for today's UTC date slug.
-  </p>
+  <p class="muted hint">{t('bld.hint')}</p>
   {#if err}<div class="err mono">{err}</div>{/if}
   {#if jobId}
     {#key jobId}

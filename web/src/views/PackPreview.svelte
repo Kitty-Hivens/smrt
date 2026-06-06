@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { t } from '../lib/i18n.svelte';
   import JobLog from './JobLog.svelte';
   import ModRow from './ModRow.svelte';
   import ModIcon from './ModIcon.svelte';
@@ -111,19 +112,19 @@
 
 <div class="preview">
   <div class="ctl">
-    <span class="ttl">Preview</span>
-    <span class="sub">launcher-faithful render of the last saved config + curator</span>
+    <span class="ttl">{t('prev.title')}</span>
+    <span class="sub">{t('prev.subtitle')}</span>
     <span class="sp"></span>
     {#if manifest}<span class="ver mono">{manifest.pack_version}</span>{/if}
     <button class="refresh" onclick={runPreview} disabled={running}>
-      {running ? 'building...' : 'Refresh'}
+      {running ? t('bld.building') : t('shell.refresh')}
     </button>
   </div>
 
   {#if err}<div class="err mono">{err}</div>{/if}
 
   {#if running && !jobId}
-    <div class="note">starting preview build...</div>
+    <div class="note">{t('prev.starting')}</div>
   {/if}
   {#if jobId && (running || showLog)}
     {#key jobId}<JobLog {jobId} onDone={onJobDone} />{/key}
@@ -134,15 +135,15 @@
     {#if diff}
       <div class="diff" class:clean={diffIsEmpty(diff)}>
         {#if diffIsEmpty(diff)}
-          <span class="ok">No mod changes vs {diff.prevVersion}.</span>
+          <span class="ok">{t('prev.noChanges', { v: diff.prevVersion })}</span>
         {:else}
-          <strong>vs {diff.prevVersion}</strong>
-          {#if diff.added.length}<span class="add">+{diff.added.length} added</span>{/if}
-          {#if diff.removed.length}<span class="rem">-{diff.removed.length} removed</span>{/if}
-          {#if diff.changed.length}<span class="chg">~{diff.changed.length} updated</span>{/if}
-          <span class="faint">{diff.unchanged} unchanged</span>
+          <strong>{t('prev.vs', { v: diff.prevVersion })}</strong>
+          {#if diff.added.length}<span class="add">{t('prev.added', { n: diff.added.length })}</span>{/if}
+          {#if diff.removed.length}<span class="rem">{t('prev.removed', { n: diff.removed.length })}</span>{/if}
+          {#if diff.changed.length}<span class="chg">{t('prev.updated', { n: diff.changed.length })}</span>{/if}
+          <span class="faint">{t('prev.unchanged', { n: diff.unchanged })}</span>
           <button class="link" onclick={() => (diffOpen = !diffOpen)}>
-            {diffOpen ? 'hide' : 'details'}
+            {diffOpen ? t('prev.hide') : t('prev.details')}
           </button>
         {/if}
       </div>
@@ -154,7 +155,7 @@
         </div>
       {/if}
     {:else if prevMissing}
-      <div class="diff"><span class="faint">First version -- nothing published yet.</span></div>
+      <div class="diff"><span class="faint">{t('prev.firstVersion')}</span></div>
     {/if}
 
     <!-- hero -->
@@ -178,8 +179,8 @@
           <span class="mc">{manifest.minecraft.version}</span>
           <span class="mc">{manifest.loader.name} {manifest.loader.version}</span>
           <span class="mc">Java {manifest.java.major}</span>
-          <span class="mc">{mods.length} mods</span>
-          {#if manifest.assets.length}<span class="mc">{manifest.assets.length} assets</span>{/if}
+          <span class="mc">{t('prev.modsChip', { n: mods.length })}</span>
+          {#if manifest.assets.length}<span class="mc">{t('prev.assetsChip', { n: manifest.assets.length })}</span>{/if}
         </div>
       </div>
     </div>
@@ -202,14 +203,14 @@
     <!-- resolver warnings -->
     {#if dep.missing.length || dep.cycles.length}
       <div class="card warns">
-        <h3>Resolver warnings</h3>
+        <h3>{t('prev.warnings')}</h3>
         {#each dep.missing as m (m.from + m.requires)}
           <div class="warn-line mono">
-            {m.from} requires <strong>{m.requires}</strong> -- not in this pack
+            {m.from} {t('prev.requires')} <strong>{m.requires}</strong> — {t('prev.notInPack')}
           </div>
         {/each}
         {#each dep.cycles as c, i (i)}
-          <div class="warn-line mono">dependency cycle: {c.join(' -> ')}</div>
+          <div class="warn-line mono">{t('prev.cycle', { chain: c.join(' -> ') })}</div>
         {/each}
       </div>
     {/if}
@@ -217,7 +218,7 @@
     <!-- role groups -->
     {#each grouping.byRole as g (g.role)}
       <section>
-        <h3 class="sec">{g.label} <span class="faint">interchangeable</span></h3>
+        <h3 class="sec">{g.label} <span class="faint">{t('prev.interchangeable')}</span></h3>
         <div class="rows">
           {#each g.members as m, idx (m.filename)}
             <ModRow
@@ -238,7 +239,7 @@
     <!-- ungrouped (non-library) mods -->
     {#if ungroupedNonLib.length}
       <section>
-        <h3 class="sec">Mods <span class="faint">({ungroupedNonLib.length})</span></h3>
+        <h3 class="sec">{t('pe.mods')} <span class="faint">({ungroupedNonLib.length})</span></h3>
         <div class="rows">
           {#each ungroupedNonLib as m (m.filename)}
             <ModRow
@@ -259,7 +260,7 @@
     {#if libraries.length}
       <section>
         <button class="sechead" class:open={libsOpen} onclick={() => (libsOpen = !libsOpen)}>
-          <span class="caret"></span>Libraries <span class="faint">({libraries.length})</span>
+          <span class="caret"></span>{t('prev.libraries')} <span class="faint">({libraries.length})</span>
         </button>
         {#if libsOpen}
           <div class="rows">
@@ -301,27 +302,27 @@
 
       {#if buckets.resourcepacks.length}
         <section>
-          <h3 class="sec">Resource packs <span class="faint">({buckets.resourcepacks.length})</span></h3>
+          <h3 class="sec">{t('prev.resourcePacks')} <span class="faint">({buckets.resourcepacks.length})</span></h3>
           {@render assetList(buckets.resourcepacks)}
         </section>
       {/if}
       {#if buckets.shaderpacks.length}
         <section>
-          <h3 class="sec">Shader packs <span class="faint">({buckets.shaderpacks.length})</span></h3>
+          <h3 class="sec">{t('prev.shaderPacks')} <span class="faint">({buckets.shaderpacks.length})</span></h3>
           {@render assetList(buckets.shaderpacks)}
         </section>
       {/if}
       {#if buckets.configs.length}
         <section>
           <button class="sechead" class:open={configsOpen} onclick={() => (configsOpen = !configsOpen)}>
-            <span class="caret"></span>Configs <span class="faint">({buckets.configs.length})</span>
+            <span class="caret"></span>{t('prev.configs')} <span class="faint">({buckets.configs.length})</span>
           </button>
           {#if configsOpen}{@render assetList(buckets.configs)}{/if}
         </section>
       {/if}
       {#if buckets.other.length}
         <section>
-          <h3 class="sec">Other files <span class="faint">({buckets.other.length})</span></h3>
+          <h3 class="sec">{t('prev.otherFiles')} <span class="faint">({buckets.other.length})</span></h3>
           {@render assetList(buckets.other)}
         </section>
       {/if}

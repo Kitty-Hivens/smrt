@@ -1,11 +1,15 @@
 <script lang="ts">
   import { api } from '../lib/api';
+  import { t } from '../lib/i18n.svelte';
   import type { JobStatus } from '../lib/types';
 
   let { jobId, onDone }: { jobId: string; onDone?: (status: JobStatus) => void } = $props();
 
   let lines = $state<string[]>([]);
   let status = $state<JobStatus>('running');
+  const statusLabel = $derived(
+    t(status === 'done' ? 'job.done' : status === 'failed' ? 'job.failed' : 'job.running'),
+  );
 
   $effect(() => {
     // Re-subscribe when jobId changes; reset for the new job.
@@ -24,7 +28,7 @@
     source.addEventListener('failed', () => finish('failed'));
     source.onerror = () => {
       if (status === 'running') {
-        lines = [...lines, '(log stream interrupted)'];
+        lines = [...lines, t('job.interrupted')];
         finish('failed');
       }
     };
@@ -33,7 +37,7 @@
 </script>
 
 <div class="jl">
-  <span class="st mono" class:ok={status === 'done'} class:bad={status === 'failed'}>{status}</span>
+  <span class="st mono" class:ok={status === 'done'} class:bad={status === 'failed'}>{statusLabel}</span>
   {#if lines.length}
     <pre class="log mono">{lines.join('\n')}</pre>
   {/if}
