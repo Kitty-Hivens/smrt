@@ -714,6 +714,7 @@ mod tests {
                 version: "14.23.5.2922".into(),
             },
             java_major: 8,
+            version: None,
             tags: vec![],
             featured: false,
             mods: vec![],

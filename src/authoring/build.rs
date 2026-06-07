@@ -22,8 +22,13 @@ pub async fn build_manifest(
     pack_version: Option<&str>,
     mirror_base: &str,
 ) -> Result<PackManifest> {
-    let pack_version = pack_version.map(str::to_string).unwrap_or_else(today_slug);
-    validate_canonical_pack_version(&pack_version)?;
+    let pack_version = match pack_version {
+        Some(v) => {
+            validate_pack_version(v)?;
+            v.to_string()
+        }
+        None => resolve_snapshot_version(cfg, storage).await?,
+    };
     info!(
         pack_id = %cfg.pack_id,
         pack_version = %pack_version,
@@ -143,25 +148,70 @@ fn now_rfc3339() -> String {
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
 
-/// Enforce the spec's canonical-form rule for `pack_version`: no trailing
-/// `.0` segments. Equivalent strings under the comparator must also be
-/// byte-equal so clients can use string equality for "did the latest version
-/// change?" without re-running the comparator.
-fn validate_canonical_pack_version(v: &str) -> Result<()> {
+/// Resolve the automatic build version `SNAPSHOT-<version>-<date>[.N]`. The
+/// `<version>` comes from the config (`0.0.0` if unset), the date is today's UTC
+/// slug, and a `.N` counter is appended only when that exact string is already
+/// published -- so a second build the same day never overwrites the first, with
+/// no hand-assigned counter. Forward-only: existing pre-rename versions keep
+/// their strings; only new builds adopt this form.
+async fn resolve_snapshot_version(cfg: &PackConfig, storage: &Path) -> Result<String> {
+    let version = cfg.version.as_deref().unwrap_or("0.0.0");
+    let base = format!("SNAPSHOT-{version}-{}", today_slug());
+    let existing = existing_versions(storage, &cfg.pack_id).await;
+    let resolved = next_free_version(&base, &existing);
+    validate_pack_version(&resolved)?;
+    Ok(resolved)
+}
+
+/// Version strings already published for a pack (the manifest filenames, minus
+/// the `latest` pointer). Best-effort: a missing pack dir yields none.
+async fn existing_versions(storage: &Path, pack_id: &str) -> Vec<String> {
+    let dir = storage.join("packs").join(pack_id).join("manifests");
+    let mut out = Vec::new();
+    let Ok(mut entries) = tokio::fs::read_dir(&dir).await else {
+        return out;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        if let Some(name) = entry.file_name().to_str()
+            && let Some(stem) = name.strip_suffix(".json")
+            && stem != "latest"
+        {
+            out.push(stem.to_string());
+        }
+    }
+    out
+}
+
+/// `base` if free, else the first free `base.N` (N from 1). Pure.
+fn next_free_version(base: &str, existing: &[String]) -> String {
+    if !existing.iter().any(|e| e == base) {
+        return base.to_string();
+    }
+    (1..)
+        .map(|n| format!("{base}.{n}"))
+        .find(|cand| !existing.iter().any(|e| e == cand))
+        .expect("an unbounded counter always finds a free slot")
+}
+
+/// Validate a `pack_version`: the new `SNAPSHOT-<version>-<date>[.N]` form or a
+/// legacy bare-numeric one (`2026.05.22[.N]`). Every segment is a positive
+/// integer; a trailing `.0` is rejected so equal versions are byte-equal and a
+/// client can compare the string directly for "did the latest version change?".
+fn validate_pack_version(v: &str) -> Result<()> {
     if v.is_empty() {
         bail!("pack_version must not be empty");
     }
-    let segments: Vec<&str> = v.split('.').collect();
-    for seg in &segments {
-        if seg.is_empty() || !seg.chars().all(|c| c.is_ascii_digit()) {
+    let body = v.strip_prefix("SNAPSHOT-").unwrap_or(v);
+    if body.is_empty() {
+        bail!("pack_version {v:?} has an empty version body");
+    }
+    for seg in body.split(['-', '.']) {
+        if seg.is_empty() || !seg.bytes().all(|b| b.is_ascii_digit()) {
             bail!("pack_version segment {seg:?} is not a positive integer");
         }
     }
-    if segments.last().is_some_and(|s| *s == "0") && segments.len() > 1 {
-        bail!(
-            "pack_version {v} is not canonical: trailing .0 segments are forbidden \
-             (drop the trailing zero, e.g. write 2026.05.22 instead of 2026.05.22.0)"
-        );
+    if v.ends_with(".0") {
+        bail!("pack_version {v} is not canonical: a trailing .0 counter is forbidden");
     }
     Ok(())
 }
@@ -182,23 +232,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn canonical_pack_version_accepts_typical_forms() {
-        validate_canonical_pack_version("2026.05.22").unwrap();
-        validate_canonical_pack_version("2026.05.22.1").unwrap();
-        validate_canonical_pack_version("2026.05.22.10").unwrap();
+    fn pack_version_accepts_legacy_and_snapshot_forms() {
+        // legacy bare-numeric (the pre-rename versions stay valid)
+        validate_pack_version("2026.05.22").unwrap();
+        validate_pack_version("2026.05.22.1").unwrap();
+        // new channel-prefixed form
+        validate_pack_version("SNAPSHOT-0.0.0-2026.06.07").unwrap();
+        validate_pack_version("SNAPSHOT-0.0.10-2026.06.07.1").unwrap();
+        validate_pack_version("SNAPSHOT-1.2.3-2026.06.07.12").unwrap();
     }
 
     #[test]
-    fn canonical_pack_version_rejects_trailing_zero() {
-        assert!(validate_canonical_pack_version("2026.05.22.0").is_err());
-        assert!(validate_canonical_pack_version("2026.05.22.1.0").is_err());
+    fn pack_version_rejects_trailing_zero_counter() {
+        assert!(validate_pack_version("2026.05.22.0").is_err());
+        assert!(validate_pack_version("SNAPSHOT-0.0.10-2026.06.07.0").is_err());
     }
 
     #[test]
-    fn canonical_pack_version_rejects_non_numeric() {
-        assert!(validate_canonical_pack_version("2026.05.22a").is_err());
-        assert!(validate_canonical_pack_version("v1").is_err());
-        assert!(validate_canonical_pack_version("").is_err());
+    fn pack_version_rejects_non_numeric_body() {
+        assert!(validate_pack_version("2026.05.22a").is_err());
+        assert!(validate_pack_version("v1").is_err());
+        assert!(validate_pack_version("").is_err());
+        assert!(validate_pack_version("SNAPSHOT-0.0.x-2026.06.07").is_err());
+    }
+
+    #[test]
+    fn next_free_version_appends_first_free_counter() {
+        let base = "SNAPSHOT-0.0.0-2026.06.07".to_string();
+        assert_eq!(next_free_version(&base, &[]), base);
+        assert_eq!(
+            next_free_version(&base, std::slice::from_ref(&base)),
+            format!("{base}.1")
+        );
+        let taken = vec![format!("{base}.1"), base.clone(), format!("{base}.5")];
+        assert_eq!(next_free_version(&base, &taken), format!("{base}.2"));
     }
 
     use crate::domain::Source;

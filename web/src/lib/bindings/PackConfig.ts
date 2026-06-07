@@ -10,4 +10,11 @@ import type { LoaderSpec } from "./LoaderSpec";
  * require admin to hand-write `sha1` and `size_bytes` for Modrinth sources --
  * those are looked up at build time.
  */
-export type PackConfig = { pack_id: string, display_name: string, tagline: string, minecraft_version: string, loader: LoaderSpec, java_major: number, tags: Array<string>, featured: boolean, mods: Array<DeclaredMod>, assets: Array<DeclaredAsset>, };
+export type PackConfig = { pack_id: string, display_name: string, tagline: string, minecraft_version: string, loader: LoaderSpec, java_major: number, 
+/**
+ * Human semver-ish line for the build version string
+ * (`SNAPSHOT-<version>-<date>`). Pre-1.0 packs sit at `0.0.x`; the operator
+ * bumps it rarely. Absent -> `0.0.0`. The date + same-day counter advance
+ * automatically, so this is the only version part anyone hand-edits.
+ */
+version?: string, tags: Array<string>, featured: boolean, mods: Array<DeclaredMod>, assets: Array<DeclaredAsset>, };

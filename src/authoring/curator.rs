@@ -1429,6 +1429,7 @@ mod tests {
                 version: "14.23.5.2922".into(),
             },
             java_major: 8,
+            version: None,
             tags: Vec::new(),
             featured: false,
             mods: Vec::new(),

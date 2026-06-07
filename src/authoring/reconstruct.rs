@@ -20,6 +20,7 @@ pub fn reconstruct_config(manifest: &PackManifest, summary: &PackSummary) -> Pac
         minecraft_version: manifest.minecraft.version.clone(),
         loader: manifest.loader.clone(),
         java_major: manifest.java.major,
+        version: None,
         tags: summary.tags.clone(),
         featured: summary.featured,
         mods: manifest.mods.iter().map(reconstruct_mod).collect(),
