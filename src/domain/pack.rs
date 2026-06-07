@@ -83,6 +83,13 @@ pub struct PackConfig {
     pub minecraft_version: String,
     pub loader: LoaderSpec,
     pub java_major: u32,
+    /// Human semver-ish line for the build version string
+    /// (`SNAPSHOT-<version>-<date>`). Pre-1.0 packs sit at `0.0.x`; the operator
+    /// bumps it rarely. Absent -> `0.0.0`. The date + same-day counter advance
+    /// automatically, so this is the only version part anyone hand-edits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub version: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]

@@ -148,6 +148,7 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
         minecraft_version: args.minecraft_version,
         loader: args.loader,
         java_major: args.java_major,
+        version: None,
         tags: Vec::new(),
         featured: false,
         mods: declared_mods,
