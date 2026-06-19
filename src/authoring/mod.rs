@@ -11,12 +11,14 @@ pub mod bootstrap;
 pub mod build;
 pub mod curator;
 pub mod harvest;
+pub mod harvest_sched;
 pub mod modrinth;
 pub mod reconstruct;
 pub mod validate;
 
 pub use bootstrap::{BootstrapArgs, bootstrap};
 pub use build::{build_manifest, make_pack_summary};
+pub use harvest_sched::HarvestScheduler;
 pub use curator::*;
 pub use modrinth::*;
 pub use reconstruct::reconstruct_config;

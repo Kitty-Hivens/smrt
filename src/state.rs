@@ -1,4 +1,4 @@
-use crate::authoring::Modrinth;
+use crate::authoring::{HarvestScheduler, Modrinth};
 use crate::config::Config;
 use crate::jobs::JobRegistry;
 use crate::registry::Registry;
@@ -15,6 +15,9 @@ pub struct AppState {
     pub modrinth: Arc<Modrinth>,
     /// Mod-identity registry (embedded SQLite under the storage root).
     pub registry: Arc<Registry>,
+    /// Coalescing background harvester. Construction only wires the deps; call
+    /// `harvest.clone().spawn()` once after the runtime is up to start it.
+    pub harvest: Arc<HarvestScheduler>,
 }
 
 impl AppState {
@@ -25,10 +28,12 @@ impl AppState {
         let storage = Arc::new(Storage::new(config.storage_dir.clone()));
         let registry = Arc::new(Registry::open(config.storage_dir.join("registry.db"))?);
         let modrinth = Arc::new(Modrinth::new()?);
+        let harvest = HarvestScheduler::new(storage.clone(), modrinth.clone(), registry.clone());
         Ok(Self {
             storage,
             modrinth,
             registry,
+            harvest,
             config: Arc::new(config),
             jobs: Arc::new(JobRegistry::default()),
         })
