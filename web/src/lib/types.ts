@@ -39,6 +39,13 @@ export type { Requirement } from './bindings/Requirement';
 // validate report (config vs SC archive)
 export type { ValidateReport } from './bindings/ValidateReport';
 
+// registry browser (mods + builds, faceted)
+export type { ModSummary } from './bindings/ModSummary';
+export type { VersionRow } from './bindings/VersionRow';
+export type { BuildSummary } from './bindings/BuildSummary';
+export type { BuildModRow } from './bindings/BuildModRow';
+export type { ModUse } from './bindings/ModUse';
+
 // curator (structured editor)
 export type { Curator } from './bindings/Curator';
 export type { PackMeta } from './bindings/PackMeta';
@@ -60,12 +67,15 @@ export interface ModrinthHit {
   title: string;
   description: string;
   icon_url?: string | null;
+  author?: string;
 }
 
 export interface ModrinthVersion {
   id: string;
   project_id: string;
   version_number: string;
+  // release channel: 'release' | 'beta' | 'alpha'
+  version_type?: string;
   game_versions: string[];
   loaders: string[];
 }

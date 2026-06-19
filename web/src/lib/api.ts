@@ -3,6 +3,8 @@
 
 import type {
   AuthoringPacksListing,
+  BuildModRow,
+  BuildSummary,
   CacheInventory,
   CacheUsageListing,
   Curator,
@@ -11,12 +13,14 @@ import type {
   ManifestVersionsListing,
   ModrinthHit,
   ModrinthVersion,
+  ModSummary,
   PackConfig,
   PackListing,
   PackManifest,
   ServerEntry,
   ServerListing,
   ValidateReport,
+  VersionRow,
 } from './types';
 
 export class ApiError extends Error {
@@ -279,6 +283,23 @@ export const api = {
     ),
   // Same per-project lookup the launcher's ModIconResolver does; cached.
   modrinthIcon: (projectId: string) => resolveModrinthIcon(projectId),
+
+  // ── registry browser (the mirror's own mods + builds) ──
+  registryMods: (q?: string, loader?: string, mc?: string) => {
+    const p = new URLSearchParams();
+    if (q) p.set('q', q);
+    if (loader) p.set('loader', loader);
+    if (mc) p.set('mc', mc);
+    const qs = p.toString();
+    return getJson<ModSummary[]>(`/v1/admin/registry/mods${qs ? `?${qs}` : ''}`);
+  },
+  registryModVersions: (modId: number) =>
+    getJson<VersionRow[]>(`/v1/admin/registry/mod-versions/${modId}`),
+  registryBuilds: () => getJson<BuildSummary[]>('/v1/admin/registry/builds'),
+  registryBuildMods: (packId: string, packVersion: string) =>
+    getJson<BuildModRow[]>(
+      `/v1/admin/registry/builds/${encodeURIComponent(packId)}/${encodeURIComponent(packVersion)}`,
+    ),
 
   async session(): Promise<boolean> {
     const r = await fetch('/admin/api/session', { credentials: 'include' });
