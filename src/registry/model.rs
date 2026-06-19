@@ -96,6 +96,14 @@ pub struct VersionRow {
     pub size_bytes: i64,
     pub filename: Option<String>,
     pub source: String,
+    /// True when the artifact's bytes are in the mirror's local cache, so it can
+    /// be re-added as a self-hosted `smrt_cache` source. Set by the handler
+    /// against the live cache inventory (not stored in the registry).
+    pub cached: bool,
+    /// Modrinth identity, when the artifact is one. Lets the panel re-add a
+    /// not-locally-cached Modrinth mod as a real Modrinth source.
+    pub modrinth_project_id: Option<String>,
+    pub modrinth_version_id: Option<String>,
 }
 
 /// One mod in the registry browser: identity, the human metadata an enriching
@@ -147,6 +155,12 @@ pub struct BuildModRow {
     pub default_enabled: bool,
     pub targets: Vec<String>,
     pub mc_versions: Vec<String>,
+    /// See [`VersionRow::cached`] -- whether this artifact is locally cached.
+    pub cached: bool,
+    /// Modrinth identity for a not-locally-cached build mod, so re-adding it
+    /// recreates the Modrinth source instead of a missing cache jar.
+    pub modrinth_project_id: Option<String>,
+    pub modrinth_version_id: Option<String>,
 }
 
 /// Q4: an artifact eligible for a build loader, with its best-match specificity

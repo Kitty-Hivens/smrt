@@ -1,7 +1,23 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
   import { t } from '../lib/i18n.svelte';
-  import type { ModSummary, VersionRow, BuildSummary, BuildModRow, CacheUsageEntry } from '../lib/types';
+  import type {
+    ModSummary,
+    VersionRow,
+    BuildSummary,
+    BuildModRow,
+    CacheUsageEntry,
+    SourceDecl,
+  } from '../lib/types';
+
+  // a selection carries the resolved source -- a `smrt_cache` one when the mirror
+  // holds the bytes, else a `modrinth` one -- plus a build mod's install flags
+  type Sel = {
+    filename: string;
+    source: SourceDecl;
+    required?: boolean;
+    default_enabled?: boolean;
+  };
 
   let {
     mc,
@@ -17,12 +33,30 @@
     // builds can re-add their whole mod set at once; only offered when adding a
     // new row (not when re-pointing an existing one)
     allowMany?: boolean;
-    onPick: (sel: { sha1: string; filename: string }) => void;
+    onPick: (sel: Sel) => void;
     // cherry-pick one mod from a build without closing the picker
-    onAddOne?: (sel: { sha1: string; filename: string }) => void;
-    onAddMany?: (items: { sha1: string; filename: string }[]) => void;
+    onAddOne?: (sel: Sel) => void;
+    onAddMany?: (items: Sel[]) => void;
     onClose: () => void;
   } = $props();
+
+  // how an artifact would be re-added: cache when the mirror holds the bytes,
+  // else Modrinth; null when neither (a manifest-only mod whose Modrinth identity
+  // didn't resolve -- not re-addable)
+  type Artifact = {
+    sha1: string;
+    cached: boolean;
+    modrinth_project_id: string | null;
+    modrinth_version_id: string | null;
+  };
+  function sourceFor(a: Artifact): SourceDecl | null {
+    if (a.cached) return { type: 'smrt_cache', sha1: a.sha1 };
+    if (a.modrinth_project_id && a.modrinth_version_id)
+      return { type: 'modrinth', project_id: a.modrinth_project_id, version_id: a.modrinth_version_id };
+    return null;
+  }
+  const srcTag = (a: Artifact) =>
+    a.cached ? 'cache' : a.modrinth_project_id && a.modrinth_version_id ? 'modrinth' : '';
 
   type Mode = 'mods' | 'builds' | 'raw';
   let mode = $state<Mode>('mods');
@@ -93,7 +127,9 @@
   }
 
   function pickVersion(v: VersionRow) {
-    onPick({ sha1: v.sha1, filename: v.filename || `${selMod?.name ?? v.sha1.slice(0, 12)}.jar` });
+    const source = sourceFor(v);
+    if (!source) return;
+    onPick({ filename: v.filename || `${selMod?.name ?? v.sha1.slice(0, 12)}.jar`, source });
   }
 
   async function loadBuilds() {
@@ -123,20 +159,36 @@
     }
   }
 
+  const selOf = (m: BuildModRow, source: SourceDecl): Sel => ({
+    filename: m.filename,
+    source,
+    required: m.required,
+    default_enabled: m.default_enabled,
+  });
+
   function addAllFromBuild() {
     if (!onAddMany) return;
-    onAddMany(buildModRows.map((m) => ({ sha1: m.sha1, filename: m.filename })));
+    // skip mods whose artifact is neither cached nor Modrinth-resolvable
+    const items = buildModRows
+      .map((m) => {
+        const source = sourceFor(m);
+        return source ? selOf(m, source) : null;
+      })
+      .filter((x): x is Sel => x !== null);
+    onAddMany(items);
   }
 
   // per-row Add on the Builds tab: when adding new rows, append and stay open so
   // the operator can pick several; when re-pointing one row, fall back to onPick
   // (which closes)
   function addBuildMod(m: BuildModRow) {
+    const source = sourceFor(m);
+    if (!source) return;
     if (allowMany && onAddOne) {
-      onAddOne({ sha1: m.sha1, filename: m.filename });
+      onAddOne(selOf(m, source));
       addedShas = new Set(addedShas).add(m.sha1);
     } else {
-      onPick({ sha1: m.sha1, filename: m.filename });
+      onPick(selOf(m, source));
     }
   }
 
@@ -235,9 +287,12 @@
         {#if versLoading}<div class="muted s">{t('common.loading')}</div>{/if}
         <div class="hits scroll">
           {#each modVersions as v (v.sha1)}
-            <button class="vrow" onclick={() => pickVersion(v)}>
+            <button class="vrow" disabled={!sourceFor(v)} onclick={() => pickVersion(v)}>
               <div class="info">
-                <div class="t"><span class="mono">{v.version}</span></div>
+                <div class="t">
+                  <span class="mono">{v.version}</span>
+                  {#if srcTag(v)}<span class="chip">{srcTag(v)}</span>{:else}<span class="chip warn">{t('mirror.unavailable')}</span>{/if}
+                </div>
                 <div class="d muted mono">
                   {v.targets.join(', ')}{#if v.mc_versions.length} · {v.mc_versions.join(', ')}{/if} · {fmtBytes(v.size_bytes)}
                 </div>
@@ -284,12 +339,13 @@
                 <div class="t">
                   {m.name} <span class="faint mono">{m.version}</span>
                   {#if !m.required}<span class="chip">{t('mr.optional')}</span>{/if}
+                  {#if srcTag(m)}<span class="chip">{srcTag(m)}</span>{:else}<span class="chip warn">{t('mirror.unavailable')}</span>{/if}
                 </div>
                 <div class="d muted mono">
                   {m.filename}{#if m.targets.length} · {m.targets.join(', ')}{/if}
                 </div>
               </div>
-              <button class="sm" disabled={addedShas.has(m.sha1)} onclick={() => addBuildMod(m)}>
+              <button class="sm" disabled={addedShas.has(m.sha1) || !sourceFor(m)} onclick={() => addBuildMod(m)}>
                 {addedShas.has(m.sha1) ? t('mirror.added') : t('mirror.add')}
               </button>
             </div>
@@ -304,7 +360,7 @@
       {#if rawLoading}<div class="muted s">{t('common.loading')}</div>{/if}
       <div class="hits scroll">
         {#each rawShown as e (e.sha1)}
-          <button class="hit" onclick={() => onPick({ sha1: e.sha1, filename: rawName(e) || `${e.sha1.slice(0, 12)}.jar` })}>
+          <button class="hit" onclick={() => onPick({ filename: rawName(e) || `${e.sha1.slice(0, 12)}.jar`, source: { type: 'smrt_cache', sha1: e.sha1 } })}>
             <div class="info">
               <div class="t">
                 {rawName(e) || t('cachePick.noName')}

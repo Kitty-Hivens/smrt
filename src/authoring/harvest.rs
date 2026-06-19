@@ -35,6 +35,9 @@ pub struct JarSeed {
     pub name: Option<String>,
     pub author: Option<String>,
     pub slug: Option<String>,
+    // Modrinth version id (from the sha1 lookup), so a build's Modrinth-sourced
+    // mod can be re-added as a Modrinth source, not a non-existent cache jar.
+    pub modrinth_version_id: Option<String>,
 }
 
 pub struct BuildModSeed {
@@ -149,6 +152,8 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
             mc_versions.as_deref(),
             now,
         )?;
+        // after the row exists: record its Modrinth version id (by sha1)
+        upsert::set_mod_version_modrinth(conn, &jar.sha1, jar.modrinth_version_id.as_deref(), now)?;
         for dep in &jar.requires {
             upsert::upsert_relation(
                 conn,
@@ -398,6 +403,7 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
                 name,
                 author,
                 slug,
+                modrinth_version_id: mrv.map(|v| v.id.clone()),
                 sha1: sha,
             }
         })
@@ -441,6 +447,7 @@ mod tests {
                     name: Some("AppleSkin".into()),
                     author: Some("squeek502".into()),
                     slug: Some("appleskin".into()),
+                    modrinth_version_id: Some("mrv_apple".into()),
                 },
                 JarSeed {
                     sha1: "sha_b".into(),
@@ -455,6 +462,7 @@ mod tests {
                     name: None,
                     author: None,
                     slug: None,
+                    modrinth_version_id: None,
                 },
                 JarSeed {
                     sha1: "sha_noid".into(),
@@ -469,6 +477,7 @@ mod tests {
                     name: None,
                     author: None,
                     slug: None,
+                    modrinth_version_id: None,
                 },
             ],
             packs: vec![PackSeed {
@@ -550,6 +559,12 @@ mod tests {
             assert_eq!(name.as_deref(), Some("AppleSkin"));
             assert_eq!(author.as_deref(), Some("squeek502"));
             assert_eq!(slug.as_deref(), Some("appleskin"));
+            let mrv: Option<String> = c.query_row(
+                "SELECT modrinth_version_id FROM mod_version WHERE sha1 = 'sha_a'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(mrv.as_deref(), Some("mrv_apple"));
             Ok(())
         })
         .unwrap();
@@ -609,6 +624,7 @@ mod tests {
             name: None,
             author: None,
             slug: None,
+            modrinth_version_id: None,
         }
     }
 

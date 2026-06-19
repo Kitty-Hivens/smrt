@@ -292,6 +292,7 @@ export const en = {
   'mirror.noBuildMods': 'This build has no resolved mods.',
   'mirror.add': 'Add',
   'mirror.added': 'added',
+  'mirror.unavailable': 'unavailable',
   'mirror.addAll': 'Add all {n}',
 } as const;
 

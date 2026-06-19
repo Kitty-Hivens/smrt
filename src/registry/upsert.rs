@@ -160,6 +160,28 @@ fn set_mod_version_targets(
     Ok(())
 }
 
+/// Record the Modrinth version id for an artifact (by sha1), so the panel can
+/// re-add a build's Modrinth-sourced mod as a real Modrinth source rather than a
+/// local-cache one. `COALESCE` so a later harvest that lost the id never erases
+/// it; skipped for precious rows. No-op when there is no id.
+pub fn set_mod_version_modrinth(
+    conn: &Connection,
+    sha1: &str,
+    version_id: Option<&str>,
+    now: &str,
+) -> Result<()> {
+    let Some(vid) = version_id else {
+        return Ok(());
+    };
+    conn.execute(
+        "UPDATE mod_version
+           SET modrinth_version_id = COALESCE(?2, modrinth_version_id), updated_at = ?3
+         WHERE sha1 = ?1 AND source NOT IN ('curator', 'authored')",
+        params![sha1, vid, now],
+    )?;
+    Ok(())
+}
+
 pub fn mod_version_id_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<i64>> {
     Ok(conn
         .query_row(

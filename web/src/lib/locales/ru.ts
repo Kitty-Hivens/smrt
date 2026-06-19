@@ -291,5 +291,6 @@ export const ru: Dict = {
   'mirror.noBuildMods': 'В этой сборке нет распознанных модов.',
   'mirror.add': 'Добавить',
   'mirror.added': 'добавлено',
+  'mirror.unavailable': 'недоступно',
   'mirror.addAll': 'Добавить все ({n})',
 };

@@ -82,6 +82,15 @@ where
     Ok(res?)
 }
 
+/// The sha1s the mirror actually holds in its local cache. The registry indexes
+/// manifest-only (e.g. Modrinth-sourced) artifacts too, so "in the registry"
+/// does not mean "on disk" -- the panel needs this to pick a `smrt_cache` vs a
+/// `modrinth` source per artifact.
+async fn cache_shas(state: &AppState) -> Result<std::collections::HashSet<String>, ApiError> {
+    let inv = state.storage.list_cache_inventory().await?;
+    Ok(inv.into_iter().map(|e| e.sha1).collect())
+}
+
 /// Force an immediate harvest and return the report. Runs the harvest directly
 /// (not via the background scheduler) so the operator gets the counts back
 /// synchronously. Overlap with a concurrent auto-harvest is safe: the writes are
@@ -144,9 +153,12 @@ async fn get_versions_by_id(
     State(state): State<AppState>,
     Path(mod_id): Path<i64>,
 ) -> Result<Json<Vec<VersionRow>>, ApiError> {
-    Ok(Json(
-        run_query(&state, move |c| queries::versions_of_mod_by_id(c, mod_id)).await?,
-    ))
+    let mut rows = run_query(&state, move |c| queries::versions_of_mod_by_id(c, mod_id)).await?;
+    let cached = cache_shas(&state).await?;
+    for r in &mut rows {
+        r.cached = cached.contains(&r.sha1);
+    }
+    Ok(Json(rows))
 }
 
 async fn get_builds(State(state): State<AppState>) -> Result<Json<Vec<BuildSummary>>, ApiError> {
@@ -157,24 +169,30 @@ async fn get_build_mods(
     State(state): State<AppState>,
     Path((pack_id, pack_version)): Path<(String, String)>,
 ) -> Result<Json<Vec<BuildModRow>>, ApiError> {
-    Ok(Json(
-        run_query(&state, move |c| {
-            queries::build_mods(c, &pack_id, &pack_version)
-        })
-        .await?,
-    ))
+    let mut rows = run_query(&state, move |c| {
+        queries::build_mods(c, &pack_id, &pack_version)
+    })
+    .await?;
+    let cached = cache_shas(&state).await?;
+    for r in &mut rows {
+        r.cached = cached.contains(&r.sha1);
+    }
+    Ok(Json(rows))
 }
 
 async fn get_mod_versions(
     State(state): State<AppState>,
     Path((alias_source, external_key)): Path<(String, String)>,
 ) -> Result<Json<Vec<VersionRow>>, ApiError> {
-    Ok(Json(
-        run_query(&state, move |c| {
-            queries::versions_of_mod(c, &alias_source, &external_key)
-        })
-        .await?,
-    ))
+    let mut rows = run_query(&state, move |c| {
+        queries::versions_of_mod(c, &alias_source, &external_key)
+    })
+    .await?;
+    let cached = cache_shas(&state).await?;
+    for r in &mut rows {
+        r.cached = cached.contains(&r.sha1);
+    }
+    Ok(Json(rows))
 }
 
 async fn get_mod_uses(

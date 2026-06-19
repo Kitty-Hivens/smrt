@@ -121,7 +121,9 @@ pub fn versions_of_mod(
 pub fn versions_of_mod_by_id(conn: &Connection, mod_id: i64) -> Result<Vec<VersionRow>> {
     let mut stmt = conn.prepare(
         "SELECT mv.id, mv.version, mv.sha1, mv.size_bytes, mv.source, mv.filename,
-                mv.mc_versions, mvt.target
+                mv.mc_versions, mv.modrinth_version_id,
+                (SELECT external_key FROM mod_alias WHERE mod_id = mv.mod_id AND source = 'modrinth' LIMIT 1) AS mr_project,
+                mvt.target
          FROM mod_version mv
          LEFT JOIN mod_version_target mvt ON mvt.mod_version_id = mv.id
          WHERE mv.mod_id = ?1
@@ -133,7 +135,7 @@ pub fn versions_of_mod_by_id(conn: &Connection, mod_id: i64) -> Result<Vec<Versi
     let mut rows = stmt.query(params![mod_id])?;
     while let Some(r) = rows.next()? {
         let id: i64 = r.get(0)?;
-        let target: Option<String> = r.get(7)?;
+        let target: Option<String> = r.get(9)?;
         if cur_id != Some(id) {
             cur_id = Some(id);
             out.push(VersionRow {
@@ -144,6 +146,9 @@ pub fn versions_of_mod_by_id(conn: &Connection, mod_id: i64) -> Result<Vec<Versi
                 size_bytes: r.get(3)?,
                 filename: r.get(5)?,
                 source: r.get(4)?,
+                cached: false, // set by the handler against the live cache
+                modrinth_version_id: r.get(7)?,
+                modrinth_project_id: r.get(8)?,
             });
         }
         if let Some(t) = target {
@@ -288,7 +293,10 @@ pub fn build_mods(conn: &Connection, pack_id: &str, pack_version: &str) -> Resul
         "SELECT m.canonical_name, m.slug,
                 (SELECT external_key FROM mod_alias WHERE mod_id = m.id AND source = 'modid' LIMIT 1) AS modid,
                 mv.version, mv.sha1, pbm.filename, mv.size_bytes,
-                pbm.required, pbm.default_enabled, mv.mc_versions, t.target
+                pbm.required, pbm.default_enabled, mv.mc_versions,
+                mv.modrinth_version_id,
+                (SELECT external_key FROM mod_alias WHERE mod_id = m.id AND source = 'modrinth' LIMIT 1) AS mr_project,
+                t.target
          FROM pack_build pb
          JOIN pack_build_mod pbm ON pbm.build_id = pb.id
          JOIN mod_version mv ON mv.id = pbm.mod_version_id
@@ -303,7 +311,7 @@ pub fn build_mods(conn: &Connection, pack_id: &str, pack_version: &str) -> Resul
     let mut rows = stmt.query(params![pack_id, pack_version])?;
     while let Some(r) = rows.next()? {
         let filename: String = r.get(5)?;
-        let target: Option<String> = r.get(10)?;
+        let target: Option<String> = r.get(12)?;
         if cur.as_deref() != Some(filename.as_str()) {
             cur = Some(filename.clone());
             let canonical: Option<String> = r.get(0)?;
@@ -320,6 +328,9 @@ pub fn build_mods(conn: &Connection, pack_id: &str, pack_version: &str) -> Resul
                 default_enabled: r.get::<_, i64>(8)? != 0,
                 targets: Vec::new(),
                 mc_versions: decode_mc(r.get(9)?),
+                cached: false, // set by the handler against the live cache
+                modrinth_version_id: r.get(10)?,
+                modrinth_project_id: r.get(11)?,
             });
         }
         if let Some(t) = target {
