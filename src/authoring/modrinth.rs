@@ -165,6 +165,64 @@ impl Modrinth {
         resp.json().await.context("decode")
     }
 
+    /// Batch project lookup by id/slug for harvest enrichment: title, slug, and
+    /// the owning team id (the project object carries no author username -- that
+    /// comes from [`team_owners_by_ids`]). Chunked like the sha1 lookup. Ids with
+    /// no match are simply absent from the returned map.
+    pub async fn projects_by_ids(&self, ids: &[String]) -> Result<HashMap<String, Project>> {
+        let mut out = HashMap::new();
+        for chunk in ids.chunks(BATCH_SIZE) {
+            let encoded = serde_json::to_string(chunk).context("encode project ids")?;
+            let resp = self
+                .http
+                .get(format!("{MODRINTH_BASE}/v2/projects"))
+                .query(&[("ids", encoded.as_str())])
+                .send()
+                .await
+                .context("projects get")?;
+            let status = resp.status();
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(anyhow!("modrinth projects HTTP {status}: {body}"));
+            }
+            let list: Vec<Project> = resp.json().await.context("decode projects")?;
+            for p in list {
+                out.insert(p.id.clone(), p);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Batch team lookup -> the owner's username per team id. Modrinth returns one
+    /// member array per requested team; the `Owner`-role member is the author we
+    /// attribute the mod to. Teams with no owner row are absent from the map.
+    pub async fn team_owners_by_ids(&self, team_ids: &[String]) -> Result<HashMap<String, String>> {
+        let mut out = HashMap::new();
+        for chunk in team_ids.chunks(BATCH_SIZE) {
+            let encoded = serde_json::to_string(chunk).context("encode team ids")?;
+            let resp = self
+                .http
+                .get(format!("{MODRINTH_BASE}/v2/teams"))
+                .query(&[("ids", encoded.as_str())])
+                .send()
+                .await
+                .context("teams get")?;
+            let status = resp.status();
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(anyhow!("modrinth teams HTTP {status}: {body}"));
+            }
+            // shape: [[member, ...], [member, ...]] -- one inner array per team
+            let teams: Vec<Vec<TeamMember>> = resp.json().await.context("decode teams")?;
+            for members in teams {
+                if let Some(owner) = members.iter().find(|m| m.role.eq_ignore_ascii_case("owner")) {
+                    out.insert(owner.team_id.clone(), owner.user.username.clone());
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Generic GET for artifacts hosted outside Modrinth (GitHub release
     /// assets), reusing the pooled client + UA. Follows redirects.
     pub async fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>> {
@@ -212,6 +270,28 @@ struct ProjectIcon {
     icon_url: Option<String>,
 }
 
+/// A project as the batch `/v2/projects` lookup returns it -- the subset harvest
+/// enrichment reads. `team` is the id used to resolve the author username.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Project {
+    pub id: String,
+    pub slug: String,
+    pub title: String,
+    pub team: String,
+}
+
+#[derive(Deserialize)]
+struct TeamMember {
+    team_id: String,
+    role: String,
+    user: TeamUser,
+}
+
+#[derive(Deserialize)]
+struct TeamUser {
+    username: String,
+}
+
 #[derive(Deserialize)]
 struct SearchResponse {
     hits: Vec<SearchHit>,
@@ -226,6 +306,11 @@ pub struct SearchHit {
     pub description: String,
     #[serde(default)]
     pub icon_url: Option<String>,
+    /// Project owner's username -- a denormalized convenience Modrinth ships only
+    /// on search hits (the project object has no author field). The panel shows it
+    /// as a pick-time facet.
+    #[serde(default)]
+    pub author: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -234,6 +319,10 @@ pub struct Version {
     pub project_id: String,
     pub name: String,
     pub version_number: String,
+    /// Release channel: `release` | `beta` | `alpha`. Lets the panel filter out
+    /// pre-releases so the operator isn't wading through every snapshot.
+    #[serde(default)]
+    pub version_type: String,
     #[serde(default)]
     pub game_versions: Vec<String>,
     #[serde(default)]

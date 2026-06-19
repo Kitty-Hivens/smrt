@@ -57,6 +57,33 @@ pub fn upsert_mod_by_alias(conn: &Connection, aliases: &[(&str, &str)], now: &st
     Ok(mod_id)
 }
 
+/// Fill a mod's human metadata (display name, Modrinth slug, author) from a
+/// harvest. `COALESCE(new, existing)` per column: a jar that carries a value
+/// fills a gap, a jar that lacks one never erases a value an earlier jar set.
+/// Skipped for precious (`curator`/`authored`) rows. Idempotent.
+pub fn set_mod_meta(
+    conn: &Connection,
+    mod_id: i64,
+    name: Option<&str>,
+    slug: Option<&str>,
+    author: Option<&str>,
+    now: &str,
+) -> Result<()> {
+    if name.is_none() && slug.is_none() && author.is_none() {
+        return Ok(());
+    }
+    conn.execute(
+        "UPDATE mods SET
+           canonical_name = COALESCE(?2, canonical_name),
+           slug           = COALESCE(?3, slug),
+           author         = COALESCE(?4, author),
+           updated_at     = ?5
+         WHERE id = ?1 AND source NOT IN ('curator', 'authored')",
+        params![mod_id, name, slug, author, now],
+    )?;
+    Ok(())
+}
+
 /// Upsert an artifact keyed by its content hash, and (re)record its
 /// compatibility `targets` (loader ids, or `any` when the set is empty).
 /// Returns the `mod_version` id. A precious (`curator`/`authored`) row with this

@@ -7,4 +7,10 @@
  * `{"modListVersion": 2, "modList": [{...}]}`. [`read_mcmod_info`]
  * flattens both into `Vec<McModInfo>`.
  */
-export type McModInfo = { modid: string, name: string, version: string, description: string, url: string, dependencies: Array<string>, };
+export type McModInfo = { modid: string, name: string, version: string, description: string, url: string, dependencies: Array<string>, 
+/**
+ * 1.12-era Forge spells the author list `authorList`. Harvest reads it as a
+ * local, network-free author source (falling back to Modrinth only when the
+ * jar carries none).
+ */
+authorList: Array<string>, };

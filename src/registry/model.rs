@@ -1,6 +1,7 @@
 //! Plain row/result structs + the source/kind vocab. No I/O.
 
 use serde::Serialize;
+use ts_rs::TS;
 
 /// Provenance of a fact. Harvested rows are rebuildable; authored/curator rows
 /// are precious and never clobbered by a re-harvest. `rank` breaks per-fact
@@ -65,7 +66,8 @@ impl RelKind {
 }
 
 /// Q1: a (pack build, version, filename) that ships a given mod.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct ModUse {
     pub pack_id: String,
     pub pack_version: String,
@@ -82,14 +84,69 @@ pub struct OrphanJar {
 }
 
 /// Q3: one version of a mod, with every loader it targets (`any` for a
-/// loader-agnostic jar).
-#[derive(Debug, Clone, Serialize)]
+/// loader-agnostic jar) and the Minecraft versions it was published for.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub struct VersionRow {
     pub version: String,
     pub targets: Vec<String>,
+    pub mc_versions: Vec<String>,
     pub sha1: String,
+    #[ts(type = "number")]
     pub size_bytes: i64,
+    pub filename: Option<String>,
     pub source: String,
+}
+
+/// One mod in the registry browser: identity, the human metadata an enriching
+/// harvest fills in, and the facets aggregated across all its artifacts.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct ModSummary {
+    #[ts(type = "number")]
+    pub mod_id: i64,
+    /// canonical_name -> slug -> modid -> `#<id>`, resolved server-side.
+    pub name: String,
+    pub slug: Option<String>,
+    pub author: Option<String>,
+    pub loaders: Vec<String>,
+    pub mc_versions: Vec<String>,
+    #[ts(type = "number")]
+    pub version_count: i64,
+}
+
+/// One published build in the registry browser (the mirror hosts builds too, not
+/// just loose mods).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct BuildSummary {
+    pub pack_id: String,
+    pub pack_version: String,
+    pub mc_version: String,
+    pub loader_id: Option<String>,
+    pub loader_version: Option<String>,
+    #[ts(type = "number | null")]
+    pub java_major: Option<i64>,
+    pub is_latest: bool,
+    #[ts(type = "number")]
+    pub mod_count: i64,
+}
+
+/// One mod shipped by a build, resolved to the artifact the operator would
+/// re-add (sha1) plus the human metadata to show it.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct BuildModRow {
+    pub name: String,
+    pub version: String,
+    pub sha1: String,
+    pub filename: String,
+    #[ts(type = "number")]
+    pub size_bytes: i64,
+    pub required: bool,
+    pub default_enabled: bool,
+    pub targets: Vec<String>,
+    pub mc_versions: Vec<String>,
 }
 
 /// Q4: an artifact eligible for a build loader, with its best-match specificity

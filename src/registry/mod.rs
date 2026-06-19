@@ -271,6 +271,95 @@ mod tests {
     }
 
     #[test]
+    fn browser_list_mods_filters() {
+        let r = fixture();
+        r.with_conn(|c| {
+            // unfiltered: every harvested mod, named by its modid (no canonical
+            // name set in the fixture)
+            let all = queries::list_mods(c, None, None, None)?;
+            let names: Vec<_> = all.iter().map(|m| m.name.as_str()).collect();
+            assert!(names.contains(&"appleskin"));
+            assert!(names.contains(&"multimod"));
+            assert_eq!(all.len(), 6);
+            // a loader filter keeps `any` + that loader's artifacts
+            let fabric = queries::list_mods(c, None, Some("fabric"), None)?;
+            let fnames: Vec<_> = fabric.iter().map(|m| m.name.as_str()).collect();
+            assert!(fnames.contains(&"multimod")); // forge+fabric jar
+            assert!(fnames.contains(&"tweak")); // any
+            assert!(!fnames.contains(&"appleskin")); // forge-only
+            // a name query matches the modid alias
+            let apple = queries::list_mods(c, Some("apple"), None, None)?;
+            assert_eq!(apple.len(), 1);
+            assert_eq!(apple[0].name, "appleskin");
+            // the multi-loader jar reports both loaders as facets
+            let multi = all.iter().find(|m| m.name == "multimod").unwrap();
+            assert_eq!(multi.loaders, vec!["fabric".to_string(), "forge".to_string()]);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn browser_list_builds_and_build_mods() {
+        let r = fixture();
+        r.with_conn(|c| {
+            let builds = queries::list_builds(c)?;
+            assert_eq!(builds.len(), 1);
+            assert_eq!(builds[0].pack_id, "Industrial");
+            assert_eq!(builds[0].mod_count, 3);
+            assert!(builds[0].is_latest);
+
+            let mods = queries::build_mods(c, "Industrial", "2026.06.06")?;
+            assert_eq!(mods.len(), 3);
+            let names: Vec<_> = mods.iter().map(|m| m.name.as_str()).collect();
+            assert!(names.contains(&"appleskin"));
+            assert!(names.contains(&"jei"));
+            assert!(names.contains(&"tweak"));
+            // each row resolves to the artifact sha1 the operator would re-add
+            assert!(mods.iter().all(|m| !m.sha1.is_empty()));
+            // tweak ships as optional in the fixture build
+            let tweak = mods.iter().find(|m| m.name == "tweak").unwrap();
+            assert!(!tweak.required);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn browser_mc_facet_and_filter() {
+        // a dedicated registry so we control mc_versions (the shared fixture
+        // leaves them unset)
+        let r = Registry::open_in_memory().unwrap();
+        r.with_conn_mut(|c| {
+            let m = upsert::upsert_mod_by_alias(c, &[("modid", "biomesoplenty")], NOW)?;
+            upsert::upsert_mod_version(
+                c,
+                m,
+                "7.0",
+                &["forge"],
+                "sha_bop",
+                1000,
+                Some("bop.jar"),
+                Some(r#"["1.12.2"]"#),
+                NOW,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        r.with_conn(|c| {
+            // the mc set folds into both the summary facet and the version row
+            let hit = queries::list_mods(c, None, None, Some("1.12.2"))?;
+            assert_eq!(hit.len(), 1);
+            assert_eq!(hit[0].mc_versions, vec!["1.12.2".to_string()]);
+            assert!(queries::list_mods(c, None, None, Some("1.20.1"))?.is_empty());
+            let vs = queries::versions_of_mod(c, "modid", "biomesoplenty")?;
+            assert_eq!(vs[0].mc_versions, vec!["1.12.2".to_string()]);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn relation_dedupe_on_reinsert() {
         let r = fixture();
         r.with_conn_mut(|c| {

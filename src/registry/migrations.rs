@@ -28,6 +28,7 @@ const MIGRATIONS: &[(u32, Migration)] = &[
         Migration::Sql(include_str!("schema/0003_pack_build_fingerprint.sql")),
     ),
     (4, Migration::Code(reconcile_target_schema)),
+    (5, Migration::Sql(include_str!("schema/0005_mod_author.sql"))),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its

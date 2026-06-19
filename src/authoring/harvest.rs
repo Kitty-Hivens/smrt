@@ -30,6 +30,11 @@ pub struct JarSeed {
     pub mc_versions: Vec<String>,
     pub requires: Vec<String>, // jar-meta dep modids (pseudo-deps filtered out)
     pub filename: Option<String>,
+    // human metadata for the panel's mod browser: display name (jar-meta name ->
+    // Modrinth title), Modrinth slug, author (jar-meta authorList -> team owner).
+    pub name: Option<String>,
+    pub author: Option<String>,
+    pub slug: Option<String>,
 }
 
 pub struct BuildModSeed {
@@ -117,6 +122,14 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
             continue;
         }
         let mod_id = upsert::upsert_mod_by_alias(conn, &aliases, now)?;
+        upsert::set_mod_meta(
+            conn,
+            mod_id,
+            jar.name.as_deref(),
+            jar.slug.as_deref(),
+            jar.author.as_deref(),
+            now,
+        )?;
         // every loader the artifact suits; empty -> 'any' (handled downstream)
         let targets: Vec<&str> = jar.loaders.iter().map(String::as_str).collect();
         let version = jar.version.as_deref().unwrap_or("unknown");
@@ -309,11 +322,55 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
         }
     };
 
+    // enrich human metadata (name/slug/author) for Modrinth-identified jars: one
+    // batched project lookup for title+slug+team, then one batched team lookup for
+    // the owner username. Both degrade to empty on failure -- jar-meta still fills
+    // name/author where present, identity harvest is unaffected.
+    let project_ids: Vec<String> = modrinth_by_sha
+        .values()
+        .map(|v| v.project_id.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let projects = match modrinth.projects_by_ids(&project_ids).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(error = %e, "modrinth project lookup failed; names/slugs from jar-meta only");
+            HashMap::new()
+        }
+    };
+    let team_ids: Vec<String> = projects
+        .values()
+        .map(|p| p.team.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let team_owners = match modrinth.team_owners_by_ids(&team_ids).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(error = %e, "modrinth team lookup failed; authors from jar-meta only");
+            HashMap::new()
+        }
+    };
+
     let jars = all_shas
         .into_iter()
         .map(|sha| {
             let info = mcmod_by_sha.get(&sha);
             let mrv = modrinth_by_sha.get(&sha);
+            let project = mrv.and_then(|v| projects.get(&v.project_id));
+            // name: jar-meta name wins (local), else Modrinth title
+            let name = info
+                .map(|i| i.name.clone())
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| project.map(|p| p.title.clone()).filter(|s| !s.trim().is_empty()));
+            // author: jar-meta authorList wins (local), else the project's team owner
+            let author = info
+                .map(|i| i.authors.join(", "))
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| project.and_then(|p| team_owners.get(&p.team).cloned()));
+            // slug is a Modrinth concept; jars carry none
+            let slug = project.map(|p| p.slug.clone()).filter(|s| !s.is_empty());
             JarSeed {
                 size_bytes: size_by_sha.get(&sha).copied().unwrap_or(0),
                 modid: info.map(|i| i.modid.clone()).filter(|s| !s.is_empty()),
@@ -328,6 +385,9 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
                     .map(|i| filter_deps(&i.dependencies))
                     .unwrap_or_default(),
                 filename: filename_by_sha.get(&sha).cloned(),
+                name,
+                author,
+                slug,
                 sha1: sha,
             }
         })
@@ -368,6 +428,9 @@ mod tests {
                     mc_versions: vec!["1.12.2".into()],
                     requires: vec![],
                     filename: Some("appleskin.jar".into()),
+                    name: Some("AppleSkin".into()),
+                    author: Some("squeek502".into()),
+                    slug: Some("appleskin".into()),
                 },
                 JarSeed {
                     sha1: "sha_b".into(),
@@ -379,6 +442,9 @@ mod tests {
                     mc_versions: vec![],
                     requires: vec!["appleskin".into(), "forge".into()], // 'forge' filtered upstream
                     filename: Some("jei.jar".into()),
+                    name: None,
+                    author: None,
+                    slug: None,
                 },
                 JarSeed {
                     sha1: "sha_noid".into(),
@@ -390,6 +456,9 @@ mod tests {
                     mc_versions: vec![],
                     requires: vec![],
                     filename: Some("mystery.jar".into()),
+                    name: None,
+                    author: None,
+                    slug: None,
                 },
             ],
             packs: vec![PackSeed {
@@ -460,6 +529,17 @@ mod tests {
                 |r| r.get(0),
             )?;
             assert_eq!(fp.as_deref(), Some("fp_test"));
+            // human metadata from the seed lands on the mods row
+            let apple = queries::mod_id_for_alias(c, "modid", "appleskin")?.unwrap();
+            let (name, author, slug): (Option<String>, Option<String>, Option<String>) = c
+                .query_row(
+                    "SELECT canonical_name, author, slug FROM mods WHERE id = ?1",
+                    [apple],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )?;
+            assert_eq!(name.as_deref(), Some("AppleSkin"));
+            assert_eq!(author.as_deref(), Some("squeek502"));
+            assert_eq!(slug.as_deref(), Some("appleskin"));
             Ok(())
         })
         .unwrap();
@@ -516,6 +596,9 @@ mod tests {
             mc_versions: vec![],
             requires: vec![],
             filename: Some(format!("{sha}.jar")),
+            name: None,
+            author: None,
+            slug: None,
         }
     }
 
