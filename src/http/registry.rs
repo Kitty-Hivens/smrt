@@ -29,7 +29,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/admin/registry/eligible", get(get_eligible))
         // registry browser: mods (faceted list), versions by surrogate id, builds
         .route("/v1/admin/registry/mods", get(get_mods))
-        .route("/v1/admin/registry/mod-versions/:mod_id", get(get_versions_by_id))
+        .route(
+            "/v1/admin/registry/mod-versions/:mod_id",
+            get(get_versions_by_id),
+        )
         .route("/v1/admin/registry/builds", get(get_builds))
         .route(
             "/v1/admin/registry/builds/:pack_id/:pack_version",
@@ -139,7 +142,12 @@ async fn get_mods(
     Query(q): Query<ModsQuery>,
 ) -> Result<Json<Vec<ModSummary>>, ApiError> {
     // empty query params arrive as Some("") -- treat blank as "no filter"
-    let blank = |s: &Option<String>| s.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let blank = |s: &Option<String>| {
+        s.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
     let (q_, loader_, mc_) = (blank(&q.q), blank(&q.loader), blank(&q.mc));
     Ok(Json(
         run_query(&state, move |c| {

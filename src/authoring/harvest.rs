@@ -378,7 +378,11 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
             let name = info
                 .map(|i| i.name.clone())
                 .filter(|s| !s.trim().is_empty())
-                .or_else(|| project.map(|p| p.title.clone()).filter(|s| !s.trim().is_empty()));
+                .or_else(|| {
+                    project
+                        .map(|p| p.title.clone())
+                        .filter(|s| !s.trim().is_empty())
+                });
             // author: jar-meta authorList wins (local), else the project's team owner
             let author = info
                 .map(|i| i.authors.join(", "))

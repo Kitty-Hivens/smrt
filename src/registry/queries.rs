@@ -297,7 +297,11 @@ pub fn list_builds(conn: &Connection) -> Result<Vec<BuildSummary>> {
 
 /// Registry browser: the mods a given build ships, each resolved to its artifact
 /// (sha1) so the operator can re-add one -- or all -- into another pack.
-pub fn build_mods(conn: &Connection, pack_id: &str, pack_version: &str) -> Result<Vec<BuildModRow>> {
+pub fn build_mods(
+    conn: &Connection,
+    pack_id: &str,
+    pack_version: &str,
+) -> Result<Vec<BuildModRow>> {
     let mut stmt = conn.prepare(
         "SELECT m.canonical_name, m.slug,
                 (SELECT external_key FROM mod_alias WHERE mod_id = m.id AND source = 'modid' LIMIT 1) AS modid,
@@ -326,7 +330,10 @@ pub fn build_mods(conn: &Connection, pack_id: &str, pack_version: &str) -> Resul
             let canonical: Option<String> = r.get(0)?;
             let slug: Option<String> = r.get(1)?;
             let modid: Option<String> = r.get(2)?;
-            let name = canonical.or(slug).or(modid).unwrap_or_else(|| filename.clone());
+            let name = canonical
+                .or(slug)
+                .or(modid)
+                .unwrap_or_else(|| filename.clone());
             out.push(BuildModRow {
                 name,
                 version: r.get(3)?,

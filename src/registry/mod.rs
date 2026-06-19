@@ -303,7 +303,10 @@ mod tests {
             assert!(crn.contains(&"tweak"), "any-loader mod visible");
             // the multi-loader jar reports both loaders as facets
             let multi = all.iter().find(|m| m.name == "multimod").unwrap();
-            assert_eq!(multi.loaders, vec!["fabric".to_string(), "forge".to_string()]);
+            assert_eq!(
+                multi.loaders,
+                vec!["fabric".to_string(), "forge".to_string()]
+            );
             Ok(())
         })
         .unwrap();
@@ -385,7 +388,11 @@ mod tests {
         .unwrap();
         r.with_conn(|c| {
             let hits = queries::list_mods(c, Some("iron_chests"), None, None)?;
-            assert_eq!(hits.len(), 1, "underscore matched literally, not as a wildcard");
+            assert_eq!(
+                hits.len(),
+                1,
+                "underscore matched literally, not as a wildcard"
+            );
             assert_eq!(hits[0].name, "iron_chests");
             Ok(())
         })

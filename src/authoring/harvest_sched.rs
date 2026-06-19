@@ -71,10 +71,9 @@ impl HarvestScheduler {
                     self.modrinth.clone(),
                     self.registry.clone(),
                 );
-                let run =
-                    tokio::spawn(
-                        async move { harvest::run_harvest(&storage, &modrinth, registry).await },
-                    );
+                let run = tokio::spawn(async move {
+                    harvest::run_harvest(&storage, &modrinth, registry).await
+                });
                 match run.await {
                     Ok(Ok(rep)) => tracing::info!(
                         jars = rep.jars_scanned,

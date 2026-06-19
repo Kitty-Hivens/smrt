@@ -215,7 +215,10 @@ impl Modrinth {
             // shape: [[member, ...], [member, ...]] -- one inner array per team
             let teams: Vec<Vec<TeamMember>> = resp.json().await.context("decode teams")?;
             for members in teams {
-                if let Some(owner) = members.iter().find(|m| m.role.eq_ignore_ascii_case("owner")) {
+                if let Some(owner) = members
+                    .iter()
+                    .find(|m| m.role.eq_ignore_ascii_case("owner"))
+                {
                     out.insert(owner.team_id.clone(), owner.user.username.clone());
                 }
             }

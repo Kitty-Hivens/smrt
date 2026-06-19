@@ -28,7 +28,10 @@ const MIGRATIONS: &[(u32, Migration)] = &[
         Migration::Sql(include_str!("schema/0003_pack_build_fingerprint.sql")),
     ),
     (4, Migration::Code(reconcile_target_schema)),
-    (5, Migration::Sql(include_str!("schema/0005_mod_author.sql"))),
+    (
+        5,
+        Migration::Sql(include_str!("schema/0005_mod_author.sql")),
+    ),
     (
         6,
         Migration::Sql(include_str!("schema/0006_mod_version_modrinth.sql")),
