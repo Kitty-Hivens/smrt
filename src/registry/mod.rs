@@ -294,6 +294,13 @@ mod tests {
             // loader filter is case-insensitive (pack loader "Forge" -> "forge")
             let upper = queries::list_mods(c, None, Some("Forge"), None)?;
             assert!(upper.iter().any(|m| m.name == "appleskin"));
+            // and walks the family DAG: a cleanroom pack sees forge-only mods
+            // (cleanroom inherits forge) plus its own + any, not fabric-only ones
+            let cr = queries::list_mods(c, None, Some("cleanroom"), None)?;
+            let crn: Vec<_> = cr.iter().map(|m| m.name.as_str()).collect();
+            assert!(crn.contains(&"appleskin"), "forge mod visible to cleanroom");
+            assert!(crn.contains(&"crmod"), "cleanroom-only mod visible");
+            assert!(crn.contains(&"tweak"), "any-loader mod visible");
             // the multi-loader jar reports both loaders as facets
             let multi = all.iter().find(|m| m.name == "multimod").unwrap();
             assert_eq!(multi.loaders, vec!["fabric".to_string(), "forge".to_string()]);

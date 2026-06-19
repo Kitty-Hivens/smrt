@@ -200,10 +200,18 @@ pub fn list_mods(
 
     let q_like = q.map(|s| format!("%{}%", like_escape(s)));
     let mc_like = mc.map(|s| format!("%\"{}\"%", like_escape(s)));
-    // loader is matched case-insensitively: a pack's free-text loader name
-    // ("Forge") should still hit the registry's target vocab ("forge").
+    // loader matches the family DAG, not just the exact id: a cleanroom/quilt
+    // pack can use forge/fabric artifacts, so the filter accepts the loader, its
+    // `loader_parent` ancestors, or `any` -- the same reachability eligible_for_
+    // loader uses. Seeded case-insensitively so a pack's free-text "Forge" hits
+    // the registry's "forge" target.
     let mut stmt = conn.prepare(
-        "SELECT m.id, m.canonical_name, m.slug, m.author,
+        "WITH RECURSIVE ancestors(id) AS (
+            SELECT lower(?2) WHERE ?2 IS NOT NULL
+            UNION
+            SELECT lp.parent_id FROM loader_parent lp JOIN ancestors a ON lp.child_id = a.id
+         )
+         SELECT m.id, m.canonical_name, m.slug, m.author,
                 (SELECT external_key FROM mod_alias WHERE mod_id = m.id AND source = 'modid' LIMIT 1) AS modid,
                 (SELECT count(*) FROM mod_version mv WHERE mv.mod_id = m.id) AS vcount
          FROM mods m
@@ -212,7 +220,8 @@ pub fn list_mods(
                 OR EXISTS (SELECT 1 FROM mod_alias a WHERE a.mod_id = m.id AND a.external_key LIKE ?1 ESCAPE '\\'))
            AND (?2 IS NULL OR EXISTS (
                  SELECT 1 FROM mod_version mv JOIN mod_version_target t ON t.mod_version_id = mv.id
-                 WHERE mv.mod_id = m.id AND (lower(t.target) = lower(?2) OR t.target = 'any')))
+                 WHERE mv.mod_id = m.id
+                   AND (t.target = 'any' OR lower(t.target) IN (SELECT id FROM ancestors))))
            AND (?3 IS NULL OR EXISTS (
                  SELECT 1 FROM mod_version mv
                  WHERE mv.mod_id = m.id AND mv.mc_versions LIKE ?4 ESCAPE '\\'))
