@@ -8,6 +8,7 @@
     loader,
     allowMany = false,
     onPick,
+    onAddOne,
     onAddMany,
     onClose,
   }: {
@@ -17,6 +18,8 @@
     // new row (not when re-pointing an existing one)
     allowMany?: boolean;
     onPick: (sel: { sha1: string; filename: string }) => void;
+    // cherry-pick one mod from a build without closing the picker
+    onAddOne?: (sel: { sha1: string; filename: string }) => void;
     onAddMany?: (items: { sha1: string; filename: string }[]) => void;
     onClose: () => void;
   } = $props();
@@ -47,6 +50,8 @@
   let selBuild = $state<BuildSummary | null>(null);
   let buildModRows = $state<BuildModRow[]>([]);
   let bmLoading = $state(false);
+  // sha1s cherry-picked from the open build this session, for "added" feedback
+  let addedShas = $state<Set<string>>(new Set());
 
   // ── raw cache mode ──
   let raw = $state<CacheUsageEntry[]>([]);
@@ -106,6 +111,7 @@
   async function openBuild(b: BuildSummary) {
     selBuild = b;
     buildModRows = [];
+    addedShas = new Set();
     err = '';
     bmLoading = true;
     try {
@@ -120,6 +126,18 @@
   function addAllFromBuild() {
     if (!onAddMany) return;
     onAddMany(buildModRows.map((m) => ({ sha1: m.sha1, filename: m.filename })));
+  }
+
+  // per-row Add on the Builds tab: when adding new rows, append and stay open so
+  // the operator can pick several; when re-pointing one row, fall back to onPick
+  // (which closes)
+  function addBuildMod(m: BuildModRow) {
+    if (allowMany && onAddOne) {
+      onAddOne({ sha1: m.sha1, filename: m.filename });
+      addedShas = new Set(addedShas).add(m.sha1);
+    } else {
+      onPick({ sha1: m.sha1, filename: m.filename });
+    }
   }
 
   async function loadRaw() {
@@ -147,6 +165,7 @@
     mode = m;
     selMod = null;
     selBuild = null;
+    addedShas = new Set();
     err = '';
     if (m === 'mods' && mods.length === 0) loadMods();
     if (m === 'builds' && builds.length === 0) loadBuilds();
@@ -270,7 +289,9 @@
                   {m.filename}{#if m.targets.length} · {m.targets.join(', ')}{/if}
                 </div>
               </div>
-              <button class="sm" onclick={() => onPick({ sha1: m.sha1, filename: m.filename })}>{t('mirror.add')}</button>
+              <button class="sm" disabled={addedShas.has(m.sha1)} onclick={() => addBuildMod(m)}>
+                {addedShas.has(m.sha1) ? t('mirror.added') : t('mirror.add')}
+              </button>
             </div>
           {/each}
           {#if buildModRows.length === 0 && !bmLoading}<div class="muted s">{t('mirror.noBuildMods')}</div>{/if}

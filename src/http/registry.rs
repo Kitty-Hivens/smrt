@@ -82,6 +82,11 @@ where
     Ok(res?)
 }
 
+/// Force an immediate harvest and return the report. Runs the harvest directly
+/// (not via the background scheduler) so the operator gets the counts back
+/// synchronously. Overlap with a concurrent auto-harvest is safe: the writes are
+/// idempotent and serialized by the registry's connection mutex, so the two just
+/// converge on the same state.
 async fn post_harvest(State(state): State<AppState>) -> Result<Json<HarvestReport>, ApiError> {
     let report =
         harvest::run_harvest(&state.storage, &state.modrinth, state.registry.clone()).await?;

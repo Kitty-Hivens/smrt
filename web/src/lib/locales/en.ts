@@ -284,13 +284,14 @@ export const en = {
   'mirror.mc': 'MC',
   'mirror.by': 'by {author}',
   'mirror.versionsN': '{n} versions',
-  'mirror.noMods': 'No mods match. Harvest the registry first.',
+  'mirror.noMods': 'No mods match the filters (or the registry is still empty).',
   'mirror.noVersions': 'No versions.',
   'mirror.latest': 'latest',
   'mirror.modsN': '{n} mods',
   'mirror.noBuilds': 'No builds yet.',
   'mirror.noBuildMods': 'This build has no resolved mods.',
   'mirror.add': 'Add',
+  'mirror.added': 'added',
   'mirror.addAll': 'Add all {n}',
 } as const;
 

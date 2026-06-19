@@ -291,6 +291,9 @@ mod tests {
             let apple = queries::list_mods(c, Some("apple"), None, None)?;
             assert_eq!(apple.len(), 1);
             assert_eq!(apple[0].name, "appleskin");
+            // loader filter is case-insensitive (pack loader "Forge" -> "forge")
+            let upper = queries::list_mods(c, None, Some("Forge"), None)?;
+            assert!(upper.iter().any(|m| m.name == "appleskin"));
             // the multi-loader jar reports both loaders as facets
             let multi = all.iter().find(|m| m.name == "multimod").unwrap();
             assert_eq!(multi.loaders, vec!["fabric".to_string(), "forge".to_string()]);
@@ -354,6 +357,29 @@ mod tests {
             assert!(queries::list_mods(c, None, None, Some("1.20.1"))?.is_empty());
             let vs = queries::versions_of_mod(c, "modid", "biomesoplenty")?;
             assert_eq!(vs[0].mc_versions, vec!["1.12.2".to_string()]);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn browser_name_query_treats_underscore_literally() {
+        // an unescaped LIKE would let `_` wildcard-match any char; with ESCAPE the
+        // query 'iron_chests' must match only the literal-underscore mod, not the
+        // sibling where '_' would stand in for 'x'
+        let r = Registry::open_in_memory().unwrap();
+        r.with_conn_mut(|c| {
+            for (modid, sha) in [("iron_chests", "sha_ic"), ("ironxchests", "sha_ix")] {
+                let m = upsert::upsert_mod_by_alias(c, &[("modid", modid)], NOW)?;
+                upsert::upsert_mod_version(c, m, "1", &["forge"], sha, 1, None, None, NOW)?;
+            }
+            Ok(())
+        })
+        .unwrap();
+        r.with_conn(|c| {
+            let hits = queries::list_mods(c, Some("iron_chests"), None, None)?;
+            assert_eq!(hits.len(), 1, "underscore matched literally, not as a wildcard");
+            assert_eq!(hits[0].name, "iron_chests");
             Ok(())
         })
         .unwrap();

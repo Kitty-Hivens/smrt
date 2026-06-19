@@ -13,6 +13,20 @@ fn decode_mc(raw: Option<String>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Escape the `LIKE` metacharacters in an operator's search value so a literal
+/// `%` or `_` matches itself rather than acting as a wildcard. Pair with
+/// `ESCAPE '\'` on the clause.
+fn like_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if matches!(c, '\\' | '%' | '_') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// The `mod` row id owning the artifact with this sha1, if harvested.
 pub fn mod_id_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<i64>> {
     Ok(conn
@@ -179,22 +193,24 @@ pub fn list_mods(
         }
     }
 
-    let q_like = q.map(|s| format!("%{s}%"));
-    let mc_like = mc.map(|s| format!("%\"{s}\"%"));
+    let q_like = q.map(|s| format!("%{}%", like_escape(s)));
+    let mc_like = mc.map(|s| format!("%\"{}\"%", like_escape(s)));
+    // loader is matched case-insensitively: a pack's free-text loader name
+    // ("Forge") should still hit the registry's target vocab ("forge").
     let mut stmt = conn.prepare(
         "SELECT m.id, m.canonical_name, m.slug, m.author,
                 (SELECT external_key FROM mod_alias WHERE mod_id = m.id AND source = 'modid' LIMIT 1) AS modid,
                 (SELECT count(*) FROM mod_version mv WHERE mv.mod_id = m.id) AS vcount
          FROM mods m
          WHERE (?1 IS NULL
-                OR m.canonical_name LIKE ?1 OR m.slug LIKE ?1
-                OR EXISTS (SELECT 1 FROM mod_alias a WHERE a.mod_id = m.id AND a.external_key LIKE ?1))
+                OR m.canonical_name LIKE ?1 ESCAPE '\\' OR m.slug LIKE ?1 ESCAPE '\\'
+                OR EXISTS (SELECT 1 FROM mod_alias a WHERE a.mod_id = m.id AND a.external_key LIKE ?1 ESCAPE '\\'))
            AND (?2 IS NULL OR EXISTS (
                  SELECT 1 FROM mod_version mv JOIN mod_version_target t ON t.mod_version_id = mv.id
-                 WHERE mv.mod_id = m.id AND (t.target = ?2 OR t.target = 'any')))
+                 WHERE mv.mod_id = m.id AND (lower(t.target) = lower(?2) OR t.target = 'any')))
            AND (?3 IS NULL OR EXISTS (
                  SELECT 1 FROM mod_version mv
-                 WHERE mv.mod_id = m.id AND mv.mc_versions LIKE ?4))
+                 WHERE mv.mod_id = m.id AND mv.mc_versions LIKE ?4 ESCAPE '\\'))
          ORDER BY lower(COALESCE(m.canonical_name, m.slug, '')), m.id",
     )?;
     let rows = stmt

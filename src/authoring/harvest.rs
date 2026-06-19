@@ -326,9 +326,19 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
     // batched project lookup for title+slug+team, then one batched team lookup for
     // the owner username. Both degrade to empty on failure -- jar-meta still fills
     // name/author where present, identity harvest is unaffected.
+    //
+    // Privacy: only hit Modrinth for a sha whose local jar-meta is missing a name
+    // or author. A jar that already names itself + its authors needs no project or
+    // team call -- the egress stays limited to what the mirror cannot answer from
+    // the bytes it already holds (a slug, only Modrinth has, is the tradeoff).
+    let needs_enrich = |sha: &str| match mcmod_by_sha.get(sha) {
+        Some(i) => i.name.trim().is_empty() || i.authors.is_empty(),
+        None => true,
+    };
     let project_ids: Vec<String> = modrinth_by_sha
-        .values()
-        .map(|v| v.project_id.clone())
+        .iter()
+        .filter(|(sha, _)| needs_enrich(sha))
+        .map(|(_, v)| v.project_id.clone())
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();

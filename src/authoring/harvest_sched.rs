@@ -62,18 +62,29 @@ impl HarvestScheduler {
                     }
                 }
                 // pokes arriving during the run leave a wake for the next pass --
-                // those are genuinely-newer changes, worth a follow-up harvest
-                match harvest::run_harvest(&self.storage, &self.modrinth, self.registry.clone())
-                    .await
-                {
-                    Ok(rep) => tracing::info!(
+                // those are genuinely-newer changes, worth a follow-up harvest.
+                // Run in a child task so a panic deep in harvest is isolated and
+                // logged instead of killing this loop and silently stopping all
+                // auto-harvests for the rest of the process.
+                let (storage, modrinth, registry) = (
+                    self.storage.clone(),
+                    self.modrinth.clone(),
+                    self.registry.clone(),
+                );
+                let run =
+                    tokio::spawn(
+                        async move { harvest::run_harvest(&storage, &modrinth, registry).await },
+                    );
+                match run.await {
+                    Ok(Ok(rep)) => tracing::info!(
                         jars = rep.jars_scanned,
                         mods = rep.mods,
                         versions = rep.mod_versions,
                         builds = rep.builds,
                         "auto-harvest complete"
                     ),
-                    Err(e) => tracing::warn!(error = %e, "auto-harvest failed"),
+                    Ok(Err(e)) => tracing::warn!(error = %e, "auto-harvest failed"),
+                    Err(join) => tracing::error!(error = %join, "auto-harvest task crashed"),
                 }
             }
         });
