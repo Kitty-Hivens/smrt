@@ -164,10 +164,10 @@ mod tests {
             latest_pack_version: "2026.05.30.1".into(),
             tags: vec!["tech".into()],
             featured: false,
-            icon_url: None,
+            icon_url: Some("https://m/v1/packs/Industrial/static/_nexira/icon.png".into()),
             banner_url: None,
-            gallery_urls: vec![],
-            description_md: None,
+            gallery_urls: vec!["https://m/g1.png".into()],
+            description_md: Some("# Industrial".into()),
         }
     }
 
@@ -195,5 +195,18 @@ mod tests {
             }
             _ => panic!("expected static"),
         }
+        // pack-card metadata is recovered from the summary so revert keeps the card
+        assert_eq!(
+            cfg.pack_meta.icon_url.as_deref(),
+            Some("https://m/v1/packs/Industrial/static/_nexira/icon.png")
+        );
+        assert_eq!(
+            cfg.pack_meta.gallery_urls,
+            vec!["https://m/g1.png".to_string()]
+        );
+        assert_eq!(
+            cfg.pack_meta.description_md.as_deref(),
+            Some("# Industrial")
+        );
     }
 }

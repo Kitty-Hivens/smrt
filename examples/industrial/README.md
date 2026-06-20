@@ -74,7 +74,6 @@ Pack-card metadata (icon / banner / gallery / description) and per-mod settings 
 | ----------------- | ------------------------------------------------------------------------------------------------------------- |
 | `full-pipeline.sh`| One-shot orchestrator: bootstrap -> upload-mods -> upload-static -> build -> verify. Set `SKIP_BOOTSTRAP=1` to refresh without re-extracting the SC archive. |
 | `role-table.toml` | Role-table example for the `apply-role-table` subcommand, which writes `display.role` per mod straight into the pack config. |
-| `pack-meta.toml`  | Standalone pack-meta example. Pack-card metadata now lives in the pack config's `pack_meta` (panel Config tab); kept here as a field reference. |
 | `upload-mods.sh`  | Bulk uploader for mod jars (bash). Keeps the OSN-substitute step inline; will get a `smrt-pack upload-cache` subcommand in a follow-up.                              |
 | `README.md`       | This file.                                                                                                    |
 

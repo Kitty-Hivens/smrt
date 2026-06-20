@@ -313,7 +313,7 @@ async fn run_bootstrap(
         .await
         .map_err(|e| e.to_string())?;
     job.line(format!(
-        "wrote authoring config for {pack_id} -- ready to curate + build"
+        "wrote authoring config for {pack_id} -- ready to edit + build"
     ));
     Ok(())
 }

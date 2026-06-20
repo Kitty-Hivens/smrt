@@ -71,7 +71,7 @@ enum Cmd {
     },
 
     /// Fill display.name / description / url from each smrt_cache mod's
-    /// `mcmod.info`. Existing curator-written values win. Idempotent.
+    /// `mcmod.info`. Existing authored values win. Idempotent.
     EnrichMcmod {
         #[arg(long)]
         config: PathBuf,
@@ -82,8 +82,8 @@ enum Cmd {
     },
 
     /// Apply a TOML role table (filename -> role) to `display.role`
-    /// across the pack. Existing values win; unmatched table entries
-    /// are reported so the curator can spot typos.
+    /// across the pack config. Existing values win; unmatched table entries
+    /// are reported so typos can be spotted.
     ApplyRoleTable {
         #[arg(long)]
         config: PathBuf,
@@ -128,7 +128,7 @@ enum Cmd {
 
     /// Reconstruct an editable authoring config from a published manifest +
     /// summary, to migrate a CLI-era pack (no `authoring/` inputs) into the
-    /// panel's editable format. Pair with a curator that folds in pack-meta.
+    /// panel's editable format. Recovers pack-card metadata from the summary.
     ReconstructConfig {
         #[arg(long)]
         manifest: PathBuf,

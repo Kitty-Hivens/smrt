@@ -137,12 +137,13 @@
     cardGalleryStr = '';
   }
 
-  // content signature; the debounced autosave fires only when it changes
+  // content signature; the debounced autosave fires only when it changes. A JSON
+  // array keeps the parts unambiguous (no separator a field value could forge).
   function sig(): string {
-    return cfg ? JSON.stringify($state.snapshot(cfg)) + ' ' + tagsStr + ' ' + cardGalleryStr : '';
+    return cfg ? JSON.stringify([$state.snapshot(cfg), tagsStr, cardGalleryStr]) : '';
   }
 
-  // debounced autosave: deep-reads cfg + tagsStr, persists once they settle
+  // debounced autosave: deep-reads cfg + tags + gallery, persists once they settle
   $effect(() => {
     if (!cfg) return;
     const s = sig();
@@ -152,16 +153,23 @@
     saveTimer = setTimeout(() => doSave(s), 700);
   });
 
+  // a cleared text input holds "" -- normalize to null so an empty card field is
+  // omitted from the published summary rather than serialized as ""
+  const blankToNull = (v: string | null | undefined) => (v && v.trim() ? v.trim() : null);
+
   async function doSave(s: string) {
     if (!cfg) return;
+    const snap = $state.snapshot(cfg);
     const payload: PackConfig = {
-      ...$state.snapshot(cfg),
+      ...snap,
       tags: tagsStr
         .split(',')
         .map((x) => x.trim())
         .filter(Boolean),
       pack_meta: {
-        ...$state.snapshot(cfg).pack_meta,
+        icon_url: blankToNull(snap.pack_meta.icon_url),
+        banner_url: blankToNull(snap.pack_meta.banner_url),
+        description_md: blankToNull(snap.pack_meta.description_md),
         gallery_urls: cardGalleryStr
           .split('\n')
           .map((x) => x.trim())

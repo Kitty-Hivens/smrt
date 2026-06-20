@@ -151,7 +151,7 @@ export const api = {
   },
   removed: () => getJson<{ schema_version: number; removed: string[] }>('/v1/admin/cache/removed'),
 
-  // ── authoring: config, curator, build ──
+  // ── authoring: config, build ──
   packConfig: (id: string) =>
     getJson<PackConfig>(`/v1/admin/packs/${encodeURIComponent(id)}/config`),
   savePackConfig: (id: string, cfg: PackConfig) =>
