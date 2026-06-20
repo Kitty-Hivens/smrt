@@ -2,7 +2,6 @@
 //! `PackManifest`, and derive the `PackSummary` card. Pure compute -- reads
 //! cache jars + Modrinth, writes nothing; the caller persists via `Storage`.
 
-use super::curator::PackMeta;
 use super::modrinth::Modrinth;
 use super::sources::{ModrinthCache, resolve_asset, resolve_mod, sha1_hex};
 use crate::domain::{
@@ -118,13 +117,9 @@ fn content_fingerprint(
 }
 
 /// Derive the `PackSummary` (the Browse-list / PackDetail card payload) from
-/// the config + the resolved `pack_version`, merging optional rich pack-meta
-/// (icon / banner / gallery / description) on top.
-pub fn make_pack_summary(
-    cfg: &PackConfig,
-    pack_version: &str,
-    pack_meta: &PackMeta,
-) -> PackSummary {
+/// the config + the resolved `pack_version`, carrying the config's pack-card
+/// metadata (icon / banner / gallery / description) onto the summary.
+pub fn make_pack_summary(cfg: &PackConfig, pack_version: &str) -> PackSummary {
     PackSummary {
         pack_id: cfg.pack_id.clone(),
         display_name: cfg.display_name.clone(),
@@ -133,10 +128,10 @@ pub fn make_pack_summary(
         latest_pack_version: pack_version.to_string(),
         tags: cfg.tags.clone(),
         featured: cfg.featured,
-        icon_url: pack_meta.icon_url.clone(),
-        banner_url: pack_meta.banner_url.clone(),
-        gallery_urls: pack_meta.gallery_urls.clone(),
-        description_md: pack_meta.description_md.clone(),
+        icon_url: cfg.pack_meta.icon_url.clone(),
+        banner_url: cfg.pack_meta.banner_url.clone(),
+        gallery_urls: cfg.pack_meta.gallery_urls.clone(),
+        description_md: cfg.pack_meta.description_md.clone(),
     }
 }
 

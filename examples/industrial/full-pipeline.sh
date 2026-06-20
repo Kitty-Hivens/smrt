@@ -9,18 +9,19 @@
 #   2. examples/industrial/
 #        upload-mods.sh           (push cache jars to admin /v1/admin/cache,
 #                                  substitutes Smarty -> open-smrt-network)
-#   3. smrt-pack apply-curator    (omnibus enrichment chain: mcmod,
-#                                  role, category, mark-optional,
-#                                  substitute, infer-requires, extras,
-#                                  generate-hidemymods)
-#   4. smrt-pack upload-static    (push <clientDir>/{config,resourcepacks,
+#   3. smrt-pack upload-static    (push <clientDir>/{config,resourcepacks,
 #                                  shaderpacks,options.txt,...} to
 #                                  admin /v1/admin/packs/.../static)
-#   5. smrt-pack build            (resolve every source, write wire
-#                                  manifest + summary, atomically swap
-#                                  the `latest` symlink)
-#   6. curl health probe          (verify the new pack_version actually
+#   4. smrt-pack build            (run enrichment passes -- mcmod.info
+#                                  display + requires -- resolve every
+#                                  source, write wire manifest + summary,
+#                                  atomically swap the `latest` symlink)
+#   5. curl health probe          (verify the new pack_version actually
 #                                  serves)
+#
+# Pack-card metadata (icon / banner / gallery / description) and per-mod
+# settings (optional / default-off, category, role, incompatibilities) live
+# in the pack config, edited in the panel's Config tab.
 #
 # Run from anywhere; the script is self-locating. Each step is
 # idempotent so re-running after a partial failure picks up cleanly.
@@ -48,8 +49,7 @@ env overrides:
   WORK_DIR          per-run staging dir                 (default: /tmp/smrt-pipeline)
   SKIP_BOOTSTRAP    set to non-empty to reuse the prior PackConfig
                     (useful when the SC archive hasn't changed but
-                    the curator config has, e.g. tweaking role-table
-                    or adding cozy adds)
+                    you only re-uploaded mods or static assets)
 USAGE
     exit 64
 fi
@@ -70,11 +70,9 @@ TOKEN_FILE="${TOKEN_FILE:-/tmp/smrt-token}"
 WORK_DIR="${WORK_DIR:-/tmp/smrt-pipeline}"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-CURATOR_TOML="$HERE/curator.toml"
 UPLOAD_MODS_SH="$HERE/upload-mods.sh"
 
 BOOTSTRAP_JSON="$WORK_DIR/$PACK_ID.bootstrap.json"
-CURATED_JSON="$WORK_DIR/$PACK_ID.curated.json"
 
 # ── preflight ─────────────────────────────────────────────────────────────
 
@@ -83,10 +81,6 @@ mkdir -p "$WORK_DIR"
 if [[ ! -x "$SMRT_PACK_BIN" ]]; then
     echo "smrt-pack binary not found at $SMRT_PACK_BIN" >&2
     echo "build it first:  cargo build --release --bin smrt-pack" >&2
-    exit 66
-fi
-if [[ ! -f "$CURATOR_TOML" ]]; then
-    echo "curator.toml not found at $CURATOR_TOML" >&2
     exit 66
 fi
 if [[ ! -f "$TOKEN_FILE" ]]; then
@@ -102,7 +96,7 @@ if [[ -z "${SKIP_BOOTSTRAP:-}" ]]; then
         echo "SC archive not found at $SC_ARCHIVE" >&2
         exit 66
     fi
-    echo "==> [1/6] bootstrap"
+    echo "==> [1/5] bootstrap"
     "$SMRT_PACK_BIN" bootstrap \
         --sc-archive       "$SC_ARCHIVE" \
         --out              "$BOOTSTRAP_JSON" \
@@ -115,7 +109,7 @@ if [[ -z "${SKIP_BOOTSTRAP:-}" ]]; then
         --java-major       "$JAVA_MAJOR" \
         --storage          "$STORAGE"
 else
-    echo "==> [1/6] bootstrap SKIPPED (SKIP_BOOTSTRAP is set)"
+    echo "==> [1/5] bootstrap SKIPPED (SKIP_BOOTSTRAP is set)"
     [[ -f "$BOOTSTRAP_JSON" ]] || {
         echo "  but no prior $BOOTSTRAP_JSON to reuse" >&2
         exit 66
@@ -125,46 +119,36 @@ fi
 # ── 2. upload mod jars to mirror cache ────────────────────────────────────
 
 if [[ -x "$UPLOAD_MODS_SH" ]]; then
-    echo "==> [2/6] upload mod jars (legacy bash uploader)"
+    echo "==> [2/5] upload mod jars (legacy bash uploader)"
     bash "$UPLOAD_MODS_SH"
 else
-    echo "==> [2/6] upload-mods.sh missing or not executable -- skipping" >&2
+    echo "==> [2/5] upload-mods.sh missing or not executable -- skipping" >&2
 fi
 
-# ── 3. apply-curator ──────────────────────────────────────────────────────
-
-echo "==> [3/6] apply-curator (enrich + role + category + mark-optional + substitute + infer-requires + hidemymods + extras)"
-"$SMRT_PACK_BIN" apply-curator \
-    --config   "$BOOTSTRAP_JSON" \
-    --curator  "$CURATOR_TOML" \
-    --out      "$CURATED_JSON" \
-    --storage  "$STORAGE"
-
-# ── 4. upload-static ──────────────────────────────────────────────────────
+# ── 3. upload-static ──────────────────────────────────────────────────────
 
 if [[ -d "$CLIENT_DIR" ]]; then
-    echo "==> [4/6] upload-static from $CLIENT_DIR"
+    echo "==> [3/5] upload-static from $CLIENT_DIR"
     "$SMRT_PACK_BIN" upload-static \
         --pack-id   "$PACK_ID" \
         --dir       "$CLIENT_DIR" \
         --mirror-base "$MIRROR_BASE" \
         --token-file "$TOKEN_FILE"
 else
-    echo "==> [4/6] upload-static SKIPPED -- $CLIENT_DIR does not exist"
+    echo "==> [3/5] upload-static SKIPPED -- $CLIENT_DIR does not exist"
 fi
 
-# ── 5. build ──────────────────────────────────────────────────────────────
+# ── 4. build ──────────────────────────────────────────────────────────────
 
-echo "==> [5/6] build wire manifest + summary"
+echo "==> [4/5] build wire manifest + summary"
 "$SMRT_PACK_BIN" build \
-    --config   "$CURATED_JSON" \
-    --curator  "$CURATOR_TOML" \
+    --config   "$BOOTSTRAP_JSON" \
     --storage  "$STORAGE" \
     --mirror-base "$MIRROR_BASE"
 
-# ── 6. verify ─────────────────────────────────────────────────────────────
+# ── 5. verify ─────────────────────────────────────────────────────────────
 
-echo "==> [6/6] verify live manifest"
+echo "==> [5/5] verify live manifest"
 PACK_URL="$MIRROR_BASE/v1/packs/$PACK_ID"
 echo "  GET $PACK_URL"
 curl -fsS "$PACK_URL" | tee "$WORK_DIR/$PACK_ID.summary.json"

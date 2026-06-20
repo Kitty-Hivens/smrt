@@ -153,5 +153,6 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
         featured: false,
         mods: declared_mods,
         assets: declared_assets,
+        pack_meta: Default::default(),
     })
 }

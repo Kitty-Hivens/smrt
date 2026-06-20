@@ -1,8 +1,5 @@
 use super::ApiError;
-use crate::authoring::{
-    Curator, ValidateReport, jar_icon, merge_curator, modrinth, parse_curator, reconstruct_config,
-    validate,
-};
+use crate::authoring::{ValidateReport, jar_icon, modrinth, reconstruct_config, validate};
 use crate::domain::*;
 use crate::state::AppState;
 use axum::body::Bytes;
@@ -43,14 +40,6 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/admin/packs/:pack_id/config/revert",
             post(revert_pack_config),
-        )
-        .route(
-            "/v1/admin/packs/:pack_id/curator",
-            get(get_pack_curator).put(put_pack_curator),
-        )
-        .route(
-            "/v1/admin/packs/:pack_id/curator/structured",
-            get(get_pack_curator_structured).put(put_pack_curator_structured),
         )
         .route("/v1/admin/featured", post(save_featured))
         .route("/v1/admin/packs/:pack_id/validate", post(validate_pack))
@@ -538,68 +527,6 @@ async fn revert_pack_config(
     let cfg = reconstruct_config(&manifest, &summary);
     state.storage.save_pack_config(&pack_id, &cfg).await?;
     Ok(Json(cfg))
-}
-
-async fn get_pack_curator(
-    State(state): State<AppState>,
-    Path(pack_id): Path<String>,
-) -> Result<Response, ApiError> {
-    let text = state.storage.load_curator_doc(&pack_id).await?;
-    Ok((
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/toml; charset=utf-8")],
-        text,
-    )
-        .into_response())
-}
-
-async fn put_pack_curator(
-    State(state): State<AppState>,
-    Path(pack_id): Path<String>,
-    body: String,
-) -> Result<StatusCode, ApiError> {
-    // Validate the doc parses as a Curator before persisting, so a later
-    // build never trips over a doc the panel accepted. The raw text is
-    // stored verbatim (comments preserved); only the shape is checked here.
-    parse_curator(&body)
-        .map_err(|e| ApiError::BadRequest(format!("curator.toml does not parse: {e}")))?;
-    state.storage.save_curator_doc(&pack_id, &body).await?;
-    Ok(StatusCode::CREATED)
-}
-
-async fn get_pack_curator_structured(
-    State(state): State<AppState>,
-    Path(pack_id): Path<String>,
-) -> Result<Json<Curator>, ApiError> {
-    let curator = match state.storage.load_curator_doc(&pack_id).await {
-        Ok(text) => {
-            parse_curator(&text).map_err(|e| ApiError::BadRequest(format!("curator.toml: {e}")))?
-        }
-        // A pack with no curator yet starts from defaults; a real read error
-        // must surface, not silently present an empty curator.
-        Err(ApiError::NotFound) => Curator::default(),
-        Err(e) => return Err(e),
-    };
-    Ok(Json(curator))
-}
-
-async fn put_pack_curator_structured(
-    State(state): State<AppState>,
-    Path(pack_id): Path<String>,
-    Json(curator): Json<Curator>,
-) -> Result<StatusCode, ApiError> {
-    // Merge the structured edit into the existing doc so section comments
-    // survive; the raw editor stays the full-fidelity path.
-    // Only a genuinely-absent curator is treated as empty. If the existing doc
-    // fails to read, abort rather than merge into empty and overwrite it.
-    let existing = match state.storage.load_curator_doc(&pack_id).await {
-        Ok(text) => text,
-        Err(ApiError::NotFound) => String::new(),
-        Err(e) => return Err(e),
-    };
-    let merged = merge_curator(&existing, &curator).map_err(ApiError::Internal)?;
-    state.storage.save_curator_doc(&pack_id, &merged).await?;
-    Ok(StatusCode::CREATED)
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────

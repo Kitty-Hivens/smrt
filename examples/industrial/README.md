@@ -9,7 +9,7 @@ All steps below are `smrt-pack` subcommands (Rust). Earlier revisions of this di
 ### One-time setup
 
 * Drop the SC client install (`~/.local/share/nexira/clients/Industrial/` or wherever Nexira put it) so the mods/, config/, resourcepacks/, shaderpacks/ trees are readable.
-* Build `open-smrt-network` locally (the wire-protocol-clean replacement for SC's proprietary Smarty coremod) and `sha1sum` the resulting jar. Paste the sha1 into `curator.toml`'s `[substitute."Smarty-1.12.2.jar"].source.sha1` field.
+* Build `open-smrt-network` locally (the wire-protocol-clean replacement for SC's proprietary Smarty coremod) and `sha1sum` the resulting jar. The OSN-for-Smarty swap happens in `upload-mods.sh`; the resulting cache source is then declared on the mod in the pack config (panel Config tab).
 * Make sure `/tmp/smrt-token` has the admin token (chmod 600; never commit).
 
 ### Recurring per-build, one-liner
@@ -20,9 +20,9 @@ The whole chain wrapped as one script. Re-runnable, idempotent, picks up cleanly
 bash examples/industrial/full-pipeline.sh ~/IndustrialSC.zip
 ```
 
-Drives: bootstrap → upload-mods.sh → apply-curator (which also emits `hidemymods-spoof.json` from `curator.toml`'s `[generate.hidemymods_entries]` table -- SC's expected wire modlist, captured per SC update; not derived from our jars, because our pack is intentionally divergent) → upload-static → build → curl health probe. Reads `CURATOR_TOML`, `STORAGE`, `CLIENT_DIR`, `TOKEN_FILE` etc from env with sensible defaults -- `--help`-like usage block at the top of the script lists the override knobs.
+Drives: bootstrap → upload-mods.sh → upload-static → build → curl health probe. Reads `STORAGE`, `CLIENT_DIR`, `TOKEN_FILE` etc from env with sensible defaults -- a `--help`-like usage block at the top of the script lists the override knobs.
 
-When the SC archive hasn't changed but the curator config has (added a cozy mod, tweaked a drop), skip the long re-bootstrap:
+When the SC archive hasn't changed but you only re-uploaded mods or static assets, skip the long re-bootstrap:
 
 ```bash
 SKIP_BOOTSTRAP=1 bash examples/industrial/full-pipeline.sh _
@@ -59,31 +59,21 @@ SKIP_BOOTSTRAP=1 bash examples/industrial/full-pipeline.sh _
        --dir     ~/.local/share/nexira/clients/Industrial
    ```
 
-4. **Run the curator chain** -- one omnibus subcommand reads `curator.toml` and applies every per-pack mutation in canonical order: mcmod.info enrich, source substitution (Smarty -> OSN), requires inference, `drop_assets` (strips mod-default configs SC ships but nobody tunes), hidemymods spoof generation, and finally the Modrinth-direct extras (cozy mods + RPs + shaders). Per-mod metadata (optional / default-off, category, role, incompatibilities) is not a curator concern -- it lives on each mod in the pack config, set in the panel's Config tab (roles can also be bulk-applied with `apply-role-table`, which writes `display.role` into the config).
-
-   ```bash
-   smrt-pack apply-curator \
-       --config  /tmp/Industrial.bootstrap.json \
-       --curator examples/industrial/curator.toml \
-       --out     /tmp/Industrial.curated.json
-   ```
-
-5. **Build the wire manifest** -- resolves every source against the cache or Modrinth, writes `<storage>/packs/Industrial/manifests/<date>.json`, atomically swaps the `latest` symlink, and emits `<storage>/packs/Industrial/summary.json` with the rich pack metadata merged from `curator.toml`'s `[pack_meta]` section.
+4. **Build the wire manifest** -- runs the enrichment passes (fill `display` name/description/url from each cache jar's `mcmod.info`, then infer the `requires` graph), resolves every source against the cache or Modrinth, writes `<storage>/packs/Industrial/manifests/<date>.json`, atomically swaps the `latest` symlink, and emits `<storage>/packs/Industrial/summary.json` carrying the pack-card metadata from the config's `pack_meta`.
 
    ```bash
    smrt-pack build \
-       --config  /tmp/Industrial.curated.json \
-       --curator examples/industrial/curator.toml
+       --config  /tmp/Industrial.bootstrap.json
    ```
+
+Pack-card metadata (icon / banner / gallery / description) and per-mod settings (optional / default-off, category, role, incompatibilities, source substitution) live on the pack config -- edited in the panel's Config tab, not in a separate file. Roles can also be bulk-applied with `apply-role-table`, which writes `display.role` straight into the config.
 
 ## Files in this directory
 
 | File              | Purpose                                                                                                       |
 | ----------------- | ------------------------------------------------------------------------------------------------------------- |
-| `curator.toml`    | Omnibus per-pack curator decisions: pack metadata + substitute + extra mods + extra assets + `[drop_assets]` (config files stripped from the manifest because they are mod defaults SC happens to ship) + `[generate]` hidemymods spoof toggle. Drives both `apply-curator` and `build --curator`. Per-mod metadata (optional / default-off, category, role, incompatibilities) is set on each mod in the pack config (panel Config tab), not here. |
-| `full-pipeline.sh`| One-shot orchestrator: bootstrap -> upload-mods -> apply-curator -> upload-static -> build -> verify. Set `SKIP_BOOTSTRAP=1` to refresh without re-extracting the SC archive. |
-| `role-table.toml` | Role-table example for the `apply-role-table` subcommand, which writes `display.role` per mod straight into the pack config (roles are config metadata now, not a curator table). |
-| `pack-meta.toml`  | Standalone pack-meta example -- same relationship as role-table.toml. `curator.toml`'s `[pack_meta]` section subsumes it. |
+| `full-pipeline.sh`| One-shot orchestrator: bootstrap -> upload-mods -> upload-static -> build -> verify. Set `SKIP_BOOTSTRAP=1` to refresh without re-extracting the SC archive. |
+| `role-table.toml` | Role-table example for the `apply-role-table` subcommand, which writes `display.role` per mod straight into the pack config. |
 | `upload-mods.sh`  | Bulk uploader for mod jars (bash). Keeps the OSN-substitute step inline; will get a `smrt-pack upload-cache` subcommand in a follow-up.                              |
 | `README.md`       | This file.                                                                                                    |
 

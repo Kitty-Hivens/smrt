@@ -1,9 +1,8 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use smrt::authoring::{
-    self, BootstrapArgs, Modrinth, apply_curator as enrich_apply_curator,
-    apply_role_table as enrich_apply_role_table, enrich_from_mcmod_info,
-    infer_requires_from_mcmod_info, load_curator, load_pack_meta, load_role_table,
+    self, BootstrapArgs, Modrinth, apply_role_table as enrich_apply_role_table,
+    enrich_from_mcmod_info, infer_requires_from_mcmod_info, load_role_table,
 };
 use smrt::domain::{LoaderSpec, PackConfig, PackManifest, PackSummary};
 use smrt::registry::Registry;
@@ -69,14 +68,10 @@ enum Cmd {
         pack_version: Option<String>,
         #[arg(long, default_value = DEFAULT_MIRROR_BASE)]
         mirror_base: String,
-        /// Optional TOML with icon_url / banner_url / gallery_urls /
-        /// description_md fields. Merged into summary.json when present.
-        #[arg(long)]
-        pack_meta: Option<PathBuf>,
     },
 
     /// Fill display.name / description / url from each smrt_cache mod's
-    /// `mcmod.info`. Existing curator-written values win. Idempotent.
+    /// `mcmod.info`. Existing authored values win. Idempotent.
     EnrichMcmod {
         #[arg(long)]
         config: PathBuf,
@@ -87,8 +82,8 @@ enum Cmd {
     },
 
     /// Apply a TOML role table (filename -> role) to `display.role`
-    /// across the pack. Existing values win; unmatched table entries
-    /// are reported so the curator can spot typos.
+    /// across the pack config. Existing values win; unmatched table entries
+    /// are reported so typos can be spotted.
     ApplyRoleTable {
         #[arg(long)]
         config: PathBuf,
@@ -108,25 +103,6 @@ enum Cmd {
         out: PathBuf,
         #[arg(long, default_value = "/var/lib/smrt")]
         storage: PathBuf,
-    },
-
-    /// Run the full curator chain (enrich-mcmod -> role-table ->
-    /// category-table -> mark-optional -> substitute -> infer-requires
-    /// -> extras). Reads a single curator.toml that absorbs every
-    /// per-pack curator decision.
-    ApplyCurator {
-        #[arg(long)]
-        config: PathBuf,
-        #[arg(long)]
-        curator: PathBuf,
-        #[arg(long)]
-        out: PathBuf,
-        #[arg(long, default_value = "/var/lib/smrt")]
-        storage: PathBuf,
-        /// MC version used to filter Modrinth lookups for extras. Falls
-        /// back to the PackConfig's `minecraft_version` when omitted.
-        #[arg(long)]
-        mc_version: Option<String>,
     },
 
     /// PUT a local directory tree into the mirror's pack static area
@@ -152,7 +128,7 @@ enum Cmd {
 
     /// Reconstruct an editable authoring config from a published manifest +
     /// summary, to migrate a CLI-era pack (no `authoring/` inputs) into the
-    /// panel's editable format. Pair with a curator that folds in pack-meta.
+    /// panel's editable format. Recovers pack-card metadata from the summary.
     ReconstructConfig {
         #[arg(long)]
         manifest: PathBuf,
@@ -274,17 +250,7 @@ async fn main() -> Result<()> {
             storage,
             pack_version,
             mirror_base,
-            pack_meta,
-        } => {
-            run_build(
-                &config,
-                &storage,
-                pack_version.as_deref(),
-                &mirror_base,
-                pack_meta.as_deref(),
-            )
-            .await
-        }
+        } => run_build(&config, &storage, pack_version.as_deref(), &mirror_base).await,
         Cmd::EnrichMcmod {
             config,
             out,
@@ -296,13 +262,6 @@ async fn main() -> Result<()> {
             out,
             storage,
         } => run_infer_requires(&config, &out, &storage),
-        Cmd::ApplyCurator {
-            config,
-            curator,
-            out,
-            storage,
-            mc_version,
-        } => run_apply_curator(&config, &curator, &out, &storage, mc_version.as_deref()).await,
         Cmd::UploadStatic {
             pack_id,
             dir,
@@ -457,15 +416,14 @@ async fn run_build(
     storage: &Path,
     pack_version: Option<&str>,
     mirror_base: &str,
-    pack_meta_path: Option<&Path>,
 ) -> Result<()> {
-    let cfg: PackConfig = read_json(config_path)?;
-    let pack_meta = pack_meta_path
-        .map(load_pack_meta)
-        .transpose()?
-        .unwrap_or_default();
+    let mut cfg: PackConfig = read_json(config_path)?;
+    // Build enrichment passes run on a transient copy: fill display metadata
+    // from each cache jar's mcmod.info, then infer the requires graph.
+    enrich_from_mcmod_info(&mut cfg, storage)?;
+    infer_requires_from_mcmod_info(&mut cfg, storage)?;
     let manifest = authoring::build_manifest(&cfg, storage, pack_version, mirror_base).await?;
-    let summary = authoring::make_pack_summary(&cfg, &manifest.pack_version, &pack_meta);
+    let summary = authoring::make_pack_summary(&cfg, &manifest.pack_version);
 
     let store = Storage::new(storage.to_path_buf());
     store.save_manifest(&cfg.pack_id, &manifest).await?;
@@ -522,23 +480,6 @@ fn write_pack_config(cfg: &PackConfig, path: &Path) -> Result<()> {
     }
     let pretty = serde_json::to_string_pretty(cfg)?;
     fs::write(path, pretty).with_context(|| format!("writing {}", path.display()))
-}
-
-async fn run_apply_curator(
-    config_path: &Path,
-    curator_path: &Path,
-    out_path: &Path,
-    storage: &Path,
-    mc_version_override: Option<&str>,
-) -> Result<()> {
-    let mut cfg: PackConfig = read_json(config_path)?;
-    let curator = load_curator(curator_path)?;
-    let mc_version = mc_version_override
-        .map(str::to_string)
-        .unwrap_or_else(|| cfg.minecraft_version.clone());
-    let modrinth = Modrinth::new()?;
-    enrich_apply_curator(&mut cfg, &curator, storage, &modrinth, &mc_version).await?;
-    write_pack_config(&cfg, out_path)
 }
 
 async fn run_upload_static(

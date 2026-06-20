@@ -184,9 +184,9 @@ impl Storage {
 
     // ── Pack authoring inputs ────────────────────────────────────────────────
     //
-    // The editable PackConfig + curator.toml the panel works from, kept on the
-    // mirror under packs/<id>/authoring/ so the box that holds the mod cache is
-    // the single home of both the authoring inputs and the built outputs.
+    // The editable PackConfig the panel works from, kept on the mirror under
+    // packs/<id>/authoring/ so the box that holds the mod cache is the single
+    // home of both the authoring inputs and the built outputs.
 
     pub async fn save_pack_config(&self, pack_id: &str, cfg: &PackConfig) -> Result<(), ApiError> {
         if !is_safe_id(pack_id) {
@@ -206,35 +206,6 @@ impl Storage {
             .await
             .map_err(|_| ApiError::NotFound)?;
         serde_json::from_slice(&bytes).map_err(json_err)
-    }
-
-    /// Persist the raw `curator.toml` text verbatim (comments + formatting
-    /// preserved -- the operator's inline rationale is the point). Shape
-    /// validation is the caller's job (the admin handler parses it as a
-    /// `Curator` first); storage stays a domain-only persistence layer.
-    pub async fn save_curator_doc(&self, pack_id: &str, toml_text: &str) -> Result<(), ApiError> {
-        if !is_safe_id(pack_id) {
-            return Err(ApiError::BadRequest("invalid pack id".into()));
-        }
-        atomic_write(
-            &self.authoring_path(pack_id, "curator.toml"),
-            toml_text.as_bytes(),
-        )
-        .await
-    }
-
-    pub async fn load_curator_doc(&self, pack_id: &str) -> Result<String, ApiError> {
-        if !is_safe_id(pack_id) {
-            return Err(ApiError::BadRequest("invalid pack id".into()));
-        }
-        match fs::read_to_string(self.authoring_path(pack_id, "curator.toml")).await {
-            Ok(text) => Ok(text),
-            // Only a genuinely-absent file is NotFound. An I/O / permission
-            // error must NOT masquerade as "no curator" -- that would let the
-            // structured editor round-trip an empty doc over a real one.
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(ApiError::NotFound),
-            Err(e) => Err(io_err(e)),
-        }
     }
 
     /// Pack ids that have authoring inputs (an `authoring/config.json`),
@@ -719,6 +690,7 @@ mod tests {
             featured: false,
             mods: vec![],
             assets: vec![],
+            pack_meta: Default::default(),
         }
     }
 
@@ -732,19 +704,6 @@ mod tests {
         let loaded = s.load_pack_config("Industrial").await.unwrap();
         assert_eq!(loaded.pack_id, "Industrial");
         assert_eq!(loaded.minecraft_version, "1.12.2");
-    }
-
-    #[tokio::test]
-    async fn curator_doc_preserves_comments_verbatim() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = Storage::new(dir.path().to_path_buf());
-        let doc = "# keep this note\n[role_table]\n\"FoamFix.jar\" = \"perf\"\n";
-        s.save_curator_doc("Industrial", doc).await.unwrap();
-        let loaded = s.load_curator_doc("Industrial").await.unwrap();
-        assert_eq!(
-            loaded, doc,
-            "raw curator text must round-trip byte-for-byte"
-        );
     }
 
     #[tokio::test]
