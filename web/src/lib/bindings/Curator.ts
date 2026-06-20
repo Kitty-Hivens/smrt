@@ -20,10 +20,4 @@ import type { SubstituteEntry } from "./SubstituteEntry";
  * callable from their own subcommands for power-user / debugging
  * scenarios, but the canonical pipeline goes through this one file.
  */
-export type Curator = { pack_meta: PackMeta, 
-/**
- * `filename -> [incompatible filenames]`, written to each mod's
- * `display.incompatible_with`. Mutual at the launcher, so only one side
- * needs declaring (FoamFix.jar = ["!mixinbooter-10.7.jar"]).
- */
-incompatible: { [key in string]?: Array<string> }, substitute: { [key in string]?: SubstituteEntry }, role_table: { [key in string]?: string }, category_table: { [key in string]?: string }, extra_mods: Array<ExtraMod>, extra_assets: Array<ExtraAsset>, drop_assets: DropAssets, generate: GenerateConfig, };
+export type Curator = { pack_meta: PackMeta, substitute: { [key in string]?: SubstituteEntry }, extra_mods: Array<ExtraMod>, extra_assets: Array<ExtraAsset>, drop_assets: DropAssets, generate: GenerateConfig, };

@@ -252,17 +252,8 @@ pub fn load_pack_meta(path: &Path) -> Result<PackMeta> {
 pub struct Curator {
     #[serde(default)]
     pub pack_meta: PackMeta,
-    /// `filename -> [incompatible filenames]`, written to each mod's
-    /// `display.incompatible_with`. Mutual at the launcher, so only one side
-    /// needs declaring (FoamFix.jar = ["!mixinbooter-10.7.jar"]).
-    #[serde(default)]
-    pub incompatible: HashMap<String, Vec<String>>,
     #[serde(default)]
     pub substitute: HashMap<String, SubstituteEntry>,
-    #[serde(default)]
-    pub role_table: HashMap<String, String>,
-    #[serde(default)]
-    pub category_table: HashMap<String, String>,
     #[serde(default)]
     pub extra_mods: Vec<ExtraMod>,
     #[serde(default)]
@@ -509,32 +500,6 @@ fn value_is_empty(v: &toml_edit::Value) -> bool {
 
 // ── Mutations (sync) ──────────────────────────────────────────────────────
 
-/// Writes curator-declared incompatibilities into each mod's
-/// `display.incompatible_with`. The launcher treats incompatibility as mutual,
-/// so declaring one direction is enough. Creates a `Display` when absent.
-pub fn apply_incompatible(config: &mut PackConfig, incompatible: &HashMap<String, Vec<String>>) {
-    if incompatible.is_empty() {
-        return;
-    }
-    let mut applied = 0u32;
-    for m in config.mods.iter_mut() {
-        if let Some(conflicts) = incompatible.get(&m.filename) {
-            let display = m.display.get_or_insert_with(Display::default);
-            for c in conflicts {
-                if !display.incompatible_with.contains(c) {
-                    display.incompatible_with.push(c.clone());
-                    applied += 1;
-                }
-            }
-        }
-    }
-    info!(
-        applied,
-        declared = incompatible.len(),
-        "incompatible applied"
-    );
-}
-
 #[derive(Debug, Default)]
 pub struct SubstituteReport {
     pub applied: u32,
@@ -572,68 +537,6 @@ pub fn apply_substitute(
         applied = report.applied,
         not_found = report.not_found.len(),
         "substitute applied"
-    );
-    report
-}
-
-#[derive(Debug, Default)]
-pub struct CategoryApplyReport {
-    /// Mods that gained a category from the table where none existed.
-    pub applied: u32,
-    /// Mods whose existing category was OVERWRITTEN by the curator's
-    /// table entry. Surfaced separately from `applied` so the operator
-    /// can spot when an upstream-derived category (mcmod.info heuristic,
-    /// PackConfig literal, etc) is being replaced.
-    pub overrode: u32,
-    pub unmatched_in_table: Vec<String>,
-}
-
-/// Writes `display.category` on every mod matched by the table. The
-/// curator's table is AUTHORITATIVE -- it always overrides any
-/// pre-existing category from the input PackConfig (bootstrap default,
-/// hand-edited literal, mcmod.info heuristic). This is the inverse of
-/// the original "skip if already set" rule: in practice the table IS
-/// the canonical human-curated assignment, and the bootstrap-derived
-/// values it was previously "protecting" turned out to be the wrong
-/// thing to preserve.
-///
-/// To opt out of overriding for a specific entry, the curator simply
-/// leaves it out of the table; the existing value stays.
-pub fn apply_category_table(
-    config: &mut PackConfig,
-    table: &HashMap<String, String>,
-) -> CategoryApplyReport {
-    let mut report = CategoryApplyReport::default();
-    let filenames: std::collections::HashSet<&str> =
-        config.mods.iter().map(|m| m.filename.as_str()).collect();
-    for fname in table.keys() {
-        if !filenames.contains(fname.as_str()) {
-            report.unmatched_in_table.push(fname.clone());
-        }
-    }
-    report.unmatched_in_table.sort();
-
-    for m in config.mods.iter_mut() {
-        let Some(cat) = table.get(&m.filename) else {
-            continue;
-        };
-        let display = m.display.get_or_insert_with(default_display);
-        if display.category.as_deref() == Some(cat.as_str()) {
-            // Already at the curator's value; nothing to do, no event.
-            continue;
-        }
-        if display.category.is_some() {
-            report.overrode += 1;
-        } else {
-            report.applied += 1;
-        }
-        display.category = Some(cat.clone());
-    }
-    info!(
-        applied = report.applied,
-        overrode = report.overrode,
-        unmatched = report.unmatched_in_table.len(),
-        "apply-category-table complete"
     );
     report
 }
@@ -996,27 +899,23 @@ pub fn generate_hidemymods_spoof(
 
 /// Runs the full curator chain on [config] in the canonical order:
 ///   1. enrich from mcmod.info     (synchronous, file IO)
-///   2. apply role_table            (sync)
-///   3. apply category_table        (sync)
-///   4. incompatible -> display     (sync)
-///   5. substitute sources          (sync)
-///   6. infer requires from mcmod   (sync, file IO)
-///   7. drop curator-rejected smrt_static assets (sync)
-///   8. generate hidemymods spoof   (sync)
-///   9. add extras (mods + assets)  (async, Modrinth)
+///   2. substitute sources          (sync)
+///   3. infer requires from mcmod   (sync, file IO)
+///   4. drop curator-rejected smrt_static assets (sync)
+///   5. generate hidemymods spoof   (sync)
+///   6. add extras (mods + assets)  (async, Modrinth)
 ///
-/// Per-mod install flags (required / default_enabled) are deliberately NOT a
-/// curator concern -- they live only in the pack config, edited per mod there.
-/// The curator handles what the config can't express: relations, bulk asset
-/// drops, the SC handshake spoof, Modrinth extras.
+/// Per-mod metadata -- install flags (required / default_enabled), category,
+/// role, incompatibilities -- is deliberately NOT a curator concern: it lives on
+/// the mod in the pack config, edited per mod there. The curator handles only
+/// what the config can't express per-mod: source substitution, bulk asset drops,
+/// the SC handshake spoof, and Modrinth extras.
 ///
 /// Order matters: substitutes happen BEFORE infer_requires so the
 /// substituted jar's mcmod.info (open-smrt-network's, not the
 /// upstream proprietary jar's) feeds the dep graph. The drop pass
-/// runs AFTER substitute / category-table so a dropped entry cannot
-/// accidentally short-circuit those mutations for a sibling file.
-/// Extras land last so their display.category does not leak into
-/// category_table resolution against SC-derived mods.
+/// runs AFTER substitute so a dropped entry cannot accidentally
+/// short-circuit those mutations for a sibling file. Extras land last.
 pub async fn apply_curator(
     config: &mut PackConfig,
     curator: &Curator,
@@ -1025,14 +924,6 @@ pub async fn apply_curator(
     mc_version: &str,
 ) -> Result<()> {
     enrich_from_mcmod_info(config, storage)?;
-    apply_role_table(
-        config,
-        &RoleTable {
-            roles: curator.role_table.clone(),
-        },
-    )?;
-    apply_category_table(config, &curator.category_table);
-    apply_incompatible(config, &curator.incompatible);
     apply_substitute(config, &curator.substitute);
     infer_requires_from_mcmod_info(config, storage)?;
     apply_drop_assets(config, &curator.drop_assets);
@@ -1319,18 +1210,14 @@ mod tests {
 
     #[test]
     fn merge_curator_replaces_values_drops_empty_and_keeps_comments() {
-        let existing = "# top-of-file note\n[role_table]\n\"A.jar\" = \"oldrole\"\n\n# category notes\n[category_table]\n\"A.jar\" = \"old\"\n";
+        let existing =
+            "# top-of-file note\n\n# drop notes\n[drop_assets]\npaths = [\"keep.cfg\"]\n";
         let mut c = Curator::default();
-        c.role_table
-            .insert("A.jar".to_string(), "newrole".to_string());
-        c.category_table
-            .insert("A.jar".to_string(), "new".to_string());
+        c.drop_assets.paths = vec!["other.cfg".to_string()];
         let merged = merge_curator(existing, &c).unwrap();
         // values updated
-        assert!(merged.contains("newrole"), "role replaced: {merged}");
-        assert!(merged.contains("\"new\""), "category replaced: {merged}");
-        assert!(!merged.contains("oldrole"), "old role gone: {merged}");
-        assert!(!merged.contains("\"old\""), "old value gone: {merged}");
+        assert!(merged.contains("other.cfg"), "paths replaced: {merged}");
+        assert!(!merged.contains("keep.cfg"), "old value gone: {merged}");
         // unused/default tables are not emitted (neither section nor inline)
         assert!(
             !merged.contains("substitute"),
@@ -1352,7 +1239,7 @@ mod tests {
             "doc comment survives: {merged}"
         );
         assert!(
-            merged.contains("# category notes"),
+            merged.contains("# drop notes"),
             "section comment survives: {merged}"
         );
     }
@@ -1559,45 +1446,6 @@ mod tests {
     }
 
     #[test]
-    fn incompatible_writes_display() {
-        let mut cfg = empty_config();
-        cfg.mods.push(DeclaredMod {
-            filename: "FoamFix.jar".into(),
-            required: false,
-            default_enabled: true,
-            source: SourceDecl::SmrtCache {
-                sha1: "a".repeat(40),
-            },
-            display: None,
-            note: None,
-        });
-        cfg.mods.push(DeclaredMod {
-            filename: "Mixinbooter.jar".into(),
-            required: true,
-            default_enabled: true,
-            source: SourceDecl::SmrtCache {
-                sha1: "b".repeat(40),
-            },
-            display: None,
-            note: None,
-        });
-
-        let mut incompat: HashMap<String, Vec<String>> = HashMap::new();
-        incompat.insert("FoamFix.jar".into(), vec!["Mixinbooter.jar".into()]);
-        apply_incompatible(&mut cfg, &incompat);
-
-        let foam = cfg
-            .mods
-            .iter()
-            .find(|m| m.filename == "FoamFix.jar")
-            .unwrap();
-        assert_eq!(
-            foam.display.as_ref().unwrap().incompatible_with,
-            vec!["Mixinbooter.jar".to_string()],
-        );
-    }
-
-    #[test]
     fn substitute_swaps_source_and_display() {
         let mut cfg = empty_config();
         cfg.mods.push(DeclaredMod {
@@ -1640,88 +1488,6 @@ mod tests {
         assert_eq!(
             cfg.mods[0].display.as_ref().unwrap().name.as_deref(),
             Some("Open Smarty Network")
-        );
-    }
-
-    #[test]
-    fn category_table_overrides_existing_and_fills_missing() {
-        // Three mods: one with no category (table fills), one with a
-        // category the table replaces (curator wins), one with a
-        // category the table happens to match (no-op, no event).
-        let mut cfg = empty_config();
-        cfg.mods.push(DeclaredMod {
-            filename: "Modded.jar".into(),
-            required: true,
-            default_enabled: true,
-            source: SourceDecl::SmrtCache {
-                sha1: "a".repeat(40),
-            },
-            display: None,
-            note: None,
-        });
-        cfg.mods.push(DeclaredMod {
-            filename: "PreviouslyCore.jar".into(),
-            required: true,
-            default_enabled: true,
-            source: SourceDecl::SmrtCache {
-                sha1: "a".repeat(40),
-            },
-            display: Some(Display {
-                name: None,
-                description: None,
-                category: Some("core".into()),
-                incompatible_with: Vec::new(),
-                license: None,
-                url: None,
-                icon_url: None,
-                role: None,
-                requires: Vec::new(),
-            }),
-            note: None,
-        });
-        cfg.mods.push(DeclaredMod {
-            filename: "AlreadyRight.jar".into(),
-            required: true,
-            default_enabled: true,
-            source: SourceDecl::SmrtCache {
-                sha1: "a".repeat(40),
-            },
-            display: Some(Display {
-                name: None,
-                description: None,
-                category: Some("performance".into()),
-                incompatible_with: Vec::new(),
-                license: None,
-                url: None,
-                icon_url: None,
-                role: None,
-                requires: Vec::new(),
-            }),
-            note: None,
-        });
-        let mut table = HashMap::new();
-        table.insert("Modded.jar".into(), "performance".into());
-        table.insert("PreviouslyCore.jar".into(), "lib".into());
-        table.insert("AlreadyRight.jar".into(), "performance".into());
-        let report = apply_category_table(&mut cfg, &table);
-        assert_eq!(report.applied, 1, "Modded.jar got its first category");
-        assert_eq!(
-            report.overrode, 1,
-            "PreviouslyCore.jar core->lib counted as override"
-        );
-        // AlreadyRight.jar already matched the table; no event.
-        assert_eq!(
-            cfg.mods[0].display.as_ref().unwrap().category.as_deref(),
-            Some("performance")
-        );
-        assert_eq!(
-            cfg.mods[1].display.as_ref().unwrap().category.as_deref(),
-            Some("lib"),
-            "curator table wins over pre-existing 'core'",
-        );
-        assert_eq!(
-            cfg.mods[2].display.as_ref().unwrap().category.as_deref(),
-            Some("performance")
         );
     }
 
