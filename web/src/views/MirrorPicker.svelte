@@ -7,6 +7,7 @@
     BuildSummary,
     BuildModRow,
     CacheUsageEntry,
+    DeclaredAsset,
     SourceDecl,
   } from '../lib/types';
 
@@ -26,6 +27,7 @@
     onPick,
     onAddOne,
     onAddMany,
+    onAddAsset,
     onClose,
   }: {
     mc?: string;
@@ -37,6 +39,8 @@
     // cherry-pick one mod from a build without closing the picker
     onAddOne?: (sel: Sel) => void;
     onAddMany?: (items: Sel[]) => void;
+    // pull a build's assets into the pack (only when adding, not re-pointing)
+    onAddAsset?: (a: DeclaredAsset) => void;
     onClose: () => void;
   } = $props();
 
@@ -83,9 +87,11 @@
   let buildsLoading = $state(false);
   let selBuild = $state<BuildSummary | null>(null);
   let buildModRows = $state<BuildModRow[]>([]);
+  let buildAssetRows = $state<DeclaredAsset[]>([]);
   let bmLoading = $state(false);
-  // sha1s cherry-picked from the open build this session, for "added" feedback
+  // sha1s / dests cherry-picked from the open build this session ("added" feedback)
   let addedShas = $state<Set<string>>(new Set());
+  let addedDests = $state<Set<string>>(new Set());
 
   // ── raw cache mode ──
   let raw = $state<CacheUsageEntry[]>([]);
@@ -147,11 +153,16 @@
   async function openBuild(b: BuildSummary) {
     selBuild = b;
     buildModRows = [];
+    buildAssetRows = [];
     addedShas = new Set();
+    addedDests = new Set();
     err = '';
     bmLoading = true;
     try {
-      buildModRows = await api.registryBuildMods(b.pack_id, b.pack_version);
+      [buildModRows, buildAssetRows] = await Promise.all([
+        api.registryBuildMods(b.pack_id, b.pack_version),
+        api.registryBuildAssets(b.pack_id, b.pack_version),
+      ]);
     } catch (e) {
       fail(e);
     } finally {
@@ -192,6 +203,18 @@
     }
   }
 
+  function addBuildAsset(a: DeclaredAsset) {
+    if (!onAddAsset) return;
+    onAddAsset(a);
+    addedDests = new Set(addedDests).add(a.dest);
+  }
+
+  function addAllAssets() {
+    if (!onAddAsset) return;
+    for (const a of buildAssetRows) onAddAsset(a);
+    addedDests = new Set(buildAssetRows.map((a) => a.dest));
+  }
+
   async function loadRaw() {
     rawLoading = true;
     err = '';
@@ -218,6 +241,7 @@
     selMod = null;
     selBuild = null;
     addedShas = new Set();
+    addedDests = new Set();
     err = '';
     if (m === 'mods' && mods.length === 0) loadMods();
     if (m === 'builds' && builds.length === 0) loadBuilds();
@@ -352,6 +376,29 @@
           {/each}
           {#if buildModRows.length === 0 && !bmLoading}<div class="muted s">{t('mirror.noBuildMods')}</div>{/if}
         </div>
+        {#if allowMany && onAddAsset && buildAssetRows.length}
+          <div class="ph row asec">
+            <span class="muted s">{t('mirror.assets')}</span>
+            <div class="spacer"></div>
+            <button class="primary sm" onclick={addAllAssets}>{t('mirror.addAllAssets', { n: buildAssetRows.length })}</button>
+          </div>
+          <div class="hits scroll">
+            {#each buildAssetRows as a (a.dest)}
+              <div class="vrow static">
+                <div class="info">
+                  <div class="t">
+                    {a.dest}
+                    {#if !a.required}<span class="chip">{t('mr.optional')}</span>{/if}
+                  </div>
+                  <div class="d muted mono">{a.source.type}</div>
+                </div>
+                <button class="sm" disabled={addedDests.has(a.dest)} onclick={() => addBuildAsset(a)}>
+                  {addedDests.has(a.dest) ? t('mirror.added') : t('mirror.add')}
+                </button>
+              </div>
+            {/each}
+          </div>
+        {/if}
       {/if}
     {:else}
       <div class="filters">
@@ -418,6 +465,10 @@
   }
   .spacer {
     flex: 1;
+  }
+  .asec {
+    margin-top: var(--space-3);
+    align-items: center;
   }
   .seltitle {
     flex: 1;

@@ -294,4 +294,6 @@ export const ru: Dict = {
   'mirror.added': 'добавлено',
   'mirror.unavailable': 'недоступно',
   'mirror.addAll': 'Добавить все ({n})',
+  'mirror.assets': 'Ассеты',
+  'mirror.addAllAssets': 'Добавить все ассеты ({n})',
 };

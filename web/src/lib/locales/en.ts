@@ -295,6 +295,8 @@ export const en = {
   'mirror.added': 'added',
   'mirror.unavailable': 'unavailable',
   'mirror.addAll': 'Add all {n}',
+  'mirror.assets': 'Assets',
+  'mirror.addAllAssets': 'Add all {n} assets',
 } as const;
 
 export type Dict = Record<keyof typeof en, string>;

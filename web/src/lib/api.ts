@@ -6,6 +6,7 @@ import type {
   BuildModRow,
   BuildSummary,
   CacheInventory,
+  DeclaredAsset,
   CacheUsageListing,
   Curator,
   Health,
@@ -308,6 +309,10 @@ export const api = {
   registryBuildMods: (packId: string, packVersion: string) =>
     getJson<BuildModRow[]>(
       `/v1/admin/registry/builds/${encodeURIComponent(packId)}/${encodeURIComponent(packVersion)}`,
+    ),
+  registryBuildAssets: (packId: string, packVersion: string) =>
+    getJson<DeclaredAsset[]>(
+      `/v1/admin/registry/builds/${encodeURIComponent(packId)}/${encodeURIComponent(packVersion)}/assets`,
     ),
 
   async session(): Promise<boolean> {
