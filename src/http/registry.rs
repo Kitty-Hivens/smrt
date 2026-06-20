@@ -172,6 +172,13 @@ async fn get_versions_by_id(
     for r in &mut rows {
         r.cached = cached.contains(&r.sha1);
     }
+    // Only offer artifacts the panel can actually install: bytes in the local
+    // cache (re-add as smrt_cache) or a Modrinth identity (re-add from Modrinth).
+    // A harvested version whose jar was removed (not cached, no Modrinth id) is a
+    // historical row kept for build provenance -- it has nothing to download, so
+    // listing it just shows a dead duplicate. A null filename can't be shown or
+    // installed either, so drop those too.
+    rows.retain(|r| r.filename.is_some() && (r.cached || r.modrinth_version_id.is_some()));
     Ok(Json(rows))
 }
 
