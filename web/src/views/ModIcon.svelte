@@ -1,14 +1,18 @@
 <script lang="ts">
   import { api } from '../lib/api';
   import { letterAvatar } from '../lib/preview';
-  import type { Source } from '../lib/types';
+  import type { Source, SourceDecl } from '../lib/types';
 
+  // accepts the wire Source (preview) or the authoring SourceDecl (editor) -- both
+  // carry `type`, and the modrinth variant of each carries `project_id`, which is
+  // all this component reads
   let {
     name,
     iconUrl = null,
     source,
     size = 34,
-  }: { name: string; iconUrl?: string | null; source: Source; size?: number } = $props();
+  }: { name: string; iconUrl?: string | null; source: Source | SourceDecl; size?: number } =
+    $props();
 
   const avatar = $derived(letterAvatar(name));
   const explicit = $derived(iconUrl?.trim() || null);
