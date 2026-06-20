@@ -19,7 +19,14 @@
   // Modrinth project icon, resolved lazily when there is no explicit icon_url.
   let modrinth = $state<string | null>(null);
   let broken = $state(false);
-  const src = $derived(broken ? null : (explicit ?? modrinth));
+  // a self-hosted jar's own embedded icon, extracted + served by the mirror; the
+  // <img> onerror falls back to the letter avatar when the jar carries none (404)
+  const cacheIcon = $derived(
+    source.type === 'smrt_cache' && 'sha1' in source && source.sha1
+      ? `/v1/admin/cache/icon/${source.sha1}`
+      : null,
+  );
+  const src = $derived(broken ? null : (explicit ?? modrinth ?? cacheIcon));
 
   // Mirror ModIconResolver: only fall back to the project icon when no explicit
   // icon_url is set and the source is Modrinth (cached in the api layer).

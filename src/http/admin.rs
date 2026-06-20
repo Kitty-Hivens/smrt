@@ -1,6 +1,7 @@
 use super::ApiError;
 use crate::authoring::{
-    Curator, ValidateReport, merge_curator, modrinth, parse_curator, reconstruct_config, validate,
+    Curator, ValidateReport, jar_icon, merge_curator, modrinth, parse_curator, reconstruct_config,
+    validate,
 };
 use crate::domain::*;
 use crate::state::AppState;
@@ -28,6 +29,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/admin/cache/:prefix/:filename",
             put(put_cache_jar).delete(delete_cache_jar),
         )
+        .route("/v1/admin/cache/icon/:sha1", get(get_cache_icon))
         .route(
             "/v1/admin/packs/:pack_id/static/*rel_path",
             put(put_pack_static).delete(delete_pack_static),
@@ -117,6 +119,35 @@ async fn delete_cache_jar(
     state.storage.delete_cache_jar(sha1).await?;
     state.harvest.poke(); // artifact gone -> refresh the registry
     Ok(StatusCode::NO_CONTENT)
+}
+
+// Serve a cached mod's own embedded icon (mcmod.info logoFile / pack.png /
+// fabric icon), so the panel can show real mod icons for self-hosted jars. The
+// content is immutable per sha1, so it caches hard in the browser. 404 when the
+// jar carries no icon -- the panel falls back to a letter avatar.
+async fn get_cache_icon(
+    State(state): State<AppState>,
+    Path(sha1): Path<String>,
+) -> Result<Response, ApiError> {
+    if sha1.len() != 40 || !sha1.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ApiError::BadRequest("sha1 must be 40 hex chars".into()));
+    }
+    let path = state.storage.cache_jar_path(&sha1[..2], &sha1)?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|_| ApiError::NotFound)?;
+    let icon = tokio::task::spawn_blocking(move || jar_icon(&bytes))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("icon extract task: {e}")))??;
+    let (img, content_type) = icon.ok_or(ApiError::NotFound)?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        img,
+    )
+        .into_response())
 }
 
 async fn put_pack_static(
