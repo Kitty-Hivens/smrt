@@ -265,6 +265,9 @@ export const ru: Dict = {
 
   // выбор версии: пикер Modrinth (два шага) + браузер зеркала
   'pe.fromMirror': 'С зеркала',
+  'pe.revertTo': 'Откатить конфиг к сборке',
+  'pe.revertPick': 'Откатить к сборке…',
+  'pe.revertConfirm': 'Перезаписать текущий конфиг сборкой {version}? Несохранённые правки потеряются.',
   'mrp.by': 'автор {author}',
   'mrp.back': 'Назад',
   'mrp.loader': 'Загрузчик',

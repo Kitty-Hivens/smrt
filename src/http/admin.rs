@@ -1,5 +1,7 @@
 use super::ApiError;
-use crate::authoring::{Curator, ValidateReport, merge_curator, modrinth, parse_curator, validate};
+use crate::authoring::{
+    Curator, ValidateReport, merge_curator, modrinth, parse_curator, reconstruct_config, validate,
+};
 use crate::domain::*;
 use crate::state::AppState;
 use axum::body::Bytes;
@@ -35,6 +37,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/admin/packs/:pack_id/config",
             get(get_pack_config).put(put_pack_config),
+        )
+        .route(
+            "/v1/admin/packs/:pack_id/config/revert",
+            post(revert_pack_config),
         )
         .route(
             "/v1/admin/packs/:pack_id/curator",
@@ -412,6 +418,30 @@ async fn put_pack_config(
     }
     state.storage.save_pack_config(&pack_id, &cfg).await?;
     Ok((StatusCode::CREATED, Json(cfg)))
+}
+
+#[derive(serde::Deserialize)]
+struct RevertParams {
+    version: String,
+}
+
+// Overwrite the authoring config with one reconstructed from a published build's
+// manifest + summary -- the panel's "revert to build" affordance, since config
+// edits autosave with no history of their own. Returns the new config so the
+// editor can swap to it without a reload.
+async fn revert_pack_config(
+    State(state): State<AppState>,
+    Path(pack_id): Path<String>,
+    Query(p): Query<RevertParams>,
+) -> Result<Json<PackConfig>, ApiError> {
+    let manifest = state
+        .storage
+        .load_manifest_version(&pack_id, &p.version)
+        .await?;
+    let summary = state.storage.load_pack_summary(&pack_id).await?;
+    let cfg = reconstruct_config(&manifest, &summary);
+    state.storage.save_pack_config(&pack_id, &cfg).await?;
+    Ok(Json(cfg))
 }
 
 async fn get_pack_curator(

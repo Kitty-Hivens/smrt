@@ -266,6 +266,9 @@ export const en = {
 
   // version-aware add: Modrinth picker (two-step) + mirror browser
   'pe.fromMirror': 'From mirror',
+  'pe.revertTo': 'Revert config to a build',
+  'pe.revertPick': 'Revert to build…',
+  'pe.revertConfirm': 'Overwrite the current config with build {version}? Unsaved edits are lost.',
   'mrp.by': 'by {author}',
   'mrp.back': 'Back',
   'mrp.loader': 'Loader',
