@@ -144,6 +144,9 @@ async fn get_cache_icon(
         [
             (header::CONTENT_TYPE, content_type),
             (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            // bytes come from an untrusted jar; pin the type so the browser can't
+            // sniff a "pack.png" that actually contains markup into something active
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ],
         img,
     )
