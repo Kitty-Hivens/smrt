@@ -484,15 +484,23 @@ pub fn parse_curator(text: &str) -> Result<Curator> {
     toml::from_str(text).context("parsing curator TOML")
 }
 
-/// Merge a structured [`Curator`] into an existing curator.toml, preserving the
-/// existing document's comments where toml_edit can (a kept key keeps its
-/// leading decor). Each managed table is replaced from the struct; empty
-/// tables / arrays are dropped so unused features don't clutter the file. Inner
-/// per-line comments inside a replaced table are not preserved -- the raw
-/// editor stays the full-fidelity path.
+/// Merge a structured [`Curator`] into an existing curator.toml. ONLY the
+/// top-level tables the structured editor actually owns ([`MANAGED_KEYS`]) are
+/// rewritten; every other section (`substitute`, `drop_assets`, `generate` and
+/// its hidemymods table, `extra_assets`) is left byte-for-byte. This is
+/// deliberate: those carry map-backed tables (whose serialization order is not
+/// stable) and hand-written inner comments, so a structured save must not touch
+/// them -- the raw editor is the full-fidelity path for them. Within a managed
+/// table the section header + leading comment survive, but inner per-line
+/// comments do not (use the raw editor there too). Empty / default managed
+/// tables are dropped so unused features don't clutter the file.
 pub fn merge_curator(existing: &str, curator: &Curator) -> Result<String> {
     use std::collections::HashSet;
     use toml_edit::{DocumentMut, Item, Value};
+
+    // Top-level keys the structured editor edits. Everything else round-trips
+    // through `Curator` but is owned by the raw editor and left untouched here.
+    const MANAGED_KEYS: &[&str] = &["pack_meta", "extra_mods"];
     let mut doc: DocumentMut = if existing.trim().is_empty() {
         DocumentMut::new()
     } else {
@@ -509,6 +517,11 @@ pub fn merge_curator(existing: &str, curator: &Curator) -> Result<String> {
         .parse()
         .context("re-parsing default curator")?;
     for (key, fresh_item) in fresh.as_table().iter() {
+        // leave non-managed sections (and their order + comments) exactly as the
+        // raw doc has them -- only the structured-owned tables get rewritten
+        if !MANAGED_KEYS.contains(&key) {
+            continue;
+        }
         let is_default = default_fresh
             .get(key)
             .is_some_and(|d| d.to_string() == fresh_item.to_string());
@@ -1282,38 +1295,40 @@ mod tests {
     use zip::write::SimpleFileOptions;
 
     #[test]
-    fn merge_curator_replaces_values_drops_empty_and_keeps_comments() {
-        let existing =
-            "# top-of-file note\n\n# drop notes\n[drop_assets]\npaths = [\"keep.cfg\"]\n";
+    fn merge_curator_rewrites_only_managed_tables() {
+        // pack_meta is structured-managed; drop_assets is raw-owned. A structured
+        // save updates pack_meta but must leave drop_assets byte-for-byte --
+        // value, order, and inner comments -- so it can't clobber a hand-authored
+        // section (the Industrial hidemymods table is the real-world case).
+        let existing = "# top-of-file note\n\n# drop notes\n[drop_assets]\npaths = [\"keep.cfg\"]\n\n[pack_meta]\nicon_url = \"old\"\n";
         let mut c = Curator::default();
-        c.drop_assets.paths = vec!["other.cfg".to_string()];
+        c.pack_meta.icon_url = Some("new".to_string());
         let merged = merge_curator(existing, &c).unwrap();
-        // values updated
-        assert!(merged.contains("other.cfg"), "paths replaced: {merged}");
-        assert!(!merged.contains("keep.cfg"), "old value gone: {merged}");
-        // unused/default tables are not emitted (neither section nor inline)
+        // managed pack_meta updated
+        assert!(merged.contains("\"new\""), "pack_meta updated: {merged}");
         assert!(
-            !merged.contains("substitute"),
-            "empty table dropped: {merged}"
+            !merged.contains("\"old\""),
+            "old pack_meta value gone: {merged}"
         );
+        // non-managed drop_assets left untouched, including its inner comment
         assert!(
-            !merged.contains("generate"),
-            "empty table dropped: {merged}"
-        );
-        assert!(
-            !merged.contains("pack_meta"),
-            "empty pack_meta dropped: {merged}"
-        );
-        // round-trips as a valid Curator
-        parse_curator(&merged).unwrap();
-        // both the doc-level and the [section] comment survive the merge
-        assert!(
-            merged.contains("# top-of-file note"),
-            "doc comment survives: {merged}"
+            merged.contains("keep.cfg"),
+            "drop_assets not clobbered: {merged}"
         );
         assert!(
             merged.contains("# drop notes"),
-            "section comment survives: {merged}"
+            "raw-owned section comment survives: {merged}"
+        );
+        // an empty managed table is not emitted
+        assert!(
+            !merged.contains("extra_mods"),
+            "empty managed table dropped: {merged}"
+        );
+        // round-trips + the doc-level comment survives
+        parse_curator(&merged).unwrap();
+        assert!(
+            merged.contains("# top-of-file note"),
+            "doc comment survives: {merged}"
         );
     }
 
