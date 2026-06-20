@@ -49,7 +49,6 @@ export type { ModUse } from './bindings/ModUse';
 // curator (structured editor)
 export type { Curator } from './bindings/Curator';
 export type { PackMeta } from './bindings/PackMeta';
-export type { MarkOptional } from './bindings/MarkOptional';
 export type { SubstituteEntry } from './bindings/SubstituteEntry';
 export type { ExtraMod } from './bindings/ExtraMod';
 export type { ExtraAsset } from './bindings/ExtraAsset';

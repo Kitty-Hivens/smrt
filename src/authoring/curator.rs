@@ -252,18 +252,11 @@ pub fn load_pack_meta(path: &Path) -> Result<PackMeta> {
 pub struct Curator {
     #[serde(default)]
     pub pack_meta: PackMeta,
-    #[serde(default)]
-    pub mark_optional: MarkOptional,
     /// `filename -> [incompatible filenames]`, written to each mod's
     /// `display.incompatible_with`. Mutual at the launcher, so only one side
     /// needs declaring (FoamFix.jar = ["!mixinbooter-10.7.jar"]).
     #[serde(default)]
     pub incompatible: HashMap<String, Vec<String>>,
-    /// Optional mod filenames that should install DISABLED by default
-    /// (`default_enabled = false`); the user opts in. Use for an optional that
-    /// conflicts with a default-on mod (FoamFix vs Mixinbooter).
-    #[serde(default)]
-    pub default_off: Vec<String>,
     #[serde(default)]
     pub substitute: HashMap<String, SubstituteEntry>,
     #[serde(default)]
@@ -342,13 +335,6 @@ pub struct GenerateConfig {
 
 fn default_hidemymods_filename() -> String {
     "hidemymods-spoof.json".to_string()
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "bindings/")]
-pub struct MarkOptional {
-    #[serde(default)]
-    pub filenames: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -523,43 +509,6 @@ fn value_is_empty(v: &toml_edit::Value) -> bool {
 
 // ── Mutations (sync) ──────────────────────────────────────────────────────
 
-#[derive(Debug, Default)]
-pub struct MarkOptionalReport {
-    pub flipped: u32,
-    pub not_found: Vec<String>,
-}
-
-/// Flips `required: false` on every mod whose filename appears in
-/// [`MarkOptional::filenames`]. Reports filenames that did not match
-/// any mod so the curator can spot typos.
-pub fn apply_mark_optional(config: &mut PackConfig, mark: &MarkOptional) -> MarkOptionalReport {
-    let mut report = MarkOptionalReport::default();
-    let names: std::collections::HashSet<&str> =
-        mark.filenames.iter().map(|s| s.as_str()).collect();
-    let mut hit: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    for m in config.mods.iter_mut() {
-        if names.contains(m.filename.as_str()) {
-            if m.required {
-                m.required = false;
-                report.flipped += 1;
-            }
-            hit.insert(m.filename.as_str());
-        }
-    }
-    for name in &mark.filenames {
-        if !hit.contains(name.as_str()) {
-            report.not_found.push(name.clone());
-        }
-    }
-    report.not_found.sort();
-    info!(
-        flipped = report.flipped,
-        not_found = report.not_found.len(),
-        "mark-optional applied"
-    );
-    report
-}
-
 /// Writes curator-declared incompatibilities into each mod's
 /// `display.incompatible_with`. The launcher treats incompatibility as mutual,
 /// so declaring one direction is enough. Creates a `Display` when absent.
@@ -584,23 +533,6 @@ pub fn apply_incompatible(config: &mut PackConfig, incompatible: &HashMap<String
         declared = incompatible.len(),
         "incompatible applied"
     );
-}
-
-/// Flips `default_enabled = false` on each OPTIONAL mod named in `default_off`.
-/// Required mods are skipped -- they always install, so the flag is meaningless.
-pub fn apply_default_off(config: &mut PackConfig, default_off: &[String]) {
-    if default_off.is_empty() {
-        return;
-    }
-    let names: std::collections::HashSet<&str> = default_off.iter().map(|s| s.as_str()).collect();
-    let mut flipped = 0u32;
-    for m in config.mods.iter_mut() {
-        if names.contains(m.filename.as_str()) && !m.required {
-            m.default_enabled = false;
-            flipped += 1;
-        }
-    }
-    info!(flipped, "default-off applied");
 }
 
 #[derive(Debug, Default)]
@@ -1066,21 +998,25 @@ pub fn generate_hidemymods_spoof(
 ///   1. enrich from mcmod.info     (synchronous, file IO)
 ///   2. apply role_table            (sync)
 ///   3. apply category_table        (sync)
-///   4. mark optional               (sync)
+///   4. incompatible -> display     (sync)
 ///   5. substitute sources          (sync)
 ///   6. infer requires from mcmod   (sync, file IO)
 ///   7. drop curator-rejected smrt_static assets (sync)
 ///   8. generate hidemymods spoof   (sync)
 ///   9. add extras (mods + assets)  (async, Modrinth)
 ///
+/// Per-mod install flags (required / default_enabled) are deliberately NOT a
+/// curator concern -- they live only in the pack config, edited per mod there.
+/// The curator handles what the config can't express: relations, bulk asset
+/// drops, the SC handshake spoof, Modrinth extras.
+///
 /// Order matters: substitutes happen BEFORE infer_requires so the
 /// substituted jar's mcmod.info (open-smrt-network's, not the
 /// upstream proprietary jar's) feeds the dep graph. The drop pass
-/// runs AFTER substitute / mark-optional / category-table so a
-/// dropped entry cannot accidentally short-circuit those mutations
-/// for a sibling file. Extras land last so their display.category
-/// does not leak into category_table resolution against SC-derived
-/// mods.
+/// runs AFTER substitute / category-table so a dropped entry cannot
+/// accidentally short-circuit those mutations for a sibling file.
+/// Extras land last so their display.category does not leak into
+/// category_table resolution against SC-derived mods.
 pub async fn apply_curator(
     config: &mut PackConfig,
     curator: &Curator,
@@ -1096,8 +1032,6 @@ pub async fn apply_curator(
         },
     )?;
     apply_category_table(config, &curator.category_table);
-    apply_mark_optional(config, &curator.mark_optional);
-    apply_default_off(config, &curator.default_off);
     apply_incompatible(config, &curator.incompatible);
     apply_substitute(config, &curator.substitute);
     infer_requires_from_mcmod_info(config, storage)?;
@@ -1385,21 +1319,21 @@ mod tests {
 
     #[test]
     fn merge_curator_replaces_values_drops_empty_and_keeps_comments() {
-        let existing = "# top-of-file note\ndefault_off = [\"A.jar\"]\n\n# category notes\n[category_table]\n\"A.jar\" = \"old\"\n";
-        let mut c = Curator {
-            default_off: vec!["B.jar".to_string()],
-            ..Default::default()
-        };
+        let existing = "# top-of-file note\n[role_table]\n\"A.jar\" = \"oldrole\"\n\n# category notes\n[category_table]\n\"A.jar\" = \"old\"\n";
+        let mut c = Curator::default();
+        c.role_table
+            .insert("A.jar".to_string(), "newrole".to_string());
         c.category_table
             .insert("A.jar".to_string(), "new".to_string());
         let merged = merge_curator(existing, &c).unwrap();
         // values updated
-        assert!(merged.contains("B.jar"), "default_off replaced: {merged}");
+        assert!(merged.contains("newrole"), "role replaced: {merged}");
         assert!(merged.contains("\"new\""), "category replaced: {merged}");
+        assert!(!merged.contains("oldrole"), "old role gone: {merged}");
         assert!(!merged.contains("\"old\""), "old value gone: {merged}");
         // unused/default tables are not emitted (neither section nor inline)
         assert!(
-            !merged.contains("mark_optional"),
+            !merged.contains("substitute"),
             "empty table dropped: {merged}"
         );
         assert!(
@@ -1625,32 +1559,7 @@ mod tests {
     }
 
     #[test]
-    fn mark_optional_flips_required_flag_only_for_matched() {
-        let mut cfg = empty_config();
-        for fname in ["BetterChat.jar", "AlwaysRequired.jar"] {
-            cfg.mods.push(DeclaredMod {
-                filename: fname.into(),
-                required: true,
-                default_enabled: true,
-                source: SourceDecl::SmrtCache {
-                    sha1: "a".repeat(40),
-                },
-                display: None,
-                note: None,
-            });
-        }
-        let mark = MarkOptional {
-            filenames: vec!["BetterChat.jar".into(), "Typo.jar".into()],
-        };
-        let report = apply_mark_optional(&mut cfg, &mark);
-        assert_eq!(report.flipped, 1);
-        assert_eq!(report.not_found, vec!["Typo.jar".to_string()]);
-        assert!(!cfg.mods[0].required); // BetterChat flipped
-        assert!(cfg.mods[1].required); // AlwaysRequired untouched
-    }
-
-    #[test]
-    fn default_off_flips_optionals_and_incompatible_writes_display() {
+    fn incompatible_writes_display() {
         let mut cfg = empty_config();
         cfg.mods.push(DeclaredMod {
             filename: "FoamFix.jar".into(),
@@ -1673,8 +1582,6 @@ mod tests {
             note: None,
         });
 
-        // Naming a required mod in default_off is a no-op (required always on).
-        apply_default_off(&mut cfg, &["FoamFix.jar".into(), "Mixinbooter.jar".into()]);
         let mut incompat: HashMap<String, Vec<String>> = HashMap::new();
         incompat.insert("FoamFix.jar".into(), vec!["Mixinbooter.jar".into()]);
         apply_incompatible(&mut cfg, &incompat);
@@ -1684,19 +1591,6 @@ mod tests {
             .iter()
             .find(|m| m.filename == "FoamFix.jar")
             .unwrap();
-        let mixin = cfg
-            .mods
-            .iter()
-            .find(|m| m.filename == "Mixinbooter.jar")
-            .unwrap();
-        assert!(
-            !foam.default_enabled,
-            "optional FoamFix flipped default-off"
-        );
-        assert!(
-            mixin.default_enabled,
-            "required mod untouched by default-off"
-        );
         assert_eq!(
             foam.display.as_ref().unwrap().incompatible_with,
             vec!["Mixinbooter.jar".to_string()],

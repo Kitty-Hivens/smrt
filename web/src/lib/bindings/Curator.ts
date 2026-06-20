@@ -3,7 +3,6 @@ import type { DropAssets } from "./DropAssets";
 import type { ExtraAsset } from "./ExtraAsset";
 import type { ExtraMod } from "./ExtraMod";
 import type { GenerateConfig } from "./GenerateConfig";
-import type { MarkOptional } from "./MarkOptional";
 import type { PackMeta } from "./PackMeta";
 import type { SubstituteEntry } from "./SubstituteEntry";
 
@@ -21,16 +20,10 @@ import type { SubstituteEntry } from "./SubstituteEntry";
  * callable from their own subcommands for power-user / debugging
  * scenarios, but the canonical pipeline goes through this one file.
  */
-export type Curator = { pack_meta: PackMeta, mark_optional: MarkOptional, 
+export type Curator = { pack_meta: PackMeta, 
 /**
  * `filename -> [incompatible filenames]`, written to each mod's
  * `display.incompatible_with`. Mutual at the launcher, so only one side
  * needs declaring (FoamFix.jar = ["!mixinbooter-10.7.jar"]).
  */
-incompatible: { [key in string]?: Array<string> }, 
-/**
- * Optional mod filenames that should install DISABLED by default
- * (`default_enabled = false`); the user opts in. Use for an optional that
- * conflicts with a default-on mod (FoamFix vs Mixinbooter).
- */
-default_off: Array<string>, substitute: { [key in string]?: SubstituteEntry }, role_table: { [key in string]?: string }, category_table: { [key in string]?: string }, extra_mods: Array<ExtraMod>, extra_assets: Array<ExtraAsset>, drop_assets: DropAssets, generate: GenerateConfig, };
+incompatible: { [key in string]?: Array<string> }, substitute: { [key in string]?: SubstituteEntry }, role_table: { [key in string]?: string }, category_table: { [key in string]?: string }, extra_mods: Array<ExtraMod>, extra_assets: Array<ExtraAsset>, drop_assets: DropAssets, generate: GenerateConfig, };

@@ -35,12 +35,6 @@
   }
   load();
 
-  const has = (arr: string[], v: string) => arr.includes(v);
-  function toggle(arr: string[], v: string) {
-    const i = arr.indexOf(v);
-    if (i >= 0) arr.splice(i, 1);
-    else arr.push(v);
-  }
   function setRec(rec: Partial<Record<string, string>>, k: string, v: string) {
     // store the raw value so mid-edit whitespace is typeable; blank removes the
     // key. Trimming on every keystroke would fight the one-way `value=` binding.
@@ -123,19 +117,17 @@
   <div class="panel scroll">
     <table>
       <thead>
-        <tr><th>{t('cur.col.mod')}</th><th style="width:70px">{t('cur.col.optional')}</th><th style="width:80px">{t('cur.col.defaultOff')}</th><th>{t('cur.col.category')}</th><th>{t('cur.col.role')}</th></tr>
+        <tr><th>{t('cur.col.mod')}</th><th>{t('cur.col.category')}</th><th>{t('cur.col.role')}</th></tr>
       </thead>
       <tbody>
         {#each mods as m}
           <tr>
             <td class="mono">{m}</td>
-            <td class="ctr"><input type="checkbox" checked={has(curator.mark_optional.filenames, m)} onchange={() => toggle(curator!.mark_optional.filenames, m)} /></td>
-            <td class="ctr"><input type="checkbox" checked={has(curator.default_off, m)} onchange={() => toggle(curator!.default_off, m)} /></td>
             <td><input value={curator.category_table[m] ?? ''} oninput={(e) => setRec(curator!.category_table, m, e.currentTarget.value)} placeholder="-" /></td>
             <td><input value={curator.role_table[m] ?? ''} oninput={(e) => setRec(curator!.role_table, m, e.currentTarget.value)} placeholder="-" /></td>
           </tr>
         {/each}
-        {#if mods.length === 0}<tr><td colspan="5" class="muted">{t('cur.noMods')}</td></tr>{/if}
+        {#if mods.length === 0}<tr><td colspan="3" class="muted">{t('cur.noMods')}</td></tr>{/if}
       </tbody>
     </table>
   </div>
