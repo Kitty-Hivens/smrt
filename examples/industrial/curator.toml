@@ -31,13 +31,19 @@
 #       --config  /tmp/Industrial.curated.json \
 #       --curator examples/industrial/curator.toml
 
-# Optional mods that install DISABLED by default (the user opts in). Root-level
-# Curator key. Two confirmed conflicts (live 2026-05-29):
-#   FoamFix  -- breaks Mixinbooter-based mixins.
-#   Phosphor -- its MixinChunk injection fails against Xaero's ChunkTransformer
-#               ("Scanned 0 target(s)" -> Chunk fails to load -> IC2 crash).
-# Both stay in the pack but install off; see [incompatible] below.
-default_off = ["FoamFix.jar", "Phosphor.jar"]
+# Per-mod metadata -- whether a mod is optional, installs default-off, its
+# category / role / incompatibilities -- is NOT a curator concern anymore. It
+# lives on the mod in the pack config, set per mod in the panel's Config tab (or
+# by editing config.json). The curator below carries only what the config can't
+# express per-mod: source substitution, bulk asset drops, the SC handshake
+# spoof, and Modrinth extras.
+#
+# Migrating Industrial's old curation: in the Config tab, mark FoamFix.jar and
+# Phosphor.jar optional + default-off, set FoamFix incompatible-with
+# Mixinbooter (and the rest of the old [mark_optional] / [incompatible] /
+# [category_table] entries). Roles can still be bulk-applied with
+# `smrt-pack apply-role-table --config <cfg> --table role-table.toml`, which now
+# writes display.role straight into the config.
 
 # ── Pack-level rich metadata ─────────────────────────────────────────────
 
@@ -68,58 +74,6 @@ so the user authenticates once at game-join. SC's proprietary
 - ~90 mods, ~131 assets
 """
 
-# ── mark_optional ────────────────────────────────────────────────────────
-# Mods that the SC pack lists as required (in the top-level mods/ dir)
-# but that the launcher should let the user toggle off. Mostly QoL UI
-# layer and visual-style mods that don't affect server-side protocol.
-#
-# FoamFix: kept (NOT deleted) but optional and intended DEFAULT-OFF. It is
-# INCOMPATIBLE with Mixinbooter -- breaks mixin-based mods (live repro: Phosphor's
-# MixinChunk injection fails -> launch dies before the menu). The rest of the set
-# works with Mixinbooter, so Mixinbooter stays and FoamFix steps aside; VanillaFix
-# (added to extra_mods) is the Mixinbooter-safe replacement, default-on.
-# The machine-readable incompatibility (manifest `incompatible_with`, set via the
-# [incompatible] table), the per-optional default (root-level default_off), and the
-# launcher toggle UI are the optional-mods system -- now wired. FoamFix sits in
-# default_off + [incompatible] below.
-
-[mark_optional]
-filenames = [
-    "BetterChat.jar",
-    "ServerTabInfo.jar",
-    "XaerosMinimap.jar",
-    "MoreOverlays.jar",
-    "FoamFix.jar",   # incompatible with Mixinbooter -> default-off; prefer VanillaFix
-    "VoxelMap.jar",
-    "ToroHealth.jar",
-    "XaerosWorldMap.jar",
-    "ReplayMod.jar",
-    "Phosphor.jar",
-    "WailaHarvestability.jar",
-    "TexFix.jar",
-    "MouseTweaks.jar",
-    "SoundFilters.jar",
-    "DamageIndicators.jar",
-    "Schematica.jar",
-    "NoRecipeBook.jar",
-    "DiscordRP.jar",
-    "InventoryTweaks.jar",
-    # OptiFine ships in SC but is opt-in -- the cozy shader stack
-    # below expects it but some users prefer vanilla render path.
-    "OptiFine.jar",
-]
-
-# ── incompatible ───────────────────────────────────────────────────────────
-# filename -> incompatible filenames. Written to each mod's display.incompatible_with;
-# the launcher treats it as mutual, so only one side needs declaring. The launcher
-# warns + (for toggleable conflicts) auto-resolves. Two confirmed conflicts:
-#   FoamFix  vs Mixinbooter (FoamFix breaks mixin loading).
-#   Phosphor vs Xaero (Phosphor's MixinChunk can't inject once Xaero's
-#            ChunkTransformer has rewritten Chunk -> hard crash on load).
-[incompatible]
-"FoamFix.jar" = ["!mixinbooter-10.7.jar"]
-"Phosphor.jar" = ["XaerosMinimap.jar", "XaerosWorldMap.jar"]
-
 # ── substitute ───────────────────────────────────────────────────────────
 # Drop-in source replacements. SC's proprietary Smarty-1.12.2.jar runs
 # a post-join client scan -- open-smrt-network is the clean-room
@@ -149,76 +103,6 @@ category    = "interop"
 description = "Clean-room replacement for SC's proprietary `Smarty` auth coremod. Wire-protocol only, no post-join client scan. Apache-2.0."
 license     = "Apache-2.0"
 url         = "https://github.com/Kitty-Hivens/open-smrt-network"
-
-# ── role_table ───────────────────────────────────────────────────────────
-# Maps mod filename to a role identifier for the launcher's slot UI.
-# Mods sharing a role render in a single dropdown ("Recipe viewer: JEI
-# [v]" with REI / EMI / JER alternatives). Skip mods that have no
-# interchangeable alternative -- their role stays null and they
-# render as plain rows.
-
-[role_table]
-"JEI.jar"             = "recipe_viewer"
-"VoxelMap.jar"        = "minimap"
-"XaerosMinimap.jar"   = "minimap"
-"HWYLA.jar"           = "block_info"
-"XaerosWorldMap.jar"  = "world_map"
-
-# ── category_table ───────────────────────────────────────────────────────
-# Authoritative category-per-filename mapping. The curator's table is
-# AUTHORITATIVE -- it always overrides any pre-existing category
-# (bootstrap default, hand-edited literal, mcmod.info heuristic). To
-# opt out for a specific mod, simply leave it out of the table.
-
-[category_table]
-"OptiFine.jar"               = "render"
-"Phosphor.jar"               = "render"
-"XaerosMinimap.jar"          = "minimap"
-"VoxelMap.jar"               = "minimap"
-"XaerosWorldMap.jar"         = "world-map"
-"HWYLA.jar"                  = "tooltip"
-"WailaHarvestability.jar"    = "tooltip"
-"JEI.jar"                    = "recipe-viewer"
-"JER.jar"                    = "recipe-viewer"
-"JEIBees.jar"                = "recipe-viewer"
-"InventoryTweaks.jar"        = "inventory"
-"MouseTweaks.jar"            = "inventory"
-"DamageIndicators.jar"       = "info-overlay"
-"ToroHealth.jar"             = "info-overlay"
-"MoreOverlays.jar"           = "info-overlay"
-"ServerTabInfo.jar"          = "info-overlay"
-"SoundFilters.jar"           = "audio"
-"WorldEditCUI.jar"           = "world-tools"
-"Schematica.jar"             = "world-tools"
-"FoamFix.jar"                = "performance"
-"TexFix.jar"                 = "performance"
-"BetterChat.jar"             = "chat"
-"NoRecipeBook.jar"           = "misc"
-"DiscordRP.jar"              = "misc"
-"ReplayMod.jar"              = "misc"
-"Quark.jar"                  = "content"
-"CustomNPCs.jar"             = "content"
-"VariedCommodities.jar"      = "content"
-"TreeCapitator.jar"          = "content"
-"PotionCore.jar"             = "content"
-"Hats.jar"                   = "cosmetic"
-"HatStand.jar"               = "cosmetic"
-"NBTEdit.jar"                = "admin-tool"
-# Libraries -- mods that ship code other mods depend on, no
-# user-facing content. The previous pipeline run incorrectly
-# tagged these as `core`; curator now wins.
-"AutoRegLib.jar"             = "lib"
-"bspkrsCore.jar"             = "lib"
-"BdLib.jar"                  = "lib"
-"BuildCraft.jar"             = "lib"
-"ChickenASM-1.12-1.0.2.7.jar" = "lib"
-"CodeChickenLib.jar"         = "lib"
-"CoFHCore.jar"               = "lib"
-"CoFHWorld.jar"              = "lib"
-"ForgeMultipart.jar"         = "lib"
-"iChunUtil.jar"              = "lib"
-"LunatriusCore.jar"          = "lib"
-"MrTJPCore.jar"              = "lib"
 
 # ── extra_mods ───────────────────────────────────────────────────────────
 # Modrinth-direct mods added on top of the SC-derived pack. The

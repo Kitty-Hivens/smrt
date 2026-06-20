@@ -41,7 +41,8 @@ async fn health() -> Json<Health> {
     Json(Health {
         schema_version: SCHEMA_VERSION,
         status: "ok",
-        version: env!("CARGO_PKG_VERSION"),
+        // crate version + git short sha, stamped by build.rs -- moves with the code
+        version: env!("SMRT_BUILD_VERSION"),
     })
 }
 

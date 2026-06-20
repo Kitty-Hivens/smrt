@@ -738,7 +738,7 @@ mod tests {
     async fn curator_doc_preserves_comments_verbatim() {
         let dir = tempfile::tempdir().unwrap();
         let s = Storage::new(dir.path().to_path_buf());
-        let doc = "# keep this note\ndefault_off = [\"FoamFix.jar\"]\n";
+        let doc = "# keep this note\n[role_table]\n\"FoamFix.jar\" = \"perf\"\n";
         s.save_curator_doc("Industrial", doc).await.unwrap();
         let loaded = s.load_curator_doc("Industrial").await.unwrap();
         assert_eq!(

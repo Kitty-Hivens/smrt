@@ -242,7 +242,7 @@ async fn run_build(
         }
         // A real read error (I/O, permissions, a race with save_curator_doc) must
         // NOT silently drop the curator chain and publish an under-curated
-        // manifest (no incompatible / default_off / roles / hidemymods spoof) --
+        // manifest (no incompatible / roles / substitutes / hidemymods spoof) --
         // fail the build loudly instead.
         Err(e) => return Err(format!("reading curator.toml: {e}")),
     };

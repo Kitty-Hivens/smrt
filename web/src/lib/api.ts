@@ -6,6 +6,7 @@ import type {
   BuildModRow,
   BuildSummary,
   CacheInventory,
+  DeclaredAsset,
   CacheUsageListing,
   Curator,
   Health,
@@ -172,6 +173,15 @@ export const api = {
     getJson<PackConfig>(`/v1/admin/packs/${encodeURIComponent(id)}/config`),
   savePackConfig: (id: string, cfg: PackConfig) =>
     send('PUT', `/v1/admin/packs/${encodeURIComponent(id)}/config`, cfg),
+  // overwrite the config with one reconstructed from a published build; returns it
+  async revertPackConfig(id: string, version: string): Promise<PackConfig> {
+    const r = await fetch(
+      `/v1/admin/packs/${encodeURIComponent(id)}/config/revert?version=${encodeURIComponent(version)}`,
+      { method: 'POST', credentials: 'include' },
+    );
+    if (!r.ok) throw await toError(r);
+    return (await r.json()) as PackConfig;
+  },
   curator: (id: string) => getText(`/v1/admin/packs/${encodeURIComponent(id)}/curator`),
   saveCurator: (id: string, text: string) =>
     putText(`/v1/admin/packs/${encodeURIComponent(id)}/curator`, text),
@@ -299,6 +309,10 @@ export const api = {
   registryBuildMods: (packId: string, packVersion: string) =>
     getJson<BuildModRow[]>(
       `/v1/admin/registry/builds/${encodeURIComponent(packId)}/${encodeURIComponent(packVersion)}`,
+    ),
+  registryBuildAssets: (packId: string, packVersion: string) =>
+    getJson<DeclaredAsset[]>(
+      `/v1/admin/registry/builds/${encodeURIComponent(packId)}/${encodeURIComponent(packVersion)}/assets`,
     ),
 
   async session(): Promise<boolean> {

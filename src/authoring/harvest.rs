@@ -8,7 +8,7 @@
 //! harvested yet (their target is a project_id, a different selector namespace
 //! than the modid relations here) -- that lands with the Phase 4 resolver.
 
-use super::curator::{McModInfo, parse_curator, read_mcmod_info};
+use super::curator::{McModInfo, read_mcmod_info};
 use super::modrinth::Modrinth;
 use crate::registry::model::{RelKind, Source};
 use crate::registry::{Registry, queries, upsert};
@@ -57,7 +57,7 @@ pub struct PackSeed {
     pub java_major: Option<i64>,
     pub fingerprint: Option<String>,
     pub mods: Vec<BuildModSeed>,
-    pub conflicts: Vec<(String, String)>, // (a_sha1, b_sha1), from curator.incompatible
+    pub conflicts: Vec<(String, String)>, // (a_sha1, b_sha1), from display.incompatible_with
 }
 
 #[derive(Default)]
@@ -289,17 +289,15 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
                 default_enabled: m.default_enabled,
             });
         }
+        // conflicts come from each mod's published display.incompatible_with
+        // (set per-mod in the config now, not a curator table). sha_by_filename is
+        // complete from the loop above, so a target naming a later mod resolves.
         let mut conflicts = Vec::new();
-        if let Ok(text) = storage.load_curator_doc(&pid).await
-            && let Ok(cur) = parse_curator(&text)
-        {
-            for (a_fname, blist) in &cur.incompatible {
-                if let Some(a_sha) = sha_by_filename.get(a_fname) {
-                    for b_fname in blist {
-                        if let Some(b_sha) = sha_by_filename.get(b_fname) {
-                            conflicts.push((a_sha.clone(), b_sha.clone()));
-                        }
-                    }
+        for m in &manifest.mods {
+            let Some(disp) = &m.display else { continue };
+            for b_fname in &disp.incompatible_with {
+                if let Some(b_sha) = sha_by_filename.get(b_fname) {
+                    conflicts.push((m.sha1.clone(), b_sha.clone()));
                 }
             }
         }

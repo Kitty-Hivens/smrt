@@ -8,6 +8,8 @@
 
 use super::ApiError;
 use crate::authoring::harvest::{self, HarvestReport};
+use crate::authoring::reconstruct_config;
+use crate::domain::DeclaredAsset;
 use crate::registry::model::{
     BuildModRow, BuildSummary, EligibleArtifact, ModSummary, ModUse, OrphanJar, RegistryStats,
     VersionRow,
@@ -37,6 +39,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/admin/registry/builds/:pack_id/:pack_version",
             get(get_build_mods),
+        )
+        .route(
+            "/v1/admin/registry/builds/:pack_id/:pack_version/assets",
+            get(get_build_assets),
         )
         .route(
             "/v1/admin/registry/mods/:alias_source/:external_key",
@@ -186,6 +192,22 @@ async fn get_build_mods(
         r.cached = cached.contains(&r.sha1);
     }
     Ok(Json(rows))
+}
+
+// A build's assets, as re-addable declarations. The registry indexes mods, not
+// assets, so this reads them from the build's published manifest (via the same
+// manifest->config reconstruction the revert path uses) -- each asset keeps its
+// exact source (Modrinth / static / cache).
+async fn get_build_assets(
+    State(state): State<AppState>,
+    Path((pack_id, pack_version)): Path<(String, String)>,
+) -> Result<Json<Vec<DeclaredAsset>>, ApiError> {
+    let manifest = state
+        .storage
+        .load_manifest_version(&pack_id, &pack_version)
+        .await?;
+    let summary = state.storage.load_pack_summary(&pack_id).await?;
+    Ok(Json(reconstruct_config(&manifest, &summary).assets))
 }
 
 async fn get_mod_versions(

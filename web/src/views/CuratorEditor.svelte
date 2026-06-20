@@ -4,7 +4,7 @@
   import type { Curator } from '../lib/types';
   import ModrinthPicker from './ModrinthPicker.svelte';
 
-  let { packId, mods, mc }: { packId: string; mods: string[]; mc: string } = $props();
+  let { packId, mc }: { packId: string; mc: string } = $props();
 
   let view = $state<'structured' | 'raw'>('structured');
   let curator = $state<Curator | null>(null);
@@ -34,19 +34,6 @@
     loading = false;
   }
   load();
-
-  const has = (arr: string[], v: string) => arr.includes(v);
-  function toggle(arr: string[], v: string) {
-    const i = arr.indexOf(v);
-    if (i >= 0) arr.splice(i, 1);
-    else arr.push(v);
-  }
-  function setRec(rec: Partial<Record<string, string>>, k: string, v: string) {
-    // store the raw value so mid-edit whitespace is typeable; blank removes the
-    // key. Trimming on every keystroke would fight the one-way `value=` binding.
-    if (v.trim()) rec[k] = v;
-    else delete rec[k];
-  }
 
   async function saveStructured() {
     if (!curator) return;
@@ -117,27 +104,6 @@
     <label>{t('cur.bannerUrl')}<input class="mono" bind:value={curator.pack_meta.banner_url} placeholder="https://.../banner.png" /></label>
     <label class="wide">{t('cur.gallery')}<textarea class="mono" rows="3" bind:value={galleryStr}></textarea></label>
     <label class="wide">{t('cur.description')}<textarea class="mono" rows="5" bind:value={curator.pack_meta.description_md}></textarea></label>
-  </div>
-
-  <div class="sec-h"><h3>{t('cur.perMod')} <span class="faint">({t('cur.modsN', { n: mods.length })})</span></h3></div>
-  <div class="panel scroll">
-    <table>
-      <thead>
-        <tr><th>{t('cur.col.mod')}</th><th style="width:70px">{t('cur.col.optional')}</th><th style="width:80px">{t('cur.col.defaultOff')}</th><th>{t('cur.col.category')}</th><th>{t('cur.col.role')}</th></tr>
-      </thead>
-      <tbody>
-        {#each mods as m}
-          <tr>
-            <td class="mono">{m}</td>
-            <td class="ctr"><input type="checkbox" checked={has(curator.mark_optional.filenames, m)} onchange={() => toggle(curator!.mark_optional.filenames, m)} /></td>
-            <td class="ctr"><input type="checkbox" checked={has(curator.default_off, m)} onchange={() => toggle(curator!.default_off, m)} /></td>
-            <td><input value={curator.category_table[m] ?? ''} oninput={(e) => setRec(curator!.category_table, m, e.currentTarget.value)} placeholder="-" /></td>
-            <td><input value={curator.role_table[m] ?? ''} oninput={(e) => setRec(curator!.role_table, m, e.currentTarget.value)} placeholder="-" /></td>
-          </tr>
-        {/each}
-        {#if mods.length === 0}<tr><td colspan="5" class="muted">{t('cur.noMods')}</td></tr>{/if}
-      </tbody>
-    </table>
   </div>
 
   <div class="sec-h row">
