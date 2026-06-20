@@ -29,8 +29,14 @@
   const src = $derived(broken ? null : (explicit ?? modrinth ?? cacheIcon));
 
   // Mirror ModIconResolver: only fall back to the project icon when no explicit
-  // icon_url is set and the source is Modrinth (cached in the api layer).
+  // icon_url is set and the source is Modrinth (cached in the api layer). This
+  // also re-runs when `source` changes -- a list row may be reused for a
+  // different mod (sort / re-point), so reset the resolved/broken state first
+  // instead of carrying the previous mod's icon over.
   $effect(() => {
+    void source; // re-run on identity change
+    broken = false;
+    modrinth = null;
     if (explicit || source.type !== 'modrinth') return;
     let alive = true;
     void api.modrinthIcon(source.project_id).then((url) => {
