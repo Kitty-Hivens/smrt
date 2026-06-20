@@ -1,6 +1,7 @@
 use super::ApiError;
 use crate::authoring::{
-    Curator, ValidateReport, merge_curator, modrinth, parse_curator, reconstruct_config, validate,
+    Curator, ValidateReport, jar_icon, merge_curator, modrinth, parse_curator, reconstruct_config,
+    validate,
 };
 use crate::domain::*;
 use crate::state::AppState;
@@ -28,6 +29,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/admin/cache/:prefix/:filename",
             put(put_cache_jar).delete(delete_cache_jar),
         )
+        .route("/v1/admin/cache/icon/:sha1", get(get_cache_icon))
         .route(
             "/v1/admin/packs/:pack_id/static/*rel_path",
             put(put_pack_static).delete(delete_pack_static),
@@ -117,6 +119,38 @@ async fn delete_cache_jar(
     state.storage.delete_cache_jar(sha1).await?;
     state.harvest.poke(); // artifact gone -> refresh the registry
     Ok(StatusCode::NO_CONTENT)
+}
+
+// Serve a cached mod's own embedded icon (mcmod.info logoFile / pack.png /
+// fabric icon), so the panel can show real mod icons for self-hosted jars. The
+// content is immutable per sha1, so it caches hard in the browser. 404 when the
+// jar carries no icon -- the panel falls back to a letter avatar.
+async fn get_cache_icon(
+    State(state): State<AppState>,
+    Path(sha1): Path<String>,
+) -> Result<Response, ApiError> {
+    if sha1.len() != 40 || !sha1.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ApiError::BadRequest("sha1 must be 40 hex chars".into()));
+    }
+    let path = state.storage.cache_jar_path(&sha1[..2], &sha1)?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|_| ApiError::NotFound)?;
+    let icon = tokio::task::spawn_blocking(move || jar_icon(&bytes))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("icon extract task: {e}")))??;
+    let (img, content_type) = icon.ok_or(ApiError::NotFound)?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            // bytes come from an untrusted jar; pin the type so the browser can't
+            // sniff a "pack.png" that actually contains markup into something active
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        img,
+    )
+        .into_response())
 }
 
 async fn put_pack_static(
@@ -345,25 +379,87 @@ fn safe_seg(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '+'))
 }
 
+/// A single URL path segment for a release tag / asset name. Real GitHub release
+/// filenames carry spaces, parens, commas etc, so this only rejects what would
+/// change the URL's shape -- path separators, `.`/`..` traversal, control chars,
+/// emptiness. Everything else is allowed and percent-encoded into the URL.
+fn safe_path_seg(s: &str) -> bool {
+    !s.is_empty()
+        && s != "."
+        && s != ".."
+        && !s.contains('/')
+        && !s.contains('\\')
+        && !s.chars().any(|c| c.is_control())
+}
+
+/// Percent-encode one URL path segment: keep the RFC 3986 unreserved set, encode
+/// space and everything URL-structural so a filename with spaces/`&`/`+`/`#`
+/// produces a valid, unambiguous path.
+fn enc_seg(s: &str) -> String {
+    use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
+    const SET: &AsciiSet = &CONTROLS
+        .add(b' ')
+        .add(b'"')
+        .add(b'#')
+        .add(b'%')
+        .add(b'<')
+        .add(b'>')
+        .add(b'?')
+        .add(b'[')
+        .add(b'\\')
+        .add(b']')
+        .add(b'^')
+        .add(b'`')
+        .add(b'{')
+        .add(b'|')
+        .add(b'}')
+        .add(b'/')
+        .add(b'&')
+        .add(b'=')
+        .add(b'+');
+    utf8_percent_encode(s, SET).to_string()
+}
+
+/// Build the github.com release-download URL from a repo / tag / asset, or `None`
+/// if the inputs aren't safe. `repo` accepts a pasted URL or `owner/name` and is
+/// kept strict (it's the SSRF-sensitive path prefix); tag/asset may be richer
+/// filenames and are percent-encoded.
+fn github_asset_url(repo_in: &str, tag_in: &str, asset_in: &str) -> Option<String> {
+    let repo = repo_in
+        .trim()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_start_matches("github.com/")
+        .trim_end_matches('/')
+        .trim_end_matches(".git");
+    let tag = tag_in.trim();
+    let asset = asset_in.trim();
+    let repo_ok = repo.matches('/').count() == 1 && repo.split('/').all(safe_seg);
+    if !repo_ok || !safe_path_seg(tag) || !safe_path_seg(asset) {
+        return None;
+    }
+    Some(format!(
+        "https://github.com/{repo}/releases/download/{}/{}",
+        enc_seg(tag),
+        enc_seg(asset)
+    ))
+}
+
 // Fetch a GitHub release asset server-side and cache it by content hash, so a
 // pack can pull a GitHub-only mod (open-smrt-network, hidemymods) as a normal
-// smrt_cache source -- no new wire source type. Bounded to github.com release
-// downloads: repo/tag/asset are validated path tokens, not an arbitrary URL,
-// so this is not an open SSRF sink.
+// smrt_cache source -- no new wire source type. The host is fixed to github.com,
+// repo is kept strict (owner/name), and tag/asset are single, percent-encoded
+// path segments (no separators, no traversal) -- not an open SSRF sink. See
+// `github_asset_url`.
 async fn ingest_github(
     State(state): State<AppState>,
     Json(req): Json<GithubIngest>,
 ) -> Result<(StatusCode, Json<PutCacheResponse>), ApiError> {
-    let repo = req.repo.trim();
-    let tag = req.tag.trim();
-    let asset = req.asset.trim();
-    let repo_ok = repo.matches('/').count() == 1 && repo.split('/').all(safe_seg);
-    if !repo_ok || !safe_seg(tag) || !safe_seg(asset) {
-        return Err(ApiError::BadRequest(
-            "repo (owner/name), tag and asset must be plain tokens".into(),
-        ));
-    }
-    let url = format!("https://github.com/{repo}/releases/download/{tag}/{asset}");
+    let url = github_asset_url(&req.repo, &req.tag, &req.asset).ok_or_else(|| {
+        ApiError::BadRequest(
+            "repo must be owner/name (a github.com URL is ok); tag and asset must each be a single path segment".into(),
+        )
+    })?;
     let bytes = state
         .modrinth
         .fetch_bytes(&url)
@@ -528,4 +624,59 @@ struct StaticListing {
     schema_version: u32,
     pack_id: String,
     files: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::github_asset_url;
+
+    #[test]
+    fn github_url_accepts_plain_repo_and_simple_names() {
+        assert_eq!(
+            github_asset_url("Kitty-Hivens/open-smrt-network", "v1.2.3", "osn-1.12.2.jar"),
+            Some(
+                "https://github.com/Kitty-Hivens/open-smrt-network/releases/download/v1.2.3/osn-1.12.2.jar"
+                    .into()
+            )
+        );
+    }
+
+    #[test]
+    fn github_url_normalizes_a_pasted_url() {
+        // a pasted browser URL (scheme + host, trailing .git/slash) still resolves
+        for repo in [
+            "https://github.com/owner/repo",
+            "github.com/owner/repo/",
+            "owner/repo.git",
+        ] {
+            assert_eq!(
+                github_asset_url(repo, "v1", "a.jar"),
+                Some("https://github.com/owner/repo/releases/download/v1/a.jar".into()),
+                "repo {repo:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn github_url_percent_encodes_rich_asset_names() {
+        // spaces / parens / plus -- common in real release assets -- are encoded,
+        // not rejected
+        let url = github_asset_url("o/r", "1.0+build5", "Cool Mod (1.12.2).jar").unwrap();
+        assert_eq!(
+            url,
+            "https://github.com/o/r/releases/download/1.0%2Bbuild5/Cool%20Mod%20(1.12.2).jar"
+        );
+    }
+
+    #[test]
+    fn github_url_rejects_unsafe_inputs() {
+        // repo must be exactly owner/name
+        assert!(github_asset_url("owner/repo/extra", "v1", "a.jar").is_none());
+        assert!(github_asset_url("justowner", "v1", "a.jar").is_none());
+        // tag/asset can't add path depth or traverse
+        assert!(github_asset_url("o/r", "v1/x", "a.jar").is_none());
+        assert!(github_asset_url("o/r", "v1", "sub/a.jar").is_none());
+        assert!(github_asset_url("o/r", "..", "a.jar").is_none());
+        assert!(github_asset_url("o/r", "v1", "").is_none());
+    }
 }

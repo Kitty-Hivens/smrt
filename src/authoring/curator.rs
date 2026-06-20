@@ -50,6 +50,10 @@ pub struct McModInfo {
     /// jar carries none).
     #[serde(default, rename = "authorList")]
     pub authors: Vec<String>,
+    /// Path inside the jar to the mod's logo image (Forge `logoFile`), used to
+    /// surface the mod's own icon in the panel.
+    #[serde(default, rename = "logoFile")]
+    pub logo_file: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -101,6 +105,75 @@ pub fn read_mcmod_info(jar_bytes: &[u8]) -> Result<Option<McModInfo>> {
     };
 
     Ok(parsed)
+}
+
+/// Extract a mod's embedded icon from its jar bytes: the Forge `mcmod.info`
+/// `logoFile`, else a `fabric.mod.json` `icon`, else a conventional `pack.png` /
+/// `icon.png` / `logo.png` at the jar root. Returns the image bytes plus a
+/// content-type guessed from the entry name. `Ok(None)` when the jar has no
+/// recognizable icon or isn't a readable zip.
+pub fn jar_icon(jar_bytes: &[u8]) -> Result<Option<(Vec<u8>, &'static str)>> {
+    let mut zip = match zip::ZipArchive::new(Cursor::new(jar_bytes)) {
+        Ok(z) => z,
+        Err(_) => return Ok(None),
+    };
+
+    let mut candidates: Vec<String> = Vec::new();
+    if let Ok(Some(info)) = read_mcmod_info(jar_bytes) {
+        let lf = info.logo_file.trim().trim_start_matches('/');
+        if !lf.is_empty() {
+            candidates.push(lf.to_string());
+        }
+    }
+    if let Some(icon) = fabric_icon(jar_bytes) {
+        candidates.push(icon);
+    }
+    for d in ["pack.png", "icon.png", "logo.png"] {
+        candidates.push(d.to_string());
+    }
+
+    for name in candidates {
+        let read = match zip.by_name(&name) {
+            Ok(mut e) if e.is_file() => {
+                let size = e.size();
+                Some(read_zip_entry(&mut e, size, &name)?)
+            }
+            _ => None,
+        };
+        if let Some(bytes) = read
+            && !bytes.is_empty()
+        {
+            return Ok(Some((bytes, content_type_for(&name))));
+        }
+    }
+    Ok(None)
+}
+
+/// `fabric.mod.json` `icon` -- a string path, or a `{ "<size>": "path" }` map
+/// from which any entry serves.
+fn fabric_icon(jar_bytes: &[u8]) -> Option<String> {
+    let mut zip = zip::ZipArchive::new(Cursor::new(jar_bytes)).ok()?;
+    let mut entry = zip.by_name("fabric.mod.json").ok()?;
+    let size = entry.size();
+    let raw = read_zip_entry(&mut entry, size, "fabric.mod.json").ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
+    let path = match v.get("icon")? {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Object(m) => m.values().find_map(|x| x.as_str())?.to_string(),
+        _ => return None,
+    };
+    Some(path.trim_start_matches('/').to_string())
+}
+
+fn content_type_for(name: &str) -> &'static str {
+    let n = name.to_ascii_lowercase();
+    if n.ends_with(".jpg") || n.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if n.ends_with(".gif") {
+        "image/gif"
+    } else {
+        "image/png"
+    }
 }
 
 // ── Pass 1: enrich display from mcmod.info ────────────────────────────────
@@ -1854,5 +1927,40 @@ mod tests {
             .unwrap();
         zw.write_all(b"Manifest-Version: 1.0\n").unwrap();
         zw.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn jar_icon_prefers_logofile_then_pack_png_else_none() {
+        // mcmod.info logoFile wins over a present pack.png
+        let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        zw.start_file("mcmod.info", SimpleFileOptions::default())
+            .unwrap();
+        zw.write_all(br#"[{"modid":"x","logoFile":"assets/x/logo.png"}]"#)
+            .unwrap();
+        zw.start_file("assets/x/logo.png", SimpleFileOptions::default())
+            .unwrap();
+        zw.write_all(b"LOGO").unwrap();
+        zw.start_file("pack.png", SimpleFileOptions::default())
+            .unwrap();
+        zw.write_all(b"PACK").unwrap();
+        let jar = zw.finish().unwrap().into_inner();
+        let (bytes, ct) = jar_icon(&jar).unwrap().unwrap();
+        assert_eq!(bytes, b"LOGO", "logoFile takes priority");
+        assert_eq!(ct, "image/png");
+
+        // a manifest-only jar yields no icon
+        assert!(
+            jar_icon(&build_jar_bytes_without_mcmod())
+                .unwrap()
+                .is_none()
+        );
+
+        // pack.png is the fallback when there's no logoFile
+        let mut zw3 = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        zw3.start_file("pack.png", SimpleFileOptions::default())
+            .unwrap();
+        zw3.write_all(b"P").unwrap();
+        let jar3 = zw3.finish().unwrap().into_inner();
+        assert_eq!(jar_icon(&jar3).unwrap().unwrap().0, b"P");
     }
 }

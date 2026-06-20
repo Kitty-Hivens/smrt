@@ -13,4 +13,9 @@ export type McModInfo = { modid: string, name: string, version: string, descript
  * local, network-free author source (falling back to Modrinth only when the
  * jar carries none).
  */
-authorList: Array<string>, };
+authorList: Array<string>, 
+/**
+ * Path inside the jar to the mod's logo image (Forge `logoFile`), used to
+ * surface the mod's own icon in the panel.
+ */
+logoFile: string, };
