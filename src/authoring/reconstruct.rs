@@ -5,8 +5,8 @@
 //! operator can edit and rebuild the pack through the control panel.
 
 use crate::domain::{
-    AssetEntry, DeclaredAsset, DeclaredMod, ModEntry, PackConfig, PackManifest, PackSummary,
-    Source, SourceDecl,
+    AssetEntry, DeclaredAsset, DeclaredMod, ModEntry, PackConfig, PackManifest, PackMeta,
+    PackSummary, Source, SourceDecl,
 };
 
 /// The manifest carries the launch facts (mc / loader / java) and the resolved
@@ -25,6 +25,12 @@ pub fn reconstruct_config(manifest: &PackManifest, summary: &PackSummary) -> Pac
         featured: summary.featured,
         mods: manifest.mods.iter().map(reconstruct_mod).collect(),
         assets: manifest.assets.iter().map(reconstruct_asset).collect(),
+        pack_meta: PackMeta {
+            icon_url: summary.icon_url.clone(),
+            banner_url: summary.banner_url.clone(),
+            gallery_urls: summary.gallery_urls.clone(),
+            description_md: summary.description_md.clone(),
+        },
     }
 }
 

@@ -23,6 +23,7 @@ export type { CacheUse } from './bindings/CacheUse';
 
 // authoring config
 export type { PackConfig } from './bindings/PackConfig';
+export type { PackMeta } from './bindings/PackMeta';
 export type { DeclaredMod } from './bindings/DeclaredMod';
 export type { DeclaredAsset } from './bindings/DeclaredAsset';
 export type { SourceDecl } from './bindings/SourceDecl';
@@ -45,16 +46,6 @@ export type { VersionRow } from './bindings/VersionRow';
 export type { BuildSummary } from './bindings/BuildSummary';
 export type { BuildModRow } from './bindings/BuildModRow';
 export type { ModUse } from './bindings/ModUse';
-
-// curator (structured editor)
-export type { Curator } from './bindings/Curator';
-export type { PackMeta } from './bindings/PackMeta';
-export type { SubstituteEntry } from './bindings/SubstituteEntry';
-export type { ExtraMod } from './bindings/ExtraMod';
-export type { ExtraAsset } from './bindings/ExtraAsset';
-export type { ExtraAssetKind } from './bindings/ExtraAssetKind';
-export type { DropAssets } from './bindings/DropAssets';
-export type { GenerateConfig } from './bindings/GenerateConfig';
 
 // ── hand-written: operational + external (no Rust DTO) ──
 

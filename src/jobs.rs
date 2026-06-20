@@ -1,15 +1,15 @@
-//! Build jobs with a live, tailable log. Authoring (curator + manifest build)
-//! runs where the storage tree lives, so the panel triggers it over HTTP and
-//! streams the log (SSE) instead of shelling out to `smrt-pack`. A job is an
-//! in-memory log + status; `Notify` wakes SSE tailers on each new line.
+//! Build jobs with a live, tailable log. Authoring (enrichment passes +
+//! manifest build) runs where the storage tree lives, so the panel triggers it
+//! over HTTP and streams the log (SSE) instead of shelling out to `smrt-pack`.
+//! A job is an in-memory log + status; `Notify` wakes SSE tailers on each new
+//! line.
 
 use crate::authoring::{
-    self, BootstrapArgs, HarvestScheduler, Modrinth, apply_curator, build_manifest,
-    make_pack_summary, parse_curator,
+    self, BootstrapArgs, HarvestScheduler, build_manifest, enrich_from_mcmod_info,
+    infer_requires_from_mcmod_info, make_pack_summary,
 };
 use crate::config::Config;
 use crate::domain::{PackManifest, PackSummary};
-use crate::http::ApiError;
 use crate::storage::Storage;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -212,9 +212,9 @@ impl JobRegistry {
     }
 }
 
-/// Load the pack's authoring inputs, apply the curator chain transiently
-/// (config.json stays the pre-curator source), resolve sources, and publish
-/// the manifest + summary + latest pointer. Logs each step to the job.
+/// Load the pack's authoring inputs, run the build enrichment passes
+/// transiently (config.json stays the source on disk), resolve sources, and
+/// publish the manifest + summary + latest pointer. Logs each step to the job.
 async fn run_build(
     job: &Job,
     storage: &Storage,
@@ -234,32 +234,13 @@ async fn run_build(
         cfg.assets.len()
     ));
 
-    let curator = match storage.load_curator_doc(&pack_id).await {
-        Ok(text) => Some(parse_curator(&text).map_err(|e| format!("curator.toml: {e}"))?),
-        Err(ApiError::NotFound) => {
-            job.line("no curator.toml -- building the config as-is");
-            None
-        }
-        // A real read error (I/O, permissions, a race with save_curator_doc) must
-        // NOT silently drop the curator chain and publish an under-curated
-        // manifest (no incompatible / roles / substitutes / hidemymods spoof) --
-        // fail the build loudly instead.
-        Err(e) => return Err(format!("reading curator.toml: {e}")),
-    };
-
-    let modrinth = Modrinth::new().map_err(|e| e.to_string())?;
-    if let Some(c) = &curator {
-        job.line("applying curator chain (enrich / roles / optional / substitute / extras)");
-        let mc = cfg.minecraft_version.clone();
-        apply_curator(&mut cfg, c, storage.root(), &modrinth, &mc)
-            .await
-            .map_err(|e| format!("curator failed: {e}"))?;
-        job.line(format!(
-            "after curator: {} mods, {} assets",
-            cfg.mods.len(),
-            cfg.assets.len()
-        ));
-    }
+    // Enrichment passes run on a transient copy of the config: fill display
+    // metadata from each cache jar's mcmod.info, then infer the requires graph.
+    job.line("running enrichment passes (enrich-mcmod / infer-requires)");
+    enrich_from_mcmod_info(&mut cfg, storage.root())
+        .map_err(|e| format!("enrich-mcmod failed: {e}"))?;
+    infer_requires_from_mcmod_info(&mut cfg, storage.root())
+        .map_err(|e| format!("infer-requires failed: {e}"))?;
 
     job.line("resolving sources (Modrinth lookups + cache reads)");
     let manifest = build_manifest(
@@ -270,11 +251,7 @@ async fn run_build(
     )
     .await
     .map_err(|e| format!("resolve failed: {e}"))?;
-    let pack_meta = curator
-        .as_ref()
-        .map(|c| c.pack_meta.clone())
-        .unwrap_or_default();
-    let summary = make_pack_summary(&cfg, &manifest.pack_version, &pack_meta);
+    let summary = make_pack_summary(&cfg, &manifest.pack_version);
 
     if dry_run {
         job.line(format!(
@@ -377,6 +354,7 @@ mod tests {
                 note: None,
             }],
             assets: vec![],
+            pack_meta: Default::default(),
         }
     }
 

@@ -2,6 +2,7 @@
 import type { DeclaredAsset } from "./DeclaredAsset";
 import type { DeclaredMod } from "./DeclaredMod";
 import type { LoaderSpec } from "./LoaderSpec";
+import type { PackMeta } from "./PackMeta";
 
 /**
  * Admin-authored declaration of a pack. The build step turns this into a wire
@@ -17,4 +18,4 @@ export type PackConfig = { pack_id: string, display_name: string, tagline: strin
  * bumps it rarely. Absent -> `0.0.0`. The date + same-day counter advance
  * automatically, so this is the only version part anyone hand-edits.
  */
-version?: string, tags: Array<string>, featured: boolean, mods: Array<DeclaredMod>, assets: Array<DeclaredAsset>, };
+version?: string, tags: Array<string>, featured: boolean, mods: Array<DeclaredMod>, assets: Array<DeclaredAsset>, pack_meta: PackMeta, };

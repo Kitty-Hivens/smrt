@@ -8,7 +8,6 @@ import type {
   CacheInventory,
   DeclaredAsset,
   CacheUsageListing,
-  Curator,
   Health,
   JobResult,
   ManifestVersionsListing,
@@ -82,22 +81,6 @@ async function sendRaw(
 async function sha1Hex(buf: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-1', buf);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-async function getText(path: string): Promise<string> {
-  const r = await fetch(path, { credentials: 'include' });
-  if (!r.ok) throw await toError(r);
-  return r.text();
-}
-
-async function putText(path: string, text: string): Promise<void> {
-  const r = await fetch(path, {
-    method: 'PUT',
-    credentials: 'include',
-    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-    body: text,
-  });
-  if (!r.ok) throw await toError(r);
 }
 
 // Per-project icon cache (incl. negative results), mirroring the launcher's
@@ -182,13 +165,6 @@ export const api = {
     if (!r.ok) throw await toError(r);
     return (await r.json()) as PackConfig;
   },
-  curator: (id: string) => getText(`/v1/admin/packs/${encodeURIComponent(id)}/curator`),
-  saveCurator: (id: string, text: string) =>
-    putText(`/v1/admin/packs/${encodeURIComponent(id)}/curator`, text),
-  curatorStructured: (id: string) =>
-    getJson<Curator>(`/v1/admin/packs/${encodeURIComponent(id)}/curator/structured`),
-  saveCuratorStructured: (id: string, c: Curator) =>
-    send('PUT', `/v1/admin/packs/${encodeURIComponent(id)}/curator/structured`, c),
   async buildPack(
     id: string,
     opts?: { dryRun?: boolean; packVersion?: string },

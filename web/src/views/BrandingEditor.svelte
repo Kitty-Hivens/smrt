@@ -8,7 +8,7 @@
   let { packId }: { packId: string } = $props();
 
   // where a dropped file lands: the two branding images get stable names so the
-  // curator URL stays put; everything else keeps its own filename
+  // pack-card URL stays put; everything else keeps its own filename
   type Dest = 'icon' | 'banner' | 'asset';
   let dest = $state<Dest>('asset');
   let files = $state<string[]>([]);
@@ -57,7 +57,7 @@
   }
 
   // icon/banner must resolve to one file: drop any prior extension first so a
-  // re-upload in another format can't leave a stale image the curator points at
+  // re-upload in another format can't leave a stale image the pack card points at
   async function putBranding(target: 'icon' | 'banner', relPath: string, data: File | Blob) {
     for (const f of files) {
       if (f.startsWith(`_nexira/${target}.`) && f !== relPath) {

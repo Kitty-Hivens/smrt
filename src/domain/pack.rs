@@ -97,6 +97,24 @@ pub struct PackConfig {
     pub mods: Vec<DeclaredMod>,
     #[serde(default)]
     pub assets: Vec<DeclaredAsset>,
+    #[serde(default)]
+    pub pack_meta: PackMeta,
+}
+
+/// Pack-card metadata (icon / banner / gallery / long description) merged into
+/// the emitted `summary.json` at build time. Every field optional; absent fields
+/// stay out of summary.json (per the `skip_serializing_if` on PackSummary).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct PackMeta {
+    #[serde(default)]
+    pub icon_url: Option<String>,
+    #[serde(default)]
+    pub banner_url: Option<String>,
+    #[serde(default)]
+    pub gallery_urls: Vec<String>,
+    #[serde(default)]
+    pub description_md: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

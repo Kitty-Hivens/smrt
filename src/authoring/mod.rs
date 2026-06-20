@@ -1,8 +1,8 @@
 //! Authoring (service layer): turn an admin-authored `PackConfig` into the
 //! wire manifest, bootstrap a starter config from an SC archive, run the
-//! curator chain, and resolve Modrinth sources. The compute core shared by
-//! the `smrt-pack` CLI and the panel's build endpoints. `archive` and
-//! `sources` are internal helpers; the passes are the public surface.
+//! build enrichment passes, and resolve Modrinth sources. The compute core
+//! shared by the `smrt-pack` CLI and the panel's build endpoints. `archive`
+//! and `sources` are internal helpers; the passes are the public surface.
 
 mod archive;
 mod sources;
@@ -18,7 +18,10 @@ pub mod validate;
 
 pub use bootstrap::{BootstrapArgs, bootstrap};
 pub use build::{build_manifest, make_pack_summary};
-pub use curator::*;
+pub use curator::{
+    McModInfo, RoleTable, apply_role_table, enrich_from_mcmod_info, infer_requires_from_mcmod_info,
+    jar_icon, load_role_table, read_mcmod_info,
+};
 pub use harvest_sched::HarvestScheduler;
 pub use modrinth::*;
 pub use reconstruct::reconstruct_config;
