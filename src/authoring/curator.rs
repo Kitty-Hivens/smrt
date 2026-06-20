@@ -45,6 +45,11 @@ pub struct McModInfo {
     pub url: String,
     #[serde(default)]
     pub dependencies: Vec<String>,
+    /// 1.12-era Forge spells the author list `authorList`. Harvest reads it as a
+    /// local, network-free author source (falling back to Modrinth only when the
+    /// jar carries none).
+    #[serde(default, rename = "authorList")]
+    pub authors: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

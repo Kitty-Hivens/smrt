@@ -8,7 +8,10 @@
 
 use super::ApiError;
 use crate::authoring::harvest::{self, HarvestReport};
-use crate::registry::model::{EligibleArtifact, ModUse, OrphanJar, RegistryStats, VersionRow};
+use crate::registry::model::{
+    BuildModRow, BuildSummary, EligibleArtifact, ModSummary, ModUse, OrphanJar, RegistryStats,
+    VersionRow,
+};
 use crate::registry::queries;
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
@@ -24,6 +27,17 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/admin/registry/stats", get(get_stats))
         .route("/v1/admin/registry/orphans", get(get_orphans))
         .route("/v1/admin/registry/eligible", get(get_eligible))
+        // registry browser: mods (faceted list), versions by surrogate id, builds
+        .route("/v1/admin/registry/mods", get(get_mods))
+        .route(
+            "/v1/admin/registry/mod-versions/:mod_id",
+            get(get_versions_by_id),
+        )
+        .route("/v1/admin/registry/builds", get(get_builds))
+        .route(
+            "/v1/admin/registry/builds/:pack_id/:pack_version",
+            get(get_build_mods),
+        )
         .route(
             "/v1/admin/registry/mods/:alias_source/:external_key",
             get(get_mod_versions),
@@ -71,6 +85,20 @@ where
     Ok(res?)
 }
 
+/// The sha1s the mirror actually holds in its local cache. The registry indexes
+/// manifest-only (e.g. Modrinth-sourced) artifacts too, so "in the registry"
+/// does not mean "on disk" -- the panel needs this to pick a `smrt_cache` vs a
+/// `modrinth` source per artifact.
+async fn cache_shas(state: &AppState) -> Result<std::collections::HashSet<String>, ApiError> {
+    let inv = state.storage.list_cache_inventory().await?;
+    Ok(inv.into_iter().map(|e| e.sha1).collect())
+}
+
+/// Force an immediate harvest and return the report. Runs the harvest directly
+/// (not via the background scheduler) so the operator gets the counts back
+/// synchronously. Overlap with a concurrent auto-harvest is safe: the writes are
+/// idempotent and serialized by the registry's connection mutex, so the two just
+/// converge on the same state.
 async fn post_harvest(State(state): State<AppState>) -> Result<Json<HarvestReport>, ApiError> {
     let report =
         harvest::run_harvest(&state.storage, &state.modrinth, state.registry.clone()).await?;
@@ -99,16 +127,80 @@ async fn get_eligible(
     ))
 }
 
+#[derive(Deserialize)]
+struct ModsQuery {
+    #[serde(default)]
+    q: Option<String>,
+    #[serde(default)]
+    loader: Option<String>,
+    #[serde(default)]
+    mc: Option<String>,
+}
+
+async fn get_mods(
+    State(state): State<AppState>,
+    Query(q): Query<ModsQuery>,
+) -> Result<Json<Vec<ModSummary>>, ApiError> {
+    // empty query params arrive as Some("") -- treat blank as "no filter"
+    let blank = |s: &Option<String>| {
+        s.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let (q_, loader_, mc_) = (blank(&q.q), blank(&q.loader), blank(&q.mc));
+    Ok(Json(
+        run_query(&state, move |c| {
+            queries::list_mods(c, q_.as_deref(), loader_.as_deref(), mc_.as_deref())
+        })
+        .await?,
+    ))
+}
+
+async fn get_versions_by_id(
+    State(state): State<AppState>,
+    Path(mod_id): Path<i64>,
+) -> Result<Json<Vec<VersionRow>>, ApiError> {
+    let mut rows = run_query(&state, move |c| queries::versions_of_mod_by_id(c, mod_id)).await?;
+    let cached = cache_shas(&state).await?;
+    for r in &mut rows {
+        r.cached = cached.contains(&r.sha1);
+    }
+    Ok(Json(rows))
+}
+
+async fn get_builds(State(state): State<AppState>) -> Result<Json<Vec<BuildSummary>>, ApiError> {
+    Ok(Json(run_query(&state, queries::list_builds).await?))
+}
+
+async fn get_build_mods(
+    State(state): State<AppState>,
+    Path((pack_id, pack_version)): Path<(String, String)>,
+) -> Result<Json<Vec<BuildModRow>>, ApiError> {
+    let mut rows = run_query(&state, move |c| {
+        queries::build_mods(c, &pack_id, &pack_version)
+    })
+    .await?;
+    let cached = cache_shas(&state).await?;
+    for r in &mut rows {
+        r.cached = cached.contains(&r.sha1);
+    }
+    Ok(Json(rows))
+}
+
 async fn get_mod_versions(
     State(state): State<AppState>,
     Path((alias_source, external_key)): Path<(String, String)>,
 ) -> Result<Json<Vec<VersionRow>>, ApiError> {
-    Ok(Json(
-        run_query(&state, move |c| {
-            queries::versions_of_mod(c, &alias_source, &external_key)
-        })
-        .await?,
-    ))
+    let mut rows = run_query(&state, move |c| {
+        queries::versions_of_mod(c, &alias_source, &external_key)
+    })
+    .await?;
+    let cached = cache_shas(&state).await?;
+    for r in &mut rows {
+        r.cached = cached.contains(&r.sha1);
+    }
+    Ok(Json(rows))
 }
 
 async fn get_mod_uses(

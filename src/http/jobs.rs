@@ -59,6 +59,7 @@ async fn build_pack(
         state.config.clone(),
         p.dry_run,
         pack_version,
+        Some(state.harvest.clone()),
     );
     Json(JobRef {
         job_id: job.id.clone(),

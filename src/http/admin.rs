@@ -87,6 +87,7 @@ async fn put_cache_jar(
         return Err(ApiError::BadRequest("prefix does not match sha1".into()));
     }
     state.storage.save_cache_jar(sha1, &body).await?;
+    state.harvest.poke(); // new artifact -> refresh the registry
     Ok((
         StatusCode::CREATED,
         Json(PutCacheResponse {
@@ -108,6 +109,7 @@ async fn delete_cache_jar(
         return Err(ApiError::BadRequest("prefix does not match sha1".into()));
     }
     state.storage.delete_cache_jar(sha1).await?;
+    state.harvest.poke(); // artifact gone -> refresh the registry
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -365,6 +367,7 @@ async fn ingest_github(
     hasher.update(&bytes);
     let sha1 = hex::encode(hasher.finalize());
     state.storage.save_cache_jar(&sha1, &bytes).await?;
+    state.harvest.poke(); // new artifact -> refresh the registry
     Ok((
         StatusCode::CREATED,
         Json(PutCacheResponse {

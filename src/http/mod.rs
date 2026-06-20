@@ -26,3 +26,27 @@ pub fn router(state: AppState) -> Router {
         .merge(jobs::router(state.clone()))
         .merge(panel::router())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use std::str::FromStr;
+
+    // Assembling the full router merges every sub-router into one matchit tree;
+    // an overlapping route would panic here, which is exactly the startup crash
+    // we want a test to catch rather than a deploy.
+    #[test]
+    fn full_router_assembles_without_route_conflicts() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config {
+            bind_addr: std::net::SocketAddr::from_str("127.0.0.1:0").unwrap(),
+            storage_dir: dir.path().to_path_buf(),
+            admin_token: None,
+            cookie_secure: false,
+            mirror_base: "http://localhost".into(),
+        };
+        let state = AppState::new(config).unwrap();
+        let _ = router(state);
+    }
+}

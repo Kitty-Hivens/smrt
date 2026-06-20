@@ -4,7 +4,8 @@
 //! in-memory log + status; `Notify` wakes SSE tailers on each new line.
 
 use crate::authoring::{
-    self, BootstrapArgs, Modrinth, apply_curator, build_manifest, make_pack_summary, parse_curator,
+    self, BootstrapArgs, HarvestScheduler, Modrinth, apply_curator, build_manifest,
+    make_pack_summary, parse_curator,
 };
 use crate::config::Config;
 use crate::domain::{PackManifest, PackSummary};
@@ -157,6 +158,7 @@ impl JobRegistry {
         config: Arc<Config>,
         dry_run: bool,
         pack_version: Option<String>,
+        harvest: Option<Arc<HarvestScheduler>>,
     ) -> Arc<Job> {
         let job = self.create(if dry_run { "preview" } else { "build" }, pack_id);
         let handle = job.clone();
@@ -169,7 +171,14 @@ impl JobRegistry {
                 None => None,
             };
             match run_build(&handle, &storage, &config, dry_run, pack_version).await {
-                Ok(()) => handle.finish(Status::Done),
+                Ok(()) => {
+                    handle.finish(Status::Done);
+                    // a published build added a build + its mods to harvest -- a
+                    // dry run published nothing, so it needn't refresh
+                    if !dry_run && let Some(h) = harvest {
+                        h.poke();
+                    }
+                }
                 Err(e) => {
                     handle.line(format!("failed: {e}"));
                     handle.finish(Status::Failed);
@@ -406,7 +415,7 @@ mod tests {
         let config = Arc::new(test_config(tmp.path().to_path_buf()));
 
         let registry = JobRegistry::default();
-        let job = registry.spawn_build("Test".into(), storage.clone(), config, true, None);
+        let job = registry.spawn_build("Test".into(), storage.clone(), config, true, None, None);
         assert_eq!(job.kind, "preview");
         assert_eq!(await_finish(&job).await, Status::Done);
 
@@ -450,7 +459,7 @@ mod tests {
         let config = Arc::new(test_config(tmp.path().to_path_buf()));
 
         let registry = JobRegistry::default();
-        let job = registry.spawn_build("Test".into(), storage.clone(), config, false, None);
+        let job = registry.spawn_build("Test".into(), storage.clone(), config, false, None, None);
         assert_eq!(job.kind, "build");
         assert_eq!(await_finish(&job).await, Status::Done);
 

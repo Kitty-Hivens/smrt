@@ -57,6 +57,33 @@ pub fn upsert_mod_by_alias(conn: &Connection, aliases: &[(&str, &str)], now: &st
     Ok(mod_id)
 }
 
+/// Fill a mod's human metadata (display name, Modrinth slug, author) from a
+/// harvest. `COALESCE(new, existing)` per column: a jar that carries a value
+/// fills a gap, a jar that lacks one never erases a value an earlier jar set.
+/// Skipped for precious (`curator`/`authored`) rows. Idempotent.
+pub fn set_mod_meta(
+    conn: &Connection,
+    mod_id: i64,
+    name: Option<&str>,
+    slug: Option<&str>,
+    author: Option<&str>,
+    now: &str,
+) -> Result<()> {
+    if name.is_none() && slug.is_none() && author.is_none() {
+        return Ok(());
+    }
+    conn.execute(
+        "UPDATE mods SET
+           canonical_name = COALESCE(?2, canonical_name),
+           slug           = COALESCE(?3, slug),
+           author         = COALESCE(?4, author),
+           updated_at     = ?5
+         WHERE id = ?1 AND source NOT IN ('curator', 'authored')",
+        params![mod_id, name, slug, author, now],
+    )?;
+    Ok(())
+}
+
 /// Upsert an artifact keyed by its content hash, and (re)record its
 /// compatibility `targets` (loader ids, or `any` when the set is empty).
 /// Returns the `mod_version` id. A precious (`curator`/`authored`) row with this
@@ -130,6 +157,28 @@ fn set_mod_version_targets(
             params![mod_version_id, t],
         )?;
     }
+    Ok(())
+}
+
+/// Record the Modrinth version id for an artifact (by sha1), so the panel can
+/// re-add a build's Modrinth-sourced mod as a real Modrinth source rather than a
+/// local-cache one. `COALESCE` so a later harvest that lost the id never erases
+/// it; skipped for precious rows. No-op when there is no id.
+pub fn set_mod_version_modrinth(
+    conn: &Connection,
+    sha1: &str,
+    version_id: Option<&str>,
+    now: &str,
+) -> Result<()> {
+    let Some(vid) = version_id else {
+        return Ok(());
+    };
+    conn.execute(
+        "UPDATE mod_version
+           SET modrinth_version_id = COALESCE(?2, modrinth_version_id), updated_at = ?3
+         WHERE sha1 = ?1 AND source NOT IN ('curator', 'authored')",
+        params![sha1, vid, now],
+    )?;
     Ok(())
 }
 
