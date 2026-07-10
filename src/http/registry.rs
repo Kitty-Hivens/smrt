@@ -12,9 +12,9 @@ use crate::authoring::reconstruct_config;
 use crate::domain::DeclaredAsset;
 use crate::registry::model::{
     BuildModRow, BuildSummary, EligibleArtifact, ModSummary, ModUse, OrphanJar, RegistryStats,
-    VersionRow,
+    UnassignedJar, VersionRow,
 };
-use crate::registry::queries;
+use crate::registry::{authored, queries};
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -59,6 +59,17 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/admin/registry/conflicts", post(post_conflict))
         .route("/v1/admin/registry/backup", post(post_backup))
+        // authored identity door: jars needing identity, and setting it
+        .route("/v1/admin/registry/unassigned", get(get_unassigned))
+        .route(
+            "/v1/admin/registry/files/:sha1/identity",
+            put(put_file_identity),
+        )
+        .route("/v1/admin/registry/mod-meta/:mod_id", put(put_mod_rename))
+        .route(
+            "/v1/admin/registry/releases/:release_id",
+            put(put_release_edit),
+        )
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
         .with_state(state)
 }
@@ -302,4 +313,172 @@ async fn post_backup(State(state): State<AppState>) -> Result<Json<BackupResult>
     Ok(Json(BackupResult {
         path: dest.to_string_lossy().into_owned(),
     }))
+}
+
+// ── authored identity door (Phase B) ─────────────────────────────────────────
+
+// Jars in the cache with no registry identity yet: the live cache inventory minus
+// every sha1 the registry has a row for. These are what harvest could not
+// identify (aliasless jars it drops) -- the "needs identity" bucket.
+async fn get_unassigned(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<UnassignedJar>>, ApiError> {
+    let inv = state.storage.list_cache_inventory().await?;
+    let known = run_query(&state, queries::all_mod_version_shas).await?;
+    let out = inv
+        .into_iter()
+        .filter(|e| !known.contains(&e.sha1))
+        .map(|e| UnassignedJar {
+            sha1: e.sha1,
+            size_bytes: e.size_bytes as i64,
+        })
+        .collect();
+    Ok(Json(out))
+}
+
+#[derive(Deserialize)]
+struct IdentityBody {
+    /// Assign to an existing mod (its surrogate id) ...
+    #[serde(default)]
+    mod_id: Option<i64>,
+    /// ... or create a new authored mod with this display name. Exactly one of
+    /// `mod_id` / `mod_name` is required.
+    #[serde(default)]
+    mod_name: Option<String>,
+    version_number: String,
+    channel: String,
+    #[serde(default)]
+    loaders: Vec<String>,
+    #[serde(default)]
+    mc_versions: Vec<String>,
+    /// Optional display filename for a loose cache jar (it carries none itself).
+    #[serde(default)]
+    filename: Option<String>,
+}
+
+#[derive(Serialize)]
+struct AuthoredFile {
+    mod_version_id: i64,
+}
+
+// Set a cached jar's identity (mod + release + loader/mc) as an operator
+// decision. The sha1 must be a jar the mirror holds -- its size is read from the
+// cache, and the write is `source='authored'` so a re-harvest never reverts it.
+async fn put_file_identity(
+    State(state): State<AppState>,
+    Path(sha1): Path<String>,
+    Json(body): Json<IdentityBody>,
+) -> Result<Json<AuthoredFile>, ApiError> {
+    if sha1.len() != 40 || !sha1.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ApiError::BadRequest("sha1 must be 40 hex chars".into()));
+    }
+    // Reject operator input up front so a bad body is a 400, not a 500 from the
+    // writer's backstop bail. The writer still validates (defence in depth).
+    if body.version_number.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "version_number must not be empty".into(),
+        ));
+    }
+    if !authored::CHANNELS.contains(&body.channel.as_str()) {
+        return Err(ApiError::BadRequest(format!(
+            "channel must be one of {:?}",
+            authored::CHANNELS
+        )));
+    }
+    let has_mod = body.mod_id.is_some()
+        || body
+            .mod_name
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty());
+    if !has_mod {
+        return Err(ApiError::BadRequest(
+            "provide mod_id (existing mod) or a non-empty mod_name (new mod)".into(),
+        ));
+    }
+    let inv = state.storage.list_cache_inventory().await?;
+    let size = inv
+        .iter()
+        .find(|e| e.sha1 == sha1)
+        .map(|e| e.size_bytes as i64)
+        .ok_or_else(|| {
+            ApiError::BadRequest(
+                "sha1 is not in the mirror cache; only cached jars can be authored".into(),
+            )
+        })?;
+
+    let mv_id = run_write(&state, move |reg| {
+        let mod_ref = match (body.mod_id, body.mod_name.as_deref().map(str::trim)) {
+            (Some(id), _) => authored::ModRef::Existing(id),
+            (None, Some(name)) if !name.is_empty() => authored::ModRef::New { name },
+            _ => anyhow::bail!("provide mod_id (existing mod) or a non-empty mod_name (new mod)"),
+        };
+        let fid = authored::FileIdentity {
+            sha1: &sha1,
+            size_bytes: size,
+            filename: body.filename.as_deref(),
+            mod_ref,
+            version_number: body.version_number.trim(),
+            channel: &body.channel,
+            loaders: &body.loaders,
+            mc_versions: &body.mc_versions,
+        };
+        reg.author_file(&fid)
+    })
+    .await?;
+    Ok(Json(AuthoredFile {
+        mod_version_id: mv_id,
+    }))
+}
+
+#[derive(Deserialize)]
+struct RenameModBody {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    slug: Option<String>,
+}
+
+async fn put_mod_rename(
+    State(state): State<AppState>,
+    Path(mod_id): Path<i64>,
+    Json(b): Json<RenameModBody>,
+) -> Result<StatusCode, ApiError> {
+    run_write(&state, move |reg| {
+        reg.rename_mod(mod_id, b.name.as_deref(), b.slug.as_deref())
+    })
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct EditReleaseBody {
+    #[serde(default)]
+    version_number: Option<String>,
+    #[serde(default)]
+    channel: Option<String>,
+}
+
+async fn put_release_edit(
+    State(state): State<AppState>,
+    Path(release_id): Path<i64>,
+    Json(b): Json<EditReleaseBody>,
+) -> Result<StatusCode, ApiError> {
+    if let Some(ch) = b.channel.as_deref()
+        && !authored::CHANNELS.contains(&ch)
+    {
+        return Err(ApiError::BadRequest(format!(
+            "channel must be one of {:?}",
+            authored::CHANNELS
+        )));
+    }
+    run_write(&state, move |reg| {
+        reg.edit_release(
+            release_id,
+            b.version_number.as_deref(),
+            b.channel.as_deref(),
+        )
+    })
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }

@@ -95,6 +95,30 @@ impl Registry {
         })
     }
 
+    /// Assign a cached jar its mod + release + facets (the authoring door).
+    /// Everything lands as `source='authored'`. Returns the `mod_version` id.
+    pub fn author_file(&self, id: &authored::FileIdentity<'_>) -> Result<i64> {
+        let now = upsert::now_rfc3339();
+        self.with_txn(|c| authored::author_file_identity(c, id, &now))
+    }
+
+    /// Rename a mod (authored).
+    pub fn rename_mod(&self, mod_id: i64, name: Option<&str>, slug: Option<&str>) -> Result<()> {
+        let now = upsert::now_rfc3339();
+        self.with_txn(|c| authored::rename_mod(c, mod_id, name, slug, &now))
+    }
+
+    /// Edit a release's version number and/or channel (authored).
+    pub fn edit_release(
+        &self,
+        release_id: i64,
+        version_number: Option<&str>,
+        channel: Option<&str>,
+    ) -> Result<()> {
+        let now = upsert::now_rfc3339();
+        self.with_txn(|c| authored::edit_release(c, release_id, version_number, channel, &now))
+    }
+
     /// Snapshot the whole DB to `dest` via `VACUUM INTO` (a single-file backup
     /// of the precious authored rows). Blocking.
     pub fn backup_into(&self, dest: &Path) -> Result<()> {

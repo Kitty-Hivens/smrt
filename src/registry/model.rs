@@ -174,6 +174,17 @@ pub struct EligibleArtifact {
     pub specificity: i64,
 }
 
+/// A jar on disk with no registry identity yet (harvest could not derive a
+/// modid/Modrinth id). The authoring UI lists these so the operator can assign
+/// each a mod + release + facets instead of it vanishing into the cache.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct UnassignedJar {
+    pub sha1: String,
+    #[ts(type = "number")]
+    pub size_bytes: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct RegistryStats {
     pub mods: i64,

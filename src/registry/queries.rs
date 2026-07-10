@@ -4,7 +4,7 @@
 use super::model::*;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Decode a `mod_version.mc_versions` cell (a JSON array of strings, or NULL)
 /// into a plain vec. Tolerant: a NULL or unparseable cell yields an empty vec.
@@ -391,6 +391,18 @@ pub fn eligible_for_loader(conn: &Connection, loader: &str) -> Result<Vec<Eligib
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
+}
+
+/// Every sha1 the registry has a `mod_version` row for. The handler diffs this
+/// against the live cache inventory to surface jars on disk that carry no
+/// identity yet -- the "needs identity" bucket the authoring UI works from
+/// (harvest drops an aliasless jar, so it never gets a row).
+pub fn all_mod_version_shas(conn: &Connection) -> Result<HashSet<String>> {
+    let mut stmt = conn.prepare("SELECT sha1 FROM mod_version")?;
+    let out = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<HashSet<String>>>()?;
+    Ok(out)
 }
 
 pub fn stats(conn: &Connection) -> Result<RegistryStats> {
