@@ -173,21 +173,16 @@ pub fn upsert_mod_version(
     Ok(id)
 }
 
-/// Re-point a harvested file to the release it belongs to and record its content
-/// signature. A sibling file of the same mod with the same signature wins: its
-/// release is reused, so a "same jar, bumped version metadata" dup (the
-/// SmartyCraft case) joins the real release instead of fragmenting the mod on the
-/// faked version. Otherwise the release is found/created by `(version, channel)`.
-/// No-op for a precious (authored) file, whose grouping is operator-set. Call
-/// after [`upsert_mod_version`] (which sets a provisional `unknown` release);
-/// harvest prunes any release this leaves empty.
+/// Re-point a harvested file to the release for its `(version, channel)`,
+/// creating it if absent. No-op for a precious (authored) file, whose grouping is
+/// operator-set. Call after [`upsert_mod_version`] (which sets a provisional
+/// `unknown` release); harvest prunes any release this leaves empty.
 pub fn set_harvested_release(
     conn: &Connection,
     sha1: &str,
     mod_id: i64,
     version: &str,
     channel: &str,
-    content_sig: Option<&str>,
     now: &str,
 ) -> Result<()> {
     // absent row or a precious one -> leave it alone
@@ -201,26 +196,10 @@ pub fn set_harvested_release(
     if precious != Some(false) {
         return Ok(());
     }
-
-    let by_sig = match content_sig.filter(|s| !s.is_empty()) {
-        Some(sig) => conn
-            .query_row(
-                "SELECT release_id FROM mod_version
-                 WHERE mod_id = ?1 AND content_sig = ?2 AND release_id IS NOT NULL AND sha1 <> ?3
-                 LIMIT 1",
-                params![mod_id, sig, sha1],
-                |r| r.get::<_, i64>(0),
-            )
-            .optional()?,
-        None => None,
-    };
-    let release_id = match by_sig {
-        Some(rid) => rid,
-        None => upsert_release(conn, mod_id, version, channel, now)?,
-    };
+    let release_id = upsert_release(conn, mod_id, version, channel, now)?;
     conn.execute(
-        "UPDATE mod_version SET release_id = ?2, content_sig = ?3, updated_at = ?4 WHERE sha1 = ?1",
-        params![sha1, release_id, content_sig, now],
+        "UPDATE mod_version SET release_id = ?2, updated_at = ?3 WHERE sha1 = ?1",
+        params![sha1, release_id, now],
     )?;
     Ok(())
 }

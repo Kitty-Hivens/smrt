@@ -305,6 +305,11 @@ export const en = {
   'mm.by': 'by {author}',
   'mm.overviewMods': 'Mods',
   'mm.overviewModsSub': '{n} need identity',
+  'mm.verified': 'Modrinth',
+  'mm.selfhost': 'self-hosted',
+  'mm.repack': 'repack?',
+  'mm.repackHint':
+    'self-hosted jar under a mod that also has a Modrinth-verified file -- likely a repackage',
 
   'id.title': 'Assign identity',
   'id.titleEdit': 'Edit identity',

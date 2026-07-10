@@ -41,9 +41,6 @@ pub struct JarSeed {
     // Release channel (release/beta/dev/unknown): from Modrinth version_type when
     // known, else unknown -- a jar carries no reliable channel of its own.
     pub channel: Option<String>,
-    // Metadata-agnostic content signature (see curator::jar_facts): groups a mod's
-    // files that are the same real build under different declared versions.
-    pub content_sig: Option<String>,
 }
 
 pub struct BuildModSeed {
@@ -171,20 +168,9 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         )?;
         // after the row exists: record its Modrinth version id (by sha1)
         upsert::set_mod_version_modrinth(conn, &jar.sha1, jar.modrinth_version_id.as_deref(), now)?;
-        // group the file under its real release: the (version, channel) release,
-        // or -- for a content-signature match -- an existing sibling's release, so
-        // a SmartyCraft faked-version dup joins the real build instead of forking
-        // the mod into a bogus version.
+        // group the file under the release for its (version, channel)
         let channel = jar.channel.as_deref().unwrap_or("unknown");
-        upsert::set_harvested_release(
-            conn,
-            &jar.sha1,
-            mod_id,
-            version,
-            channel,
-            jar.content_sig.as_deref(),
-            now,
-        )?;
+        upsert::set_harvested_release(conn, &jar.sha1, mod_id, version, channel, now)?;
         for dep in &jar.requires {
             upsert::upsert_relation(
                 conn,
@@ -463,7 +449,6 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
                 slug,
                 modrinth_version_id: mrv.map(|v| v.id.clone()),
                 channel: mrv.and_then(|v| channel_from_version_type(&v.version_type)),
-                content_sig: facts.and_then(|f| f.content_sig.clone()),
                 sha1: sha,
             }
         })
@@ -498,7 +483,6 @@ mod tests {
                     sha1: "sha_a".into(),
                     size_bytes: 100,
                     channel: None,
-                    content_sig: None,
                     modid: Some("appleskin".into()),
                     version: Some("2.5".into()),
                     project_id: Some("EsAfb37o".into()),
@@ -515,7 +499,6 @@ mod tests {
                     sha1: "sha_b".into(),
                     size_bytes: 200,
                     channel: None,
-                    content_sig: None,
                     modid: Some("jei".into()),
                     version: Some("4.16".into()),
                     project_id: None,
@@ -532,7 +515,6 @@ mod tests {
                     sha1: "sha_noid".into(),
                     size_bytes: 50,
                     channel: None,
-                    content_sig: None,
                     modid: None,
                     version: None,
                     project_id: None,
@@ -681,7 +663,6 @@ mod tests {
             sha1: sha.into(),
             size_bytes: 1,
             channel: None,
-            content_sig: None,
             modid: Some(modid.into()),
             version: version.map(Into::into),
             project_id: None,
@@ -804,56 +785,6 @@ mod tests {
                 vec!["fabric".to_string(), "forge".to_string()],
                 "authored targets survive re-harvest"
             );
-            Ok(())
-        })
-        .unwrap();
-    }
-
-    // The SmartyCraft case: two jars of one mod with the SAME real content
-    // (same content_sig) but different declared versions (1.3.5 vs a faked
-    // 1.3.6). Harvest groups them into ONE release instead of forking the mod.
-    #[test]
-    fn write_scan_groups_faked_version_dups_by_content_sig() {
-        let r = Registry::open_in_memory().unwrap();
-        let mut real = jar("sha_real", "quark", Some("1.3.5"), vec!["forge".into()]);
-        real.content_sig = Some("SIG".into());
-        let mut faked = jar("sha_faked", "quark", Some("1.3.6"), vec!["forge".into()]);
-        faked.content_sig = Some("SIG".into());
-        let scan = ScanData {
-            jars: vec![real, faked],
-            packs: vec![],
-        };
-        r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
-        r.with_conn(|c| {
-            let mid = queries::mod_id_for_alias(c, "modid", "quark")?.unwrap();
-            let rels = queries::releases_of_mod_by_id(c, mid)?;
-            assert_eq!(rels.len(), 1, "faked 1.3.6 joins the real release");
-            assert_eq!(rels[0].files.len(), 2, "both jars under one release");
-            assert_eq!(
-                rels[0].version_number, "1.3.5",
-                "first-seen real label kept"
-            );
-            Ok(())
-        })
-        .unwrap();
-    }
-
-    // A genuine update (different content_sig) still forks into its own release.
-    #[test]
-    fn write_scan_keeps_distinct_content_as_separate_releases() {
-        let r = Registry::open_in_memory().unwrap();
-        let mut a = jar("sha_v1", "mymod", Some("1.0"), vec!["forge".into()]);
-        a.content_sig = Some("SIG_A".into());
-        let mut b = jar("sha_v2", "mymod", Some("2.0"), vec!["forge".into()]);
-        b.content_sig = Some("SIG_B".into());
-        let scan = ScanData {
-            jars: vec![a, b],
-            packs: vec![],
-        };
-        r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
-        r.with_conn(|c| {
-            let mid = queries::mod_id_for_alias(c, "modid", "mymod")?.unwrap();
-            assert_eq!(queries::releases_of_mod_by_id(c, mid)?.len(), 2);
             Ok(())
         })
         .unwrap();

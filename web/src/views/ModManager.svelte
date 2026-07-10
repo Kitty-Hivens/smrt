@@ -19,6 +19,12 @@
   let releases = $state<ReleaseRow[]>([]);
   let relLoading = $state(false);
 
+  // a file whose sha1 Modrinth confirmed is authentic; a self-hosted file under a
+  // mod that ALSO has a Modrinth-verified one is a likely repackage (the SC case)
+  const modHasVerified = $derived(
+    releases.some((r) => r.files.some((f) => f.modrinth_version_id)),
+  );
+
   let idTarget = $state<IdentityTarget | null>(null);
 
   let uploading = $state(false);
@@ -272,6 +278,13 @@
                         · {fmtBytes(f.size_bytes)}
                       </div>
                     </div>
+                    {#if f.modrinth_version_id}
+                      <span class="chip verified" title="Modrinth-verified">{t('mm.verified')}</span>
+                    {:else if modHasVerified}
+                      <span class="chip warn" title={t('mm.repackHint')}>{t('mm.repack')}</span>
+                    {:else}
+                      <span class="chip">{t('mm.selfhost')}</span>
+                    {/if}
                     <span class="chip src-{f.source}">{f.source}</span>
                     <span class="chip" class:warn={!f.cached}>
                       {f.cached ? t('mm.cached') : t('mm.uncached')}
@@ -459,6 +472,10 @@
   .chip.src-authored {
     color: var(--ok);
     border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  }
+  .chip.verified {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
   }
   .link {
     background: transparent;

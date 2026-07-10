@@ -304,6 +304,11 @@ export const ru: Dict = {
   'mm.by': 'от {author}',
   'mm.overviewMods': 'Моды',
   'mm.overviewModsSub': '{n} без identity',
+  'mm.verified': 'Modrinth',
+  'mm.selfhost': 'самохост',
+  'mm.repack': 'репак?',
+  'mm.repackHint':
+    'самохостный jar под модом, у которого есть и Modrinth-версия -- вероятно, репак',
 
   'id.title': 'Назначить identity',
   'id.titleEdit': 'Править identity',
