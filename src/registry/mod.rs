@@ -212,6 +212,32 @@ mod tests {
     }
 
     #[test]
+    fn releases_group_a_mods_files() {
+        let r = fixture();
+        r.with_conn(|c| {
+            // appleskin: one backfilled release (2.5.1) holding its one file
+            let apple = queries::mod_id_for_alias(c, "modid", "appleskin")?.unwrap();
+            let rels = queries::releases_of_mod_by_id(c, apple)?;
+            assert_eq!(rels.len(), 1);
+            assert_eq!(rels[0].version_number, "2.5.1");
+            assert_eq!(rels[0].channel, "unknown");
+            assert_eq!(rels[0].files.len(), 1);
+            assert_eq!(rels[0].files[0].sha1, "sha_apple");
+            assert_eq!(rels[0].files[0].targets, vec!["forge".to_string()]);
+            // the multi-loader jar: one release, one file carrying both targets
+            let multi = queries::mod_id_for_alias(c, "modid", "multimod")?.unwrap();
+            let mrels = queries::releases_of_mod_by_id(c, multi)?;
+            assert_eq!(mrels.len(), 1);
+            assert_eq!(mrels[0].files.len(), 1);
+            let mut t = mrels[0].files[0].targets.clone();
+            t.sort();
+            assert_eq!(t, vec!["fabric".to_string(), "forge".to_string()]);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn q4_family_reachability_is_directional() {
         let r = fixture();
         r.with_conn(|c| {

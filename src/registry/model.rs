@@ -106,6 +106,20 @@ pub struct VersionRow {
     pub modrinth_version_id: Option<String>,
 }
 
+/// One release (version node) of a mod for the management view: its version
+/// number + channel, the provenance, and the files (artifacts) grouped under it.
+/// Files carry the loader/mc facets; the release carries version + channel.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct ReleaseRow {
+    #[ts(type = "number")]
+    pub release_id: i64,
+    pub version_number: String,
+    pub channel: String,
+    pub source: String,
+    pub files: Vec<VersionRow>,
+}
+
 /// One mod in the registry browser: identity, the human metadata an enriching
 /// harvest fills in, and the facets aggregated across all its artifacts.
 #[derive(Debug, Clone, Serialize, TS)]

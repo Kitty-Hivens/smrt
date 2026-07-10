@@ -17,11 +17,26 @@ import type {
   PackConfig,
   PackListing,
   PackManifest,
+  ReleaseRow,
   ServerEntry,
   ServerListing,
+  UnassignedJar,
   ValidateReport,
   VersionRow,
 } from './types';
+
+// The authored identity an operator sets for one cached jar: which mod, which
+// release (version_number + channel), and the file's loader/mc facets. Exactly
+// one of mod_id / mod_name is required (existing vs new mod).
+export interface IdentityInput {
+  mod_id?: number;
+  mod_name?: string;
+  version_number: string;
+  channel: string;
+  loaders: string[];
+  mc_versions: string[];
+  filename?: string;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -281,6 +296,18 @@ export const api = {
   },
   registryModVersions: (modId: number) =>
     getJson<VersionRow[]>(`/v1/admin/registry/mod-versions/${modId}`),
+  // a mod's files grouped by release (version node) for the management view
+  modReleases: (modId: number) =>
+    getJson<ReleaseRow[]>(`/v1/admin/registry/mod-releases/${modId}`),
+  // jars on disk with no identity yet -- the "needs identity" bucket
+  unassigned: () => getJson<UnassignedJar[]>('/v1/admin/registry/unassigned'),
+  // set a cached jar's mod + release + facets (authored, survives re-harvest)
+  authorFileIdentity: (sha1: string, body: IdentityInput) =>
+    send('PUT', `/v1/admin/registry/files/${sha1}/identity`, body),
+  renameMod: (modId: number, body: { name?: string; slug?: string }) =>
+    send('PUT', `/v1/admin/registry/mod-meta/${modId}`, body),
+  editRelease: (releaseId: number, body: { version_number?: string; channel?: string }) =>
+    send('PUT', `/v1/admin/registry/releases/${releaseId}`, body),
   registryBuilds: () => getJson<BuildSummary[]>('/v1/admin/registry/builds'),
   registryBuildMods: (packId: string, packVersion: string) =>
     getJson<BuildModRow[]>(

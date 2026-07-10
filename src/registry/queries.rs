@@ -158,6 +158,72 @@ pub fn versions_of_mod_by_id(conn: &Connection, mod_id: i64) -> Result<Vec<Versi
     Ok(out)
 }
 
+/// The mod's files grouped under their release (version node) for the management
+/// view: Mod -> Release (version_number + channel) -> Files (loader/mc/sha1).
+/// Every file has a release_id post-migration, so an inner join is complete; a
+/// file whose release was removed (release_id SET NULL) would be omitted, which
+/// is acceptable until a delete-release path exists.
+pub fn releases_of_mod_by_id(conn: &Connection, mod_id: i64) -> Result<Vec<ReleaseRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT r.id, r.version_number, r.channel, r.source,
+                mv.id, mv.version, mv.sha1, mv.size_bytes, mv.source, mv.filename,
+                mv.mc_versions, mv.modrinth_version_id,
+                (SELECT external_key FROM mod_alias WHERE mod_id = mv.mod_id AND source = 'modrinth' LIMIT 1) AS mr_project,
+                mvt.target
+         FROM mod_version mv
+         JOIN mod_release r ON r.id = mv.release_id
+         LEFT JOIN mod_version_target mvt ON mvt.mod_version_id = mv.id
+         WHERE mv.mod_id = ?1
+         ORDER BY r.channel, r.version_number, r.id, mv.id, mvt.target",
+    )?;
+    // rows are ordered so a release's files, and a file's targets, are contiguous
+    let mut out: Vec<ReleaseRow> = Vec::new();
+    let mut cur_rel: Option<i64> = None;
+    let mut cur_file: Option<i64> = None;
+    let mut rows = stmt.query(params![mod_id])?;
+    while let Some(row) = rows.next()? {
+        let rid: i64 = row.get(0)?;
+        let fid: i64 = row.get(4)?;
+        let target: Option<String> = row.get(13)?;
+        if cur_rel != Some(rid) {
+            cur_rel = Some(rid);
+            cur_file = None;
+            out.push(ReleaseRow {
+                release_id: rid,
+                version_number: row.get(1)?,
+                channel: row.get(2)?,
+                source: row.get(3)?,
+                files: Vec::new(),
+            });
+        }
+        if cur_file != Some(fid) {
+            cur_file = Some(fid);
+            out.last_mut().unwrap().files.push(VersionRow {
+                version: row.get(5)?,
+                targets: Vec::new(),
+                mc_versions: decode_mc(row.get(10)?),
+                sha1: row.get(6)?,
+                size_bytes: row.get(7)?,
+                filename: row.get(9)?,
+                source: row.get(8)?,
+                cached: false, // set by the handler against the live cache
+                modrinth_version_id: row.get(11)?,
+                modrinth_project_id: row.get(12)?,
+            });
+        }
+        if let Some(t) = target {
+            out.last_mut()
+                .unwrap()
+                .files
+                .last_mut()
+                .unwrap()
+                .targets
+                .push(t);
+        }
+    }
+    Ok(out)
+}
+
 /// Registry browser: mods matching an optional name query, narrowed to an
 /// optional loader (the loader itself or a loader-agnostic `any` artifact) and/or
 /// an optional Minecraft version. Each row carries the facets aggregated across

@@ -3,14 +3,10 @@
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
-  import type {
-    CacheUsageEntry,
-    PackSummary,
-    ServerEntry,
-  } from '../lib/types';
+  import type { ModSummary, PackSummary, ServerEntry, UnassignedJar } from '../lib/types';
   import ServerEditor from './ServerEditor.svelte';
   import PackEditor from './PackEditor.svelte';
-  import DropZone from './ui/DropZone.svelte';
+  import ModManager from './ModManager.svelte';
 
   // the active section comes from the shared route store; the shell rail drives it
 
@@ -21,7 +17,8 @@
 
   let packs = $state<PackSummary[]>([]);
   let servers = $state<ServerEntry[]>([]);
-  let cache = $state<CacheUsageEntry[]>([]);
+  let mods = $state<ModSummary[]>([]);
+  let unassigned = $state<UnassignedJar[]>([]);
   let removed = $state<string[]>([]);
   let authoring = $state<string[]>([]);
   let err = $state('');
@@ -31,16 +28,18 @@
     loading = true;
     err = '';
     try {
-      const [p, s, c, a, rm] = await Promise.all([
+      const [p, s, md, u, a, rm] = await Promise.all([
         api.packs(),
         api.servers(),
-        api.cacheUsage(),
+        api.registryMods(),
+        api.unassigned(),
         api.authoringPacks(),
         api.removed(),
       ]);
       packs = p.packs;
       servers = s.servers;
-      cache = c.entries;
+      mods = md;
+      unassigned = u;
       authoring = a.packs;
       removed = rm.removed;
     } catch (e) {
@@ -65,65 +64,6 @@
     }
   }
 
-  let uploading = $state(false);
-  let upMsg = $state('');
-
-  async function onDropJars(files: File[]) {
-    uploading = true;
-    upMsg = '';
-    let n = 0;
-    try {
-      for (const file of files) {
-        if (!file.name.toLowerCase().endsWith('.jar')) continue;
-        await api.uploadCacheJar(file);
-        n++;
-      }
-      upMsg = t('cache.uploaded', { count: n });
-    } catch (x) {
-      upMsg = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
-    } finally {
-      // refresh even on partial failure so the jars that did upload appear
-      await loadAll();
-      uploading = false;
-    }
-  }
-
-  async function delCacheJar(sha1: string) {
-    const name = nameOfCache(cache.find((e) => e.sha1 === sha1)) || `${sha1.slice(0, 12)}...`;
-    const ok = await dialogs.confirm(t('cache.deleteMsg', { name }), {
-      title: t('cache.deleteTitle'),
-      danger: true,
-    });
-    if (!ok) return;
-    try {
-      await api.deleteCacheJar(sha1);
-      await loadAll();
-    } catch (x) {
-      err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
-    }
-  }
-
-  const cacheBytes = $derived(cache.reduce((n, e) => n + e.size_bytes, 0));
-
-  // a content-addressed jar has no stored name; show what a pack named it
-  const nameOfCache = (e?: CacheUsageEntry) => e?.uses[0]?.filename ?? '';
-  const usedByCache = (e: CacheUsageEntry) => [...new Set(e.uses.map((u) => u.pack_id))];
-  let cacheQ = $state('');
-  let cacheOrphansOnly = $state(false);
-  const shownCache = $derived(
-    cache.filter((e) => {
-      if (cacheOrphansOnly && e.uses.length > 0) return false;
-      const needle = cacheQ.trim().toLowerCase();
-      if (!needle) return true;
-      return (
-        e.sha1.includes(needle) ||
-        nameOfCache(e).toLowerCase().includes(needle) ||
-        e.uses.some((u) => u.pack_id.toLowerCase().includes(needle))
-      );
-    }),
-  );
-  const shownBytes = $derived(shownCache.reduce((n, e) => n + e.size_bytes, 0));
-
   const authoringSet = $derived(new Set(authoring));
   const allPackIds = $derived(
     [...new Set([...packs.map((p) => p.pack_id), ...authoring])].sort(),
@@ -131,7 +71,6 @@
   const summaryFor = (id: string) => packs.find((p) => p.pack_id === id);
 
   // overview metrics
-  const orphanCount = $derived(cache.filter((e) => e.uses.length === 0).length);
   const unbuiltCount = $derived(allPackIds.filter((id) => !summaryFor(id)).length);
   const builtCount = $derived(allPackIds.length - unbuiltCount);
   const featPackCount = $derived(packs.filter((p) => p.featured).length);
@@ -143,18 +82,6 @@
     )?.trim();
     if (id) packEdit = id;
   }
-
-  function fmtBytes(n: number): string {
-    if (n < 1024) return `${n} B`;
-    const u = ['KB', 'MB', 'GB'];
-    let i = -1;
-    do {
-      n /= 1024;
-      i++;
-    } while (n >= 1024 && i < u.length - 1);
-    return `${n.toFixed(1)} ${u[i]}`;
-  }
-
 </script>
 
 <div class="view">
@@ -181,11 +108,11 @@
           <div class="l muted">{t('overview.servers')}</div>
         </div>
         <div class="tile panel">
-          <div class="n mono">{cache.length}</div>
-          <div class="l muted">{t('overview.cache')}</div>
-          <div class="sub faint">
-            {t('overview.cacheSub', { size: fmtBytes(cacheBytes), orphan: orphanCount })}
-          </div>
+          <div class="n mono">{mods.length}</div>
+          <div class="l muted">{t('mm.overviewMods')}</div>
+          {#if unassigned.length}
+            <div class="sub faint">{t('mm.overviewModsSub', { n: unassigned.length })}</div>
+          {/if}
         </div>
         <div class="tile panel">
           <div class="n mono">{authoring.length}</div>
@@ -334,78 +261,8 @@
           </table>
         </div>
       {/if}
-    {:else if route.section === 'cache'}
-      <DropZone
-        accept=".jar"
-        label={uploading ? t('cache.uploading') : t('cache.drop')}
-        busy={uploading}
-        onFiles={onDropJars}
-      />
-      <div class="cache-bar">
-        <input class="search" bind:value={cacheQ} placeholder={t('cache.search')} />
-        <label class="orphan-toggle">
-          <input type="checkbox" bind:checked={cacheOrphansOnly} />
-          {t('cache.orphansOnly')}
-        </label>
-        <span class="grow-r muted mono">
-          {t('cache.count', { count: shownCache.length, size: fmtBytes(shownBytes) })}
-        </span>
-        {#if upMsg}<span class="muted mono">{upMsg}</span>{/if}
-      </div>
-      <div class="panel">
-        <table>
-          <thead>
-            <tr>
-              <th>{t('cache.col.name')}</th>
-              <th>{t('cache.col.usedBy')}</th>
-              <th style="width:120px">{t('cache.col.size')}</th>
-              <th style="width:90px"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each shownCache as c (c.sha1)}
-              <tr>
-                <td>
-                  <div class="row gap">
-                    <span>{nameOfCache(c) || t('cache.noName')}</span>
-                    {#if c.uses.length === 0}<span class="tag orphan">{t('cache.orphan')}</span>{/if}
-                  </div>
-                  <div class="faint mono">{c.sha1}</div>
-                </td>
-                <td>
-                  {#each usedByCache(c) as pid}<span class="tag">{pid}</span> {/each}
-                </td>
-                <td class="mono">{fmtBytes(c.size_bytes)}</td>
-                <td class="actions">
-                  <button class="danger" onclick={() => delCacheJar(c.sha1)}>{t('common.delete')}</button>
-                </td>
-              </tr>
-            {/each}
-            {#if shownCache.length === 0 && !loading}
-              <tr>
-                <td colspan="4" class="muted">
-                  {cacheQ.trim() || cacheOrphansOnly ? t('cache.noMatch') : t('cache.empty')}
-                </td>
-              </tr>
-            {/if}
-          </tbody>
-        </table>
-      </div>
-
-      {#if removed.length}
-        <h2 class="sec rm">{t('cache.removedTitle')}</h2>
-        <div class="cache-head muted">{t('cache.removedSub', { count: removed.length })}</div>
-        <div class="panel">
-          <table>
-            <thead><tr><th>sha1</th></tr></thead>
-            <tbody>
-              {#each removed as sha}
-                <tr><td class="mono">{sha}</td></tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
+    {:else if route.section === 'mods'}
+      <ModManager />
     {/if}
   </div>
 </div>
@@ -459,20 +316,6 @@
     font-size: 11px;
     margin-top: 6px;
   }
-  .sec {
-    font-size: 13px;
-    color: var(--fg-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-bottom: 10px;
-  }
-  .sec.rm {
-    margin-top: 26px;
-  }
-  .cache-head {
-    font-size: 12px;
-    margin-bottom: 10px;
-  }
   .bar {
     margin-bottom: 14px;
   }
@@ -487,35 +330,5 @@
   button.danger:hover {
     border-color: var(--danger);
     color: var(--danger);
-  }
-  .cache-bar {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    margin: 14px 0;
-  }
-  .search {
-    flex: 1;
-    max-width: 360px;
-  }
-  .orphan-toggle {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--fg-dim);
-    white-space: nowrap;
-  }
-  .grow-r {
-    margin-left: auto;
-  }
-  .row.gap {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .tag.orphan {
-    color: var(--warn);
-    border-color: color-mix(in srgb, var(--warn) 45%, transparent);
   }
 </style>

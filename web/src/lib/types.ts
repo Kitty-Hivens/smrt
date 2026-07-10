@@ -43,6 +43,8 @@ export type { ValidateReport } from './bindings/ValidateReport';
 // registry browser (mods + builds, faceted)
 export type { ModSummary } from './bindings/ModSummary';
 export type { VersionRow } from './bindings/VersionRow';
+export type { ReleaseRow } from './bindings/ReleaseRow';
+export type { UnassignedJar } from './bindings/UnassignedJar';
 export type { BuildSummary } from './bindings/BuildSummary';
 export type { BuildModRow } from './bindings/BuildModRow';
 export type { ModUse } from './bindings/ModUse';

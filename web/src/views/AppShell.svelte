@@ -22,7 +22,7 @@
     overview: 'nav.overview',
     packs: 'nav.packs',
     servers: 'nav.servers',
-    cache: 'nav.cache',
+    mods: 'nav.mods',
   };
 </script>
 

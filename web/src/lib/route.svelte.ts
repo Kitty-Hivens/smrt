@@ -2,14 +2,16 @@
 // (which highlights + sets it) and the content area (which renders by it).
 // Persisted so a refresh keeps you where you were.
 
-export type Section = 'overview' | 'packs' | 'servers' | 'cache';
-export const SECTIONS: Section[] = ['overview', 'packs', 'servers', 'cache'];
+export type Section = 'overview' | 'packs' | 'servers' | 'mods';
+export const SECTIONS: Section[] = ['overview', 'packs', 'servers', 'mods'];
 
 const STORAGE_KEY = 'smrt.section';
 
 function initial(): Section {
   try {
     const s = localStorage.getItem(STORAGE_KEY);
+    // the old sha1 'cache' tab was replaced by mod management
+    if (s === 'cache') return 'mods';
     if (s && SECTIONS.includes(s as Section)) return s as Section;
   } catch {
     // blocked storage -- default below

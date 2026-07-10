@@ -12,7 +12,7 @@ use crate::authoring::reconstruct_config;
 use crate::domain::DeclaredAsset;
 use crate::registry::model::{
     BuildModRow, BuildSummary, EligibleArtifact, ModSummary, ModUse, OrphanJar, RegistryStats,
-    UnassignedJar, VersionRow,
+    ReleaseRow, UnassignedJar, VersionRow,
 };
 use crate::registry::{authored, queries};
 use crate::state::AppState;
@@ -34,6 +34,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/admin/registry/mod-versions/:mod_id",
             get(get_versions_by_id),
+        )
+        .route(
+            "/v1/admin/registry/mod-releases/:mod_id",
+            get(get_releases_by_id),
         )
         .route("/v1/admin/registry/builds", get(get_builds))
         .route(
@@ -191,6 +195,25 @@ async fn get_versions_by_id(
     // installed either, so drop those too.
     rows.retain(|r| r.filename.is_some() && (r.cached || r.modrinth_version_id.is_some()));
     Ok(Json(rows))
+}
+
+// The mod's files grouped by release (version node) for the management view.
+// Unlike get_versions_by_id (the picker, which hides non-installable artifacts),
+// this shows every file so the operator can manage the full set; `cached` is set
+// per file against the live cache.
+async fn get_releases_by_id(
+    State(state): State<AppState>,
+    Path(mod_id): Path<i64>,
+) -> Result<Json<Vec<ReleaseRow>>, ApiError> {
+    let mut releases =
+        run_query(&state, move |c| queries::releases_of_mod_by_id(c, mod_id)).await?;
+    let cached = cache_shas(&state).await?;
+    for rel in &mut releases {
+        for f in &mut rel.files {
+            f.cached = cached.contains(&f.sha1);
+        }
+    }
+    Ok(Json(releases))
 }
 
 async fn get_builds(State(state): State<AppState>) -> Result<Json<Vec<BuildSummary>>, ApiError> {
