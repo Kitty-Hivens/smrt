@@ -1,23 +1,17 @@
 <script lang="ts">
+  import { Dialog } from 'bits-ui';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
 
+  // Bits UI Dialog gives focus-trap, escape-to-close, dismiss-on-outside-click,
+  // scroll-lock, portal and aria wiring for free -- replacing the hand-rolled
+  // overlay + manual Tab/Escape trapping this file used to carry.
   const a = $derived(dialogs.active);
   let value = $state('');
-  let input = $state<HTMLInputElement | null>(null);
-  let okBtn = $state<HTMLButtonElement | null>(null);
-  let dialogEl = $state<HTMLElement | null>(null);
 
-  // Seed + focus when a dialog opens: the field for a prompt, else the primary
-  // action for a confirm.
+  // seed the prompt field when a prompt opens
   $effect(() => {
-    if (!a) return;
-    if (a.kind === 'prompt') {
-      value = a.initial;
-      input?.focus();
-    } else {
-      okBtn?.focus();
-    }
+    if (a?.kind === 'prompt') value = a.initial;
   });
 
   function cancel() {
@@ -30,100 +24,79 @@
     if (a.kind === 'confirm') dialogs.resolveConfirm(true);
     else dialogs.resolvePrompt(value.trim() || null);
   }
-  function onKey(e: KeyboardEvent) {
-    if (!a) return;
-    if (e.key === 'Escape') {
-      cancel();
-      return;
-    }
-    if (e.key === 'Enter' && a.kind === 'prompt') {
-      accept();
-      return;
-    }
-    // Trap Tab inside the dialog so focus can't reach the obscured page behind it.
-    if (e.key === 'Tab' && dialogEl) {
-      const items = [...dialogEl.querySelectorAll<HTMLElement>('button, input')];
-      if (items.length === 0) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
+  // escape / outside-click / close all flip Bits' open to false; settle the
+  // pending dialog as a cancel so its awaiting caller never hangs.
+  function onOpenChange(open: boolean) {
+    if (!open && a) cancel();
   }
 </script>
 
-<svelte:window onkeydown={onKey} />
-
-{#if a}
-  <div
-    class="overlay"
-    role="presentation"
-    onclick={(e) => {
-      if (e.target === e.currentTarget) cancel();
-    }}
-  >
-    <div
-      class="dlg panel"
-      bind:this={dialogEl}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dialog-title"
-    >
-      <h3 id="dialog-title">{a.title}</h3>
-      {#if a.kind === 'confirm'}
-        <p class="msg">{a.message}</p>
-      {:else}
-        <label class="fld">
-          {a.label}
-          <input bind:this={input} bind:value placeholder={a.placeholder} />
-        </label>
+<Dialog.Root open={!!a} {onOpenChange}>
+  <Dialog.Portal>
+    <Dialog.Overlay class="overlay" />
+    <Dialog.Content class="dlg panel">
+      {#if a}
+        <Dialog.Title class="ttl">{a.title}</Dialog.Title>
+        {#if a.kind === 'confirm'}
+          <Dialog.Description class="msg">{a.message}</Dialog.Description>
+        {:else}
+          <label class="fld">
+            {a.label}
+            <input
+              bind:value
+              placeholder={a.placeholder}
+              onkeydown={(e) => {
+                if (e.key === 'Enter') accept();
+              }}
+            />
+          </label>
+        {/if}
+        <div class="actions">
+          <button onclick={cancel}>{t('dialog.cancel')}</button>
+          <button
+            class="primary"
+            class:danger={a.kind === 'confirm' && a.danger}
+            onclick={accept}
+          >
+            {a.kind === 'confirm' && a.danger ? t('dialog.delete') : t('dialog.ok')}
+          </button>
+        </div>
       {/if}
-      <div class="actions">
-        <button onclick={cancel}>{t('dialog.cancel')}</button>
-        <button
-          bind:this={okBtn}
-          class="primary"
-          class:danger={a.kind === 'confirm' && a.danger}
-          onclick={accept}
-        >
-          {a.kind === 'confirm' && a.danger ? t('dialog.delete') : t('dialog.ok')}
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
+    </Dialog.Content>
+  </Dialog.Portal>
+</Dialog.Root>
 
 <style>
-  .overlay {
+  /* Bits portals Overlay + Content to <body> as siblings, so Content centers
+     itself rather than relying on the overlay as a grid parent. */
+  :global(.overlay) {
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.55);
-    display: grid;
-    place-items: center;
     z-index: 80;
   }
-  .dlg {
+  :global(.dlg) {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 81;
     width: 440px;
     max-width: 92vw;
     padding: 20px;
   }
-  h3 {
+  :global(.dlg .ttl) {
     margin: 0 0 12px;
     font-size: 14px;
     color: var(--fg);
   }
-  .msg {
+  :global(.dlg .msg) {
     margin: 0 0 18px;
     color: var(--fg-dim);
     font-size: 13px;
     line-height: 1.5;
   }
-  .fld {
+  :global(.dlg .fld) {
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -131,12 +104,12 @@
     color: var(--fg-dim);
     margin-bottom: 18px;
   }
-  .actions {
+  :global(.dlg .actions) {
     display: flex;
     justify-content: flex-end;
     gap: 10px;
   }
-  .danger {
+  :global(.dlg .danger) {
     border-color: var(--danger);
     color: var(--danger);
   }
