@@ -40,6 +40,10 @@ const MIGRATIONS: &[(u32, Migration)] = &[
         7,
         Migration::Sql(include_str!("schema/0007_mod_release.sql")),
     ),
+    (
+        8,
+        Migration::Sql(include_str!("schema/0008_mod_content_sig.sql")),
+    ),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its

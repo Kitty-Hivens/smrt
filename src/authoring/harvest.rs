@@ -8,7 +8,7 @@
 //! harvested yet (their target is a project_id, a different selector namespace
 //! than the modid relations here) -- that lands with the Phase 4 resolver.
 
-use super::curator::{McModInfo, read_mcmod_info};
+use super::curator::{JarFacts, McModInfo, clean_mc_version, jar_facts, read_mcmod_info};
 use super::modrinth::Modrinth;
 use crate::registry::model::{RelKind, Source};
 use crate::registry::{Registry, queries, upsert};
@@ -38,6 +38,12 @@ pub struct JarSeed {
     // Modrinth version id (from the sha1 lookup), so a build's Modrinth-sourced
     // mod can be re-added as a Modrinth source, not a non-existent cache jar.
     pub modrinth_version_id: Option<String>,
+    // Release channel (release/beta/dev/unknown): from Modrinth version_type when
+    // known, else unknown -- a jar carries no reliable channel of its own.
+    pub channel: Option<String>,
+    // Metadata-agnostic content signature (see curator::jar_facts): groups a mod's
+    // files that are the same real build under different declared versions.
+    pub content_sig: Option<String>,
 }
 
 pub struct BuildModSeed {
@@ -86,6 +92,17 @@ const PSEUDO_DEPS: &[&str] = &[
     "cpw.mods.fml",
     "mod_mcversion",
 ];
+
+/// Map a Modrinth `version_type` (release/beta/alpha) to a registry channel.
+/// alpha collapses to beta (both pre-release); `dev` stays reserved for hand-set
+/// developer builds. Unknown types yield None (release stays `unknown`).
+fn channel_from_version_type(vt: &str) -> Option<String> {
+    match vt {
+        "release" => Some("release".to_string()),
+        "beta" | "alpha" => Some("beta".to_string()),
+        _ => None,
+    }
+}
 
 fn filter_deps(deps: &[String]) -> Vec<String> {
     deps.iter()
@@ -154,6 +171,20 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         )?;
         // after the row exists: record its Modrinth version id (by sha1)
         upsert::set_mod_version_modrinth(conn, &jar.sha1, jar.modrinth_version_id.as_deref(), now)?;
+        // group the file under its real release: the (version, channel) release,
+        // or -- for a content-signature match -- an existing sibling's release, so
+        // a SmartyCraft faked-version dup joins the real build instead of forking
+        // the mod into a bogus version.
+        let channel = jar.channel.as_deref().unwrap_or("unknown");
+        upsert::set_harvested_release(
+            conn,
+            &jar.sha1,
+            mod_id,
+            version,
+            channel,
+            jar.content_sig.as_deref(),
+            now,
+        )?;
         for dep in &jar.requires {
             upsert::upsert_relation(
                 conn,
@@ -226,6 +257,10 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         }
     }
 
+    // drop the provisional 'unknown' releases left empty once files moved to
+    // their channel / content-signature release
+    upsert::prune_empty_releases(conn)?;
+
     let s = queries::stats(conn)?;
     Ok(HarvestReport {
         jars_scanned: scan.jars.len(),
@@ -248,8 +283,10 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
         .collect();
     let mut all_shas: HashSet<String> = inventory.iter().map(|e| e.sha1.clone()).collect();
 
-    // read mcmod.info from every cached jar (Modrinth-only mods have no local jar)
+    // read mcmod.info + derive jar facts (loader marker, content signature) from
+    // every cached jar (Modrinth-only mods have no local jar to read)
     let mut mcmod_by_sha: HashMap<String, McModInfo> = HashMap::new();
+    let mut facts_by_sha: HashMap<String, JarFacts> = HashMap::new();
     for e in &inventory {
         let Ok(path) = storage.cache_jar_path(&e.sha1[..2], &e.sha1) else {
             continue;
@@ -257,6 +294,7 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
         let Ok(bytes) = tokio::fs::read(&path).await else {
             continue;
         };
+        facts_by_sha.insert(e.sha1.clone(), jar_facts(&bytes));
         if let Ok(Some(info)) = read_mcmod_info(&bytes)
             && !info.modid.is_empty()
         {
@@ -371,6 +409,7 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
         .map(|sha| {
             let info = mcmod_by_sha.get(&sha);
             let mrv = modrinth_by_sha.get(&sha);
+            let facts = facts_by_sha.get(&sha);
             let project = mrv.and_then(|v| projects.get(&v.project_id));
             // name: jar-meta name wins (local), else Modrinth title
             let name = info
@@ -396,8 +435,25 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
                     .filter(|s| !s.is_empty())
                     .or_else(|| mrv.map(|v| v.version_number.clone())),
                 project_id: mrv.map(|v| v.project_id.clone()),
-                loaders: mrv.map(|v| v.loaders.clone()).unwrap_or_default(),
-                mc_versions: mrv.map(|v| v.game_versions.clone()).unwrap_or_default(),
+                // loader: Modrinth's set wins; else the jar's own marker
+                // (mcmod.info/mods.toml -> forge, fabric.mod.json -> fabric); else
+                // empty (-> 'any' downstream)
+                loaders: match mrv.map(|v| v.loaders.clone()).filter(|l| !l.is_empty()) {
+                    Some(l) => l,
+                    None => facts.and_then(|f| f.loader.clone()).into_iter().collect(),
+                },
+                // mc: Modrinth's set wins; else the jar's declared mcversion when
+                // it looks like a real version (not a gradle token)
+                mc_versions: match mrv
+                    .map(|v| v.game_versions.clone())
+                    .filter(|g| !g.is_empty())
+                {
+                    Some(g) => g,
+                    None => info
+                        .and_then(|i| clean_mc_version(&i.mcversion))
+                        .into_iter()
+                        .collect(),
+                },
                 requires: info
                     .map(|i| filter_deps(&i.dependencies))
                     .unwrap_or_default(),
@@ -406,6 +462,8 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
                 author,
                 slug,
                 modrinth_version_id: mrv.map(|v| v.id.clone()),
+                channel: mrv.and_then(|v| channel_from_version_type(&v.version_type)),
+                content_sig: facts.and_then(|f| f.content_sig.clone()),
                 sha1: sha,
             }
         })
@@ -439,6 +497,8 @@ mod tests {
                 JarSeed {
                     sha1: "sha_a".into(),
                     size_bytes: 100,
+                    channel: None,
+                    content_sig: None,
                     modid: Some("appleskin".into()),
                     version: Some("2.5".into()),
                     project_id: Some("EsAfb37o".into()),
@@ -454,6 +514,8 @@ mod tests {
                 JarSeed {
                     sha1: "sha_b".into(),
                     size_bytes: 200,
+                    channel: None,
+                    content_sig: None,
                     modid: Some("jei".into()),
                     version: Some("4.16".into()),
                     project_id: None,
@@ -469,6 +531,8 @@ mod tests {
                 JarSeed {
                     sha1: "sha_noid".into(),
                     size_bytes: 50,
+                    channel: None,
+                    content_sig: None,
                     modid: None,
                     version: None,
                     project_id: None,
@@ -616,6 +680,8 @@ mod tests {
         JarSeed {
             sha1: sha.into(),
             size_bytes: 1,
+            channel: None,
+            content_sig: None,
             modid: Some(modid.into()),
             version: version.map(Into::into),
             project_id: None,
@@ -738,6 +804,80 @@ mod tests {
                 vec!["fabric".to_string(), "forge".to_string()],
                 "authored targets survive re-harvest"
             );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // The SmartyCraft case: two jars of one mod with the SAME real content
+    // (same content_sig) but different declared versions (1.3.5 vs a faked
+    // 1.3.6). Harvest groups them into ONE release instead of forking the mod.
+    #[test]
+    fn write_scan_groups_faked_version_dups_by_content_sig() {
+        let r = Registry::open_in_memory().unwrap();
+        let mut real = jar("sha_real", "quark", Some("1.3.5"), vec!["forge".into()]);
+        real.content_sig = Some("SIG".into());
+        let mut faked = jar("sha_faked", "quark", Some("1.3.6"), vec!["forge".into()]);
+        faked.content_sig = Some("SIG".into());
+        let scan = ScanData {
+            jars: vec![real, faked],
+            packs: vec![],
+        };
+        r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        r.with_conn(|c| {
+            let mid = queries::mod_id_for_alias(c, "modid", "quark")?.unwrap();
+            let rels = queries::releases_of_mod_by_id(c, mid)?;
+            assert_eq!(rels.len(), 1, "faked 1.3.6 joins the real release");
+            assert_eq!(rels[0].files.len(), 2, "both jars under one release");
+            assert_eq!(
+                rels[0].version_number, "1.3.5",
+                "first-seen real label kept"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // A genuine update (different content_sig) still forks into its own release.
+    #[test]
+    fn write_scan_keeps_distinct_content_as_separate_releases() {
+        let r = Registry::open_in_memory().unwrap();
+        let mut a = jar("sha_v1", "mymod", Some("1.0"), vec!["forge".into()]);
+        a.content_sig = Some("SIG_A".into());
+        let mut b = jar("sha_v2", "mymod", Some("2.0"), vec!["forge".into()]);
+        b.content_sig = Some("SIG_B".into());
+        let scan = ScanData {
+            jars: vec![a, b],
+            packs: vec![],
+        };
+        r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        r.with_conn(|c| {
+            let mid = queries::mod_id_for_alias(c, "modid", "mymod")?.unwrap();
+            assert_eq!(queries::releases_of_mod_by_id(c, mid)?.len(), 2);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // A Modrinth channel lands on the release, and the provisional 'unknown'
+    // release upsert_mod_version created is pruned once the file moves.
+    #[test]
+    fn write_scan_applies_channel_and_prunes_empty_release() {
+        let r = Registry::open_in_memory().unwrap();
+        let mut a = jar("sha_beta", "betamod", Some("0.9"), vec!["forge".into()]);
+        a.channel = Some("beta".into());
+        let scan = ScanData {
+            jars: vec![a],
+            packs: vec![],
+        };
+        r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        r.with_conn(|c| {
+            let mid = queries::mod_id_for_alias(c, "modid", "betamod")?.unwrap();
+            let rels = queries::releases_of_mod_by_id(c, mid)?;
+            assert_eq!(rels.len(), 1);
+            assert_eq!(rels[0].channel, "beta");
+            let total: i64 = c.query_row("SELECT count(*) FROM mod_release", [], |r| r.get(0))?;
+            assert_eq!(total, 1, "no empty leftover release");
             Ok(())
         })
         .unwrap();

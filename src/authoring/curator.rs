@@ -15,6 +15,7 @@ use crate::domain::SourceDecl;
 use crate::domain::{Display, Requirement};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Cursor;
@@ -38,6 +39,11 @@ pub struct McModInfo {
     pub name: String,
     #[serde(default)]
     pub version: String,
+    /// Forge's declared target MC version. Often absent or an unresolved gradle
+    /// token (`${mcversion}`); harvest uses it only when it looks like a real
+    /// version, as a network-free mc source for non-Modrinth jars.
+    #[serde(default)]
+    pub mcversion: String,
     #[serde(default)]
     pub description: String,
     #[serde(default)]
@@ -104,6 +110,95 @@ pub fn read_mcmod_info(jar_bytes: &[u8]) -> Result<Option<McModInfo>> {
     };
 
     Ok(parsed)
+}
+
+/// Version-bearing metadata files excluded from the content signature: bumping
+/// any of these (SmartyCraft edits `mcmod.info`) must not change the signature,
+/// so the same real build keeps one signature across faked version labels.
+const SIG_EXCLUDE: &[&str] = &[
+    "mcmod.info",
+    "fabric.mod.json",
+    "quilt.mod.json",
+    "META-INF/mods.toml",
+    "META-INF/MANIFEST.MF",
+];
+
+/// Jar facts harvest derives straight from the bytes, for artifacts Modrinth
+/// can't answer for: the loader (from which mod-metadata file is present) and a
+/// metadata-agnostic content signature.
+#[derive(Debug, Clone, Default)]
+pub struct JarFacts {
+    /// `forge` (mcmod.info / mods.toml) or `fabric` (fabric.mod.json), else None.
+    pub loader: Option<String>,
+    /// sha1 over the sorted (entry-name, CRC-32) pairs, excluding [`SIG_EXCLUDE`].
+    /// CRC comes from the zip directory (no decompression) and is independent of
+    /// the compression settings, so a re-zip with the same contents is stable.
+    pub content_sig: Option<String>,
+}
+
+/// Introspect a jar for its loader marker + content signature. A non-zip or
+/// empty jar yields all-None. Never errors -- harvest enrichment is best-effort.
+pub fn jar_facts(jar_bytes: &[u8]) -> JarFacts {
+    let Ok(mut zip) = zip::ZipArchive::new(Cursor::new(jar_bytes)) else {
+        return JarFacts::default();
+    };
+    let mut has_forge = false;
+    let mut has_fabric = false;
+    let mut entries: Vec<(String, u32)> = Vec::new();
+    for i in 0..zip.len() {
+        let Ok(entry) = zip.by_index(i) else { continue };
+        if !entry.is_file() {
+            continue;
+        }
+        let name = entry.name().to_string();
+        match name.as_str() {
+            "mcmod.info" | "META-INF/mods.toml" => has_forge = true,
+            "fabric.mod.json" => has_fabric = true,
+            _ => {}
+        }
+        if SIG_EXCLUDE.contains(&name.as_str()) {
+            continue;
+        }
+        entries.push((name, entry.crc32()));
+    }
+    entries.sort();
+    let content_sig = if entries.is_empty() {
+        None
+    } else {
+        let mut hasher = Sha1::new();
+        for (name, crc) in &entries {
+            hasher.update(name.as_bytes());
+            hasher.update([0]);
+            hasher.update(crc.to_le_bytes());
+        }
+        Some(hex::encode(hasher.finalize()))
+    };
+    let loader = if has_forge {
+        Some("forge".to_string())
+    } else if has_fabric {
+        Some("fabric".to_string())
+    } else {
+        None
+    };
+    JarFacts {
+        loader,
+        content_sig,
+    }
+}
+
+/// A plausible real Minecraft version, filtering out empty and unresolved gradle
+/// tokens (`${mcversion}`) that mcmod.info files routinely carry.
+pub fn clean_mc_version(raw: &str) -> Option<String> {
+    let v = raw.trim();
+    if v.is_empty() || v.contains('$') || v.contains('{') {
+        return None;
+    }
+    // a real MC version starts with a digit (1.7.10, 1.12.2, 1.20.1)
+    if v.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        Some(v.to_string())
+    } else {
+        None
+    }
 }
 
 /// Extract a mod's embedded icon from its jar bytes: the Forge `mcmod.info`
@@ -746,5 +841,59 @@ mod tests {
         zw3.write_all(b"P").unwrap();
         let jar3 = zw3.finish().unwrap().into_inner();
         assert_eq!(jar_icon(&jar3).unwrap().unwrap().0, b"P");
+    }
+
+    fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, data) in entries {
+            zw.start_file(*name, SimpleFileOptions::default()).unwrap();
+            zw.write_all(data).unwrap();
+        }
+        zw.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn jar_facts_signature_ignores_mcmod_version_bump() {
+        // the SmartyCraft edit: same class bytes, only the mcmod.info version
+        // string changes 1.3.5 -> 1.3.6
+        let a = zip_of(&[
+            ("com/x/Foo.class", b"CLASSBYTES"),
+            ("mcmod.info", br#"[{"modid":"x","version":"1.3.5"}]"#),
+        ]);
+        let b = zip_of(&[
+            ("com/x/Foo.class", b"CLASSBYTES"),
+            ("mcmod.info", br#"[{"modid":"x","version":"1.3.6"}]"#),
+        ]);
+        let fa = jar_facts(&a);
+        assert!(fa.content_sig.is_some());
+        assert_eq!(fa.loader.as_deref(), Some("forge"));
+        assert_eq!(
+            fa.content_sig,
+            jar_facts(&b).content_sig,
+            "a bumped mcmod.info version must not change the content signature"
+        );
+        // a real code change DOES move the signature
+        let c = zip_of(&[
+            ("com/x/Foo.class", b"DIFFERENT"),
+            ("mcmod.info", br#"[{"modid":"x","version":"1.3.5"}]"#),
+        ]);
+        assert_ne!(jar_facts(&c).content_sig, fa.content_sig);
+    }
+
+    #[test]
+    fn jar_facts_detects_loader_marker() {
+        let fabric = zip_of(&[("A.class", b"X"), ("fabric.mod.json", b"{}")]);
+        assert_eq!(jar_facts(&fabric).loader.as_deref(), Some("fabric"));
+        let bare = zip_of(&[("A.class", b"X")]);
+        assert_eq!(jar_facts(&bare).loader, None);
+    }
+
+    #[test]
+    fn clean_mc_version_filters_tokens() {
+        assert_eq!(clean_mc_version("1.12.2").as_deref(), Some("1.12.2"));
+        assert_eq!(clean_mc_version(" 1.7.10 ").as_deref(), Some("1.7.10"));
+        assert_eq!(clean_mc_version("${mcversion}"), None);
+        assert_eq!(clean_mc_version(""), None);
+        assert_eq!(clean_mc_version("MC1.7"), None);
     }
 }

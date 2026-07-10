@@ -173,6 +173,71 @@ pub fn upsert_mod_version(
     Ok(id)
 }
 
+/// Re-point a harvested file to the release it belongs to and record its content
+/// signature. A sibling file of the same mod with the same signature wins: its
+/// release is reused, so a "same jar, bumped version metadata" dup (the
+/// SmartyCraft case) joins the real release instead of fragmenting the mod on the
+/// faked version. Otherwise the release is found/created by `(version, channel)`.
+/// No-op for a precious (authored) file, whose grouping is operator-set. Call
+/// after [`upsert_mod_version`] (which sets a provisional `unknown` release);
+/// harvest prunes any release this leaves empty.
+pub fn set_harvested_release(
+    conn: &Connection,
+    sha1: &str,
+    mod_id: i64,
+    version: &str,
+    channel: &str,
+    content_sig: Option<&str>,
+    now: &str,
+) -> Result<()> {
+    // absent row or a precious one -> leave it alone
+    let precious: Option<bool> = conn
+        .query_row(
+            "SELECT source IN ('curator', 'authored') FROM mod_version WHERE sha1 = ?1",
+            params![sha1],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if precious != Some(false) {
+        return Ok(());
+    }
+
+    let by_sig = match content_sig.filter(|s| !s.is_empty()) {
+        Some(sig) => conn
+            .query_row(
+                "SELECT release_id FROM mod_version
+                 WHERE mod_id = ?1 AND content_sig = ?2 AND release_id IS NOT NULL AND sha1 <> ?3
+                 LIMIT 1",
+                params![mod_id, sig, sha1],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?,
+        None => None,
+    };
+    let release_id = match by_sig {
+        Some(rid) => rid,
+        None => upsert_release(conn, mod_id, version, channel, now)?,
+    };
+    conn.execute(
+        "UPDATE mod_version SET release_id = ?2, content_sig = ?3, updated_at = ?4 WHERE sha1 = ?1",
+        params![sha1, release_id, content_sig, now],
+    )?;
+    Ok(())
+}
+
+/// Delete harvested releases no file points at any more -- e.g. the provisional
+/// `unknown` release [`upsert_mod_version`] creates before [`set_harvested_release`]
+/// moves the file to its real (channel) release. Authored releases are preserved
+/// even when empty (an operator may create one before attaching files).
+pub fn prune_empty_releases(conn: &Connection) -> Result<usize> {
+    Ok(conn.execute(
+        "DELETE FROM mod_release
+         WHERE source NOT IN ('curator', 'authored')
+           AND id NOT IN (SELECT release_id FROM mod_version WHERE release_id IS NOT NULL)",
+        [],
+    )?)
+}
+
 /// Replace a mod_version's target set with `targets` (empty -> `any`). Skipped
 /// for precious rows: an authored artifact's hand-set targets are not a
 /// harvested fact and must not be reset. Idempotent for harvested rows.
