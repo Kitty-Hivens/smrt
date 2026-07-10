@@ -84,6 +84,36 @@ pub fn set_mod_meta(
     Ok(())
 }
 
+/// Find-or-create the release (version node) grouping a mod's files that share
+/// `(version_number, channel)`. Harvested releases default to channel 'unknown';
+/// the authored layer sets a real channel. Idempotent -- a re-harvest reuses the
+/// existing release rather than duplicating it.
+pub fn upsert_release(
+    conn: &Connection,
+    mod_id: i64,
+    version_number: &str,
+    channel: &str,
+    now: &str,
+) -> Result<i64> {
+    if let Some(id) = conn
+        .query_row(
+            "SELECT id FROM mod_release WHERE mod_id = ?1 AND version_number = ?2 AND channel = ?3",
+            params![mod_id, version_number, channel],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(id);
+    }
+    conn.execute(
+        "INSERT INTO mod_release
+           (mod_id, version_number, channel, source, confidence, created_at, updated_at)
+         VALUES (?1, ?2, ?3, 'harvested', 10, ?4, ?4)",
+        params![mod_id, version_number, channel, now],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
 /// Upsert an artifact keyed by its content hash, and (re)record its
 /// compatibility `targets` (loader ids, or `any` when the set is empty).
 /// Returns the `mod_version` id. A precious (`curator`/`authored`) row with this
@@ -130,6 +160,16 @@ pub fn upsert_mod_version(
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
     set_mod_version_targets(conn, id, targets, precious)?;
+    // group the file under its release. Harvested files only: an authored file's
+    // release is set through the authored layer, so a re-harvest must not move it.
+    if !precious {
+        let release_id = upsert_release(conn, mod_id, version, "unknown", now)?;
+        conn.execute(
+            "UPDATE mod_version SET release_id = ?2
+             WHERE id = ?1 AND source NOT IN ('curator', 'authored')",
+            params![id, release_id],
+        )?;
+    }
     Ok(id)
 }
 

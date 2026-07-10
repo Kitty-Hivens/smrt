@@ -36,6 +36,10 @@ const MIGRATIONS: &[(u32, Migration)] = &[
         6,
         Migration::Sql(include_str!("schema/0006_mod_version_modrinth.sql")),
     ),
+    (
+        7,
+        Migration::Sql(include_str!("schema/0007_mod_release.sql")),
+    ),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its
@@ -202,14 +206,14 @@ mod tests {
         let tables: i64 = conn
             .query_row(
                 "SELECT count(*) FROM sqlite_master WHERE type = 'table'
-                 AND name IN ('mods','mod_alias','mod_version','mod_version_target','pack',
-                              'pack_build','pack_build_mod','relation','loader','loader_parent',
-                              'registry_meta')",
+                 AND name IN ('mods','mod_alias','mod_version','mod_version_target','mod_release',
+                              'pack','pack_build','pack_build_mod','relation','loader',
+                              'loader_parent','registry_meta')",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(tables, 11);
+        assert_eq!(tables, 12);
 
         let loaders: i64 = conn
             .query_row("SELECT count(*) FROM loader", [], |r| r.get(0))
@@ -283,5 +287,75 @@ mod tests {
         // idempotent: a second run is a no-op
         reconcile_target_schema(&mut conn).unwrap();
         assert!(!mod_version_has_target_column(&conn).unwrap());
+    }
+
+    // Migration 7 groups existing files into one 'unknown' release per
+    // (mod_id, version) and links each file up to it. Two files of one mod at the
+    // same number collapse to one release; a different number, or the same number
+    // under a different mod, is its own release.
+    #[test]
+    fn migration_0007_backfills_one_release_per_mod_version_group() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE mods (id INTEGER PRIMARY KEY);
+             CREATE TABLE mod_version (
+               id INTEGER PRIMARY KEY,
+               mod_id INTEGER NOT NULL REFERENCES mods(id),
+               version TEXT NOT NULL,
+               sha1 TEXT NOT NULL,
+               size_bytes INTEGER NOT NULL,
+               filename TEXT,
+               mc_versions TEXT,
+               source TEXT NOT NULL DEFAULT 'harvested',
+               confidence INTEGER NOT NULL DEFAULT 10,
+               created_at TEXT NOT NULL,
+               updated_at TEXT NOT NULL
+             );
+             INSERT INTO mods (id) VALUES (1), (2);
+             INSERT INTO mod_version (mod_id, version, sha1, size_bytes, created_at, updated_at)
+               VALUES (1, '1.0', 'sha_a', 1, 'T', 'T'),
+                      (1, '1.0', 'sha_b', 1, 'T', 'T'),
+                      (1, '2.0', 'sha_c', 1, 'T', 'T'),
+                      (2, '1.0', 'sha_d', 1, 'T', 'T');",
+        )
+        .unwrap();
+
+        conn.execute_batch(include_str!("schema/0007_mod_release.sql"))
+            .unwrap();
+
+        let release_id = |sha: &str| -> i64 {
+            conn.query_row(
+                "SELECT release_id FROM mod_version WHERE sha1 = ?1",
+                [sha],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+
+        let releases: i64 = conn
+            .query_row("SELECT count(*) FROM mod_release", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(releases, 3, "(1,1.0) (1,2.0) (2,1.0)");
+        assert_eq!(release_id("sha_a"), release_id("sha_b"), "same mod+number");
+        assert_ne!(release_id("sha_a"), release_id("sha_c"), "different number");
+        assert_ne!(release_id("sha_a"), release_id("sha_d"), "different mod");
+
+        let ungrouped: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM mod_version WHERE release_id IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ungrouped, 0, "every file grouped");
+
+        let (vn, ch): (String, String) = conn
+            .query_row(
+                "SELECT version_number, channel FROM mod_release WHERE id = ?1",
+                [release_id("sha_a")],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((vn.as_str(), ch.as_str()), ("1.0", "unknown"));
     }
 }
