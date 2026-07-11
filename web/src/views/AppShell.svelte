@@ -28,7 +28,7 @@
 
 <div class="shell">
   <nav class="rail">
-    <div class="brand mono">smrt<span class="faint">/control</span></div>
+    <div class="brand"><span class="mk"></span>smrt<span class="faint">/control</span></div>
 
     <ul class="nav">
       {#each SECTIONS as s}
@@ -95,9 +95,25 @@
     background: var(--bg-2);
   }
   .brand {
-    font-size: 16px;
-    letter-spacing: 0.04em;
-    padding: var(--space-2) var(--space-3) var(--space-4);
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-family: var(--sans);
+    font-weight: 680;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+    padding: var(--space-2) var(--space-3) var(--space-5);
+  }
+  .brand .mk {
+    width: 22px;
+    height: 22px;
+    border-radius: 7px;
+    background: var(--fg);
+    box-shadow: var(--shadow-1);
+    flex: none;
+  }
+  .brand .faint {
+    font-weight: 500;
   }
   .nav {
     list-style: none;
@@ -113,9 +129,10 @@
     background: transparent;
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
-    padding: 8px 12px;
+    padding: 9px 12px;
     color: var(--fg-dim);
-    font-size: 13.5px;
+    font-size: 14px;
+    box-shadow: none;
   }
   .item:hover {
     background: var(--panel-2);
@@ -170,6 +187,7 @@
     letter-spacing: 0.04em;
     color: var(--fg-dim);
     background: transparent;
+    box-shadow: none;
   }
   .loc:hover {
     background: var(--panel-2);

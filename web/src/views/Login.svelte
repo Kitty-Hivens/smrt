@@ -34,7 +34,7 @@
   </div>
 
   <form class="panel card" onsubmit={submit}>
-    <div class="brand mono">smrt<span class="faint">/control</span></div>
+    <div class="brand"><span class="mk"></span>smrt<span class="faint">/control</span></div>
     <p class="muted sub">{t('login.subtitle')}</p>
     <input type="password" bind:value={token} placeholder="SMRT_ADMIN_TOKEN" autocomplete="off" />
     {#if error}<div class="err mono">{error}</div>{/if}
@@ -88,8 +88,22 @@
     gap: var(--space-4);
   }
   .brand {
-    font-size: 22px;
-    letter-spacing: 0.04em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--sans);
+    font-weight: 680;
+    font-size: 20px;
+    letter-spacing: -0.01em;
+  }
+  .brand .mk {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    background: var(--fg);
+  }
+  .brand .faint {
+    font-weight: 500;
   }
   .sub {
     margin: 0;

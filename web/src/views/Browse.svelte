@@ -95,39 +95,107 @@
 
   <div class="body">
     {#if route.section === 'overview'}
-      <section class="tiles">
-        <div class="tile panel">
-          <div class="n mono">{allPackIds.length}</div>
-          <div class="l muted">{t('overview.packs')}</div>
-          <div class="sub faint">
-            {t('overview.packsSub', { built: builtCount, unbuilt: unbuiltCount })}
+      <section class="ov">
+        <div class="readout">
+          <div class="stat">
+            <div class="k">{t('overview.packs')}</div>
+            <div class="v">{allPackIds.length}</div>
+            <div class="s">{t('overview.packsSub', { built: builtCount, unbuilt: unbuiltCount })}</div>
+          </div>
+          <div class="stat">
+            <div class="k">{t('mm.overviewMods')}</div>
+            <div class="v">{mods.length}</div>
+            <div class="s">
+              {unassigned.length
+                ? t('mm.overviewModsSub', { n: unassigned.length })
+                : `${t('overview.authoring')}: ${authoring.length}`}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="k">{t('overview.servers')}</div>
+            <div class="v">{servers.length}</div>
+            <div class="s">{t('overview.featured')}: {featPackCount} / {featServerCount}</div>
+          </div>
+          <div class="stat">
+            <div class="k">{#if removed.length}<span class="d"></span>{/if}{t('overview.takedown')}</div>
+            <div class="v">{removed.length}</div>
+            <div class="s">blocked sha1</div>
           </div>
         </div>
-        <div class="tile panel">
-          <div class="n mono">{servers.length}</div>
-          <div class="l muted">{t('overview.servers')}</div>
-        </div>
-        <div class="tile panel">
-          <div class="n mono">{mods.length}</div>
-          <div class="l muted">{t('mm.overviewMods')}</div>
-          {#if unassigned.length}
-            <div class="sub faint">{t('mm.overviewModsSub', { n: unassigned.length })}</div>
-          {/if}
-        </div>
-        <div class="tile panel">
-          <div class="n mono">{authoring.length}</div>
-          <div class="l muted">{t('overview.authoring')}</div>
-        </div>
-        <div class="tile panel">
-          <div class="n mono">{featPackCount} / {featServerCount}</div>
-          <div class="l muted">{t('overview.featured')}</div>
-        </div>
-        {#if removed.length}
-          <div class="tile panel">
-            <div class="n mono">{removed.length}</div>
-            <div class="l muted">{t('overview.takedown')}</div>
+
+        <div class="cols">
+          <div class="card">
+            <h3>{t('overview.packs')}</h3>
+            {#each allPackIds as id}
+              {@const p = summaryFor(id)}
+              <div
+                class="lrow clickable"
+                role="button"
+                tabindex="0"
+                onclick={() => {
+                  route.go('packs');
+                  packEdit = id;
+                }}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    route.go('packs');
+                    packEdit = id;
+                  }
+                }}
+              >
+                <span class="av">{(p?.display_name ?? id).slice(0, 2).toUpperCase()}</span>
+                <div class="lcol">
+                  <div class="nm">{p?.display_name ?? id}</div>
+                  <div class="mm">
+                    {p?.minecraft_version ?? '-'} &middot; {p?.latest_pack_version ?? t('packs.unbuilt')}
+                  </div>
+                </div>
+                <div class="grow"></div>
+                {#if p}
+                  <span class="chip ok"><span class="g"></span>built</span>
+                {:else}
+                  <span class="chip"><span class="g"></span>{t('packs.unbuilt')}</span>
+                {/if}
+              </div>
+            {/each}
+            {#if allPackIds.length === 0 && !loading}
+              <div class="lrow"><span class="muted">{t('packs.empty')}</span></div>
+            {/if}
           </div>
-        {/if}
+
+          <div class="card">
+            <h3>{t('overview.servers')}</h3>
+            {#each servers as s}
+              <div
+                class="lrow clickable"
+                role="button"
+                tabindex="0"
+                onclick={() => {
+                  route.go('servers');
+                  serverEdit = s;
+                }}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    route.go('servers');
+                    serverEdit = s;
+                  }
+                }}
+              >
+                <div class="lcol">
+                  <div class="nm">{s.display_name}</div>
+                  <div class="mm">{s.pack_id} &middot; {s.owner_display}</div>
+                </div>
+                <div class="grow"></div>
+                {#if s.featured}<span class="chip ok"><span class="g"></span>{t('packs.flag.featured')}</span>{/if}
+              </div>
+            {/each}
+            {#if servers.length === 0 && !loading}
+              <div class="lrow"><span class="muted">{t('servers.empty')}</span></div>
+            {/if}
+          </div>
+        </div>
       </section>
     {:else if route.section === 'packs'}
       {#if packEdit !== null}
@@ -295,26 +363,148 @@
     padding: var(--space-3) var(--space-4);
     font-size: 12px;
   }
-  .tiles {
+  .ov {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+  .readout {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-    gap: 10px;
-    margin-bottom: 24px;
+    grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+    border: 1px solid var(--seam);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--panel);
+    box-shadow: var(--shadow-1);
   }
-  .tile {
-    padding: 16px;
+  .stat {
+    padding: var(--space-4);
+    border-right: 1px solid var(--seam);
   }
-  .tile .n {
-    font-size: 26px;
-    color: var(--accent);
+  .stat:last-child {
+    border-right: none;
   }
-  .tile .l {
+  .stat .k {
     font-size: 12px;
-    margin-top: 4px;
+    color: var(--fg-dim);
+    display: flex;
+    align-items: center;
+    gap: 7px;
   }
-  .tile .sub {
-    font-size: 11px;
+  .stat .k .d {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--red);
+  }
+  .stat .v {
+    font-size: 30px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
     margin-top: 6px;
+  }
+  .stat .s {
+    font-size: 11.5px;
+    color: var(--fg-faint);
+    margin-top: 3px;
+  }
+  .cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-4);
+  }
+  @media (max-width: 760px) {
+    .cols {
+      grid-template-columns: 1fr;
+    }
+  }
+  .card {
+    border: 1px solid var(--seam);
+    border-radius: var(--radius-md);
+    background: var(--panel);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  .card h3 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fg-dim);
+    margin: 0;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--seam);
+  }
+  .lrow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: 11px var(--space-4);
+    border-bottom: 1px solid var(--seam);
+  }
+  .lrow:last-child {
+    border-bottom: none;
+  }
+  .lrow.clickable {
+    cursor: pointer;
+  }
+  .lrow.clickable:hover {
+    background: var(--panel-2);
+  }
+  .lrow.clickable:focus-visible {
+    outline: 2px solid var(--fg);
+    outline-offset: -2px;
+  }
+  .lrow .av {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: var(--panel-3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--fg-dim);
+    flex: none;
+  }
+  .lcol {
+    min-width: 0;
+  }
+  .lrow .nm {
+    font-weight: 600;
+    font-size: 13.5px;
+  }
+  .lrow .mm {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-faint);
+  }
+  .lrow .grow {
+    flex: 1;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    color: var(--fg-dim);
+  }
+  .chip .g {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--fg-faint);
+  }
+  .chip.ok {
+    color: var(--fg);
+  }
+  .chip.ok .g {
+    background: var(--fg);
   }
   .bar {
     margin-bottom: 14px;
