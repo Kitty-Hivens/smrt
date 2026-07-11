@@ -46,6 +46,10 @@ export const ru: Dict = {
   'overview.authoring': 'С авторским конфигом',
   'overview.featured': 'Рекомендуемые: паки / сервера',
   'overview.takedown': 'В takedown',
+  'overview.mods': 'Моды в реестре',
+  'overview.col.mod': 'Мод',
+  'overview.col.loader': 'Лоадер',
+  'overview.col.versions': 'Версии',
 
   'common.close': 'Закрыть',
   'common.delete': 'Удалить',

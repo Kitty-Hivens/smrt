@@ -47,6 +47,10 @@ export const en = {
   'overview.authoring': 'With authoring config',
   'overview.featured': 'Featured packs / servers',
   'overview.takedown': 'In takedown',
+  'overview.mods': 'Registry mods',
+  'overview.col.mod': 'Mod',
+  'overview.col.loader': 'Loader',
+  'overview.col.versions': 'Versions',
 
   'common.close': 'Close',
   'common.delete': 'Delete',

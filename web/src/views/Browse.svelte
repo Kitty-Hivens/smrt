@@ -196,6 +196,37 @@
             {/if}
           </div>
         </div>
+
+        {#if mods.length}
+          <div class="card">
+            <h3>{t('overview.mods')} ({mods.length})</h3>
+            <div class="scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t('overview.col.mod')}</th>
+                    <th>{t('overview.col.loader')}</th>
+                    <th>{t('packs.col.mc')}</th>
+                    <th>{t('overview.col.versions')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each mods.slice(0, 8) as m}
+                    <tr>
+                      <td>
+                        <div class="tnm">{m.name}</div>
+                        {#if m.slug}<div class="tsub">{m.slug}</div>{/if}
+                      </td>
+                      <td>{#each m.loaders as l}<span class="tag">{l}</span> {/each}</td>
+                      <td class="mono">{m.mc_versions.join(', ')}</td>
+                      <td class="mono">{m.version_count}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        {/if}
       </section>
     {:else if route.section === 'packs'}
       {#if packEdit !== null}
@@ -505,6 +536,14 @@
   }
   .chip.ok .g {
     background: var(--fg);
+  }
+  .card table td .tnm {
+    font-weight: 600;
+  }
+  .card table td .tsub {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-faint);
   }
   .bar {
     margin-bottom: 14px;
