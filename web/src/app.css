@@ -5,6 +5,17 @@
    steer off the tokens below. Dark-first; the token layout leaves room for a
    light theme that only re-points tokens, never component CSS. */
 
+/* Self-hosted so Cyrillic labels/data render in the intended mono rather than a
+   system fallback. Latin+Cyrillic subset, variable weight, ligatures dropped so
+   version strings and hashes don't fuse (-> == !=). */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('./fonts/JetBrainsMono-subset.woff2') format('woff2');
+}
+
 :root {
   /* surfaces -- pure black field, values taken verbatim from the Nothing tile */
   --bg: #000000;
