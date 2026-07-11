@@ -219,39 +219,43 @@
 
   <div class="panel">
     {#each mods as m (m.mod_id)}
-      <div class="mod">
+      <div class="mod" class:open={openId === m.mod_id}>
         <div
           class="modrow"
           role="button"
           tabindex="0"
+          aria-expanded={openId === m.mod_id}
           onclick={() => toggle(m)}
           onkeydown={(e) => {
-            if (e.target !== e.currentTarget) return;
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
               toggle(m);
             }
           }}
         >
-          <ModIcon name={m.name} source={{ type: 'smrt_static', rel_path: '' }} size={30} mono />
+          <span class="chev" aria-hidden="true">&#9656;</span>
+          <ModIcon name={m.name} source={{ type: 'smrt_static', rel_path: '' }} size={32} mono />
           <div class="minfo">
             <div class="mname">
-              {m.name}
-              {#if m.author}<span class="faint">· {t('mm.by', { author: m.author })}</span>{/if}
+              {m.name}{#if m.author}<span class="mby">{t('mm.by', { author: m.author })}</span>{/if}
             </div>
-            <div class="mfacets muted mono">
-              {#if m.loaders.length}{m.loaders.join(', ')}{/if}
-              {#if m.mc_versions.length} · {m.mc_versions.join(', ')}{/if}
-            </div>
+            {#if m.loaders.length || m.mc_versions.length}
+              <div class="mtags">
+                {#each m.loaders as l}<span class="tag">{l}</span>{/each}
+                {#each m.mc_versions as v}<span class="tag">{v}</span>{/each}
+              </div>
+            {/if}
           </div>
-          <button class="link sm" onclick={(e) => rename(m, e)} title={t('mm.renameTitle')}>
-            {t('mm.rename')}
-          </button>
-          <span class="cnt faint mono">{t('mirror.versionsN', { n: m.version_count })}</span>
+          <span class="cnt mono">{t('mirror.versionsN', { n: m.version_count })}</span>
         </div>
 
         {#if openId === m.mod_id}
           <div class="rels">
+            <div class="modactions">
+              <button class="link" onclick={(e) => rename(m, e)} title={t('mm.renameTitle')}>
+                {t('mm.rename')}
+              </button>
+            </div>
             {#if relLoading}
               <div class="muted s">{t('common.loading')}</div>
             {/if}
@@ -274,24 +278,21 @@
                     <div class="finfo">
                       <div class="fname">{f.filename ?? f.sha1.slice(0, 16)}</div>
                       <div class="fmeta muted mono">
-                        {f.targets.join(', ')}
-                        {#if f.mc_versions.length} · {f.mc_versions.join(', ')}{/if}
-                        · {fmtBytes(f.size_bytes)}
+                        {f.targets.join(', ')}{#if f.mc_versions.length} · {f.mc_versions.join(', ')}{/if}
+                        · {fmtBytes(f.size_bytes)}{#if !f.cached} · {t('mm.uncached')}{/if}
                       </div>
                     </div>
                     {#if f.modrinth_version_id}
                       <span class="chip verified" title="Modrinth-verified">{t('mm.verified')}</span>
                     {:else if modHasVerified}
-                      <span class="chip warn" title={t('mm.repackHint')}>{t('mm.repack')}</span>
+                      <span class="chip repack" title={t('mm.repackHint')}>{t('mm.repack')}</span>
                     {:else}
                       <span class="chip">{t('mm.selfhost')}</span>
                     {/if}
-                    <span class="chip src-{f.source}">{f.source}</span>
-                    <span class="chip" class:warn={!f.cached}>
-                      {f.cached ? t('mm.cached') : t('mm.uncached')}
-                    </span>
-                    <button class="link sm" onclick={() => editFile(f, rel, m.name)}>{t('mm.edit')}</button>
-                    <button class="link sm danger" onclick={() => delFile(f)}>{t('common.delete')}</button>
+                    <div class="factions">
+                      <button class="link" onclick={() => editFile(f, rel, m.name)}>{t('mm.edit')}</button>
+                      <button class="link danger" onclick={() => delFile(f)}>{t('common.delete')}</button>
+                    </div>
                   </div>
                 {/each}
               </div>
@@ -388,27 +389,55 @@
     background: transparent;
     border: none;
     border-radius: 0;
-    padding: var(--space-2) var(--space-2);
+    padding: var(--space-3);
+    cursor: pointer;
   }
   .modrow:hover {
     background: var(--panel-2);
+  }
+  .chev {
+    color: var(--fg-faint);
+    font-size: 11px;
+    flex: none;
+    transition: transform 0.15s ease;
+  }
+  .mod.open .chev {
+    transform: rotate(90deg);
+    color: var(--fg-dim);
   }
   .minfo {
     flex: 1;
     min-width: 0;
   }
   .mname {
-    font-size: 13px;
+    font-size: 14px;
+    font-weight: 600;
   }
-  .mfacets {
-    font-size: 11px;
-    margin-top: 2px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .mby {
+    color: var(--fg-faint);
+    font-size: 12px;
+    font-weight: 400;
+    margin-left: 6px;
+  }
+  .mtags {
+    display: flex;
+    gap: 5px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+  }
+  .modactions {
+    display: flex;
+    justify-content: flex-end;
+    padding: 0 0 4px;
+  }
+  .factions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
   }
   .cnt {
     font-size: 11px;
+    color: var(--fg-faint);
     flex-shrink: 0;
   }
   .rels {
@@ -454,29 +483,20 @@
   }
   .chip {
     font-size: 10px;
-    padding: 1px 6px;
+    padding: 1px 7px;
     border: 1px solid var(--seam);
     border-radius: 999px;
     color: var(--fg-dim);
     flex-shrink: 0;
   }
-  .chip.warn {
-    color: var(--warn);
-    border-color: color-mix(in srgb, var(--warn) 45%, transparent);
-  }
-  .chip.ch-dev {
-    color: var(--warn);
-  }
-  .chip.ch-beta {
-    color: var(--accent);
-  }
-  .chip.src-authored {
-    color: var(--ok);
-    border-color: color-mix(in srgb, var(--ok) 45%, transparent);
-  }
   .chip.verified {
-    color: var(--accent);
-    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+    color: var(--fg);
+    border-color: var(--seam-bright);
+  }
+  .chip.repack {
+    color: var(--red);
+    border-color: color-mix(in srgb, var(--red) 45%, var(--seam));
+    background: var(--red-soft);
   }
   .link {
     background: transparent;
