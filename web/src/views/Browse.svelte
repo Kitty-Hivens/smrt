@@ -521,10 +521,11 @@
     background: var(--fg-faint);
   }
   .chip.ok {
-    color: var(--fg);
+    color: var(--ok);
+    background: var(--ok-soft);
   }
   .chip.ok .g {
-    background: var(--fg);
+    background: var(--ok);
   }
   .seclabel {
     font-family: var(--mono);

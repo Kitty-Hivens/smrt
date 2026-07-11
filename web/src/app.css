@@ -36,15 +36,20 @@
   --solid: #ffffff;
   --on-solid: #000000;
 
-  /* the single colour: red, for anything that needs attention */
+  /* red still marks the active nav bar and hard alerts */
   --red: #ff3b30;
   --red-soft: rgba(255, 59, 48, 0.14);
-  /* status names kept for components; ok reads as plain emphasis, warn/danger
-     both fold into the one red */
-  --ok: #ffffff;
-  --warn: #ff3b30;
-  --danger: #ff3b30;
-  --danger-soft: rgba(255, 59, 48, 0.14);
+
+  /* extended semantic palette on the dark field -- colour carries state
+     (ok/built green, warn/repack amber, danger red, info/verified blue) */
+  --ok: #4ecb8b;
+  --ok-soft: rgba(78, 203, 139, 0.14);
+  --warn: #ebb552;
+  --warn-soft: rgba(235, 181, 82, 0.14);
+  --danger: #f0576a;
+  --danger-soft: rgba(240, 87, 106, 0.14);
+  --info: #58a6f0;
+  --info-soft: rgba(88, 166, 240, 0.14);
 
   /* spacing scale */
   --space-1: 4px;

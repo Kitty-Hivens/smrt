@@ -490,13 +490,14 @@
     flex-shrink: 0;
   }
   .chip.verified {
-    color: var(--fg);
-    border-color: var(--seam-bright);
+    color: var(--info);
+    border-color: color-mix(in srgb, var(--info) 45%, var(--seam));
+    background: var(--info-soft);
   }
   .chip.repack {
-    color: var(--red);
-    border-color: color-mix(in srgb, var(--red) 45%, var(--seam));
-    background: var(--red-soft);
+    color: var(--warn);
+    border-color: color-mix(in srgb, var(--warn) 45%, var(--seam));
+    background: var(--warn-soft);
   }
   .link {
     background: transparent;
