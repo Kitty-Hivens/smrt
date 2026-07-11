@@ -21,6 +21,10 @@
   let unassigned = $state<UnassignedJar[]>([]);
   let removed = $state<string[]>([]);
   let authoring = $state<string[]>([]);
+  let cacheBytes = $state(0);
+  let modRows = $state<
+    { m: ModSummary; prov: 'verified' | 'self' | 'repack'; version: string; sha: string }[]
+  >([]);
   let err = $state('');
   let loading = $state(true);
 
@@ -28,13 +32,14 @@
     loading = true;
     err = '';
     try {
-      const [p, s, md, u, a, rm] = await Promise.all([
+      const [p, s, md, u, a, rm, ci] = await Promise.all([
         api.packs(),
         api.servers(),
         api.registryMods(),
         api.unassigned(),
         api.authoringPacks(),
         api.removed(),
+        api.cacheInventory(),
       ]);
       packs = p.packs;
       servers = s.servers;
@@ -42,6 +47,25 @@
       unassigned = u;
       authoring = a.packs;
       removed = rm.removed;
+      cacheBytes = ci.entries.reduce((n, e) => n + e.size_bytes, 0);
+      // provenance for the mods shown on the overview: a file Modrinth confirmed
+      // is verified; a self-hosted file under a mod that also has a verified one
+      // is a likely repackage (mm's rule), everything else is self-hosted.
+      modRows = await Promise.all(
+        md.slice(0, 8).map(async (m) => {
+          try {
+            const rels = await api.modReleases(m.mod_id);
+            const files = rels.flatMap((r) => r.files);
+            const verified = files.some((f) => f.modrinth_version_id);
+            const selfHosted = files.some((f) => !f.modrinth_version_id);
+            const prov: 'verified' | 'self' | 'repack' =
+              verified && selfHosted ? 'repack' : verified ? 'verified' : 'self';
+            return { m, prov, version: rels[0]?.version_number ?? '-', sha: files[0]?.sha1 ?? '' };
+          } catch {
+            return { m, prov: 'self' as const, version: '-', sha: '' };
+          }
+        }),
+      );
     } catch (e) {
       err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
     } finally {
@@ -76,6 +100,26 @@
   const featPackCount = $derived(packs.filter((p) => p.featured).length);
   const featServerCount = $derived(servers.filter((s) => s.featured).length);
 
+  // recent builds: built packs, newest first by the date baked into the version
+  // slug (SNAPSHOT-<ver>-<YYYY.MM.DD>). No separate build log to read.
+  const recentBuilds = $derived(
+    packs
+      .filter((p) => p.latest_pack_version)
+      .map((p) => ({
+        pack: p.display_name,
+        ver: p.latest_pack_version,
+        date: p.latest_pack_version.match(/(\d{4}\.\d{2}\.\d{2})/)?.[1] ?? '',
+      }))
+      .sort((a, b) => b.date.localeCompare(a.date)),
+  );
+  const cacheSize = $derived(
+    cacheBytes >= 1e9
+      ? `${(cacheBytes / 1e9).toFixed(1)} GB`
+      : cacheBytes >= 1e6
+        ? `${(cacheBytes / 1e6).toFixed(0)} MB`
+        : `${Math.max(1, Math.round(cacheBytes / 1e3))} KB`,
+  );
+
   async function newPack() {
     const id = (
       await dialogs.prompt(t('packs.newPrompt'), { title: t('packs.new') })
@@ -96,6 +140,7 @@
   <div class="body">
     {#if route.section === 'overview'}
       <section class="ov">
+        <div class="seclabel">{t('overview.status')}</div>
         <div class="readout">
           <div class="stat">
             <div class="k">{t('overview.packs')}</div>
@@ -112,9 +157,9 @@
             </div>
           </div>
           <div class="stat">
-            <div class="k">{t('overview.servers')}</div>
-            <div class="v">{servers.length}</div>
-            <div class="s">{t('overview.featured')}: {featPackCount} / {featServerCount}</div>
+            <div class="k">{t('overview.cache')}</div>
+            <div class="v">{cacheSize}</div>
+            <div class="s">{t('overview.servers')}: {servers.length}</div>
           </div>
           <div class="stat">
             <div class="k">{#if removed.length}<span class="d"></span>{/if}{t('overview.takedown')}</div>
@@ -165,68 +210,67 @@
           </div>
 
           <div class="card">
-            <h3>{t('overview.servers')}</h3>
-            {#each servers as s}
-              <div
-                class="lrow clickable"
-                role="button"
-                tabindex="0"
-                onclick={() => {
-                  route.go('servers');
-                  serverEdit = s;
-                }}
-                onkeydown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    route.go('servers');
-                    serverEdit = s;
-                  }
-                }}
-              >
-                <div class="lcol">
-                  <div class="nm">{s.display_name}</div>
-                  <div class="mm">{s.pack_id} &middot; {s.owner_display}</div>
-                </div>
-                <div class="grow"></div>
-                {#if s.featured}<span class="chip ok"><span class="g"></span>{t('packs.flag.featured')}</span>{/if}
+            <h3>{t('overview.recent')}</h3>
+            {#each recentBuilds as b}
+              <div class="frow">
+                <span class="ft">{b.date || '—'}</span>
+                <span class="fx"><b>{b.pack}</b> {t('overview.built')} &middot; <span class="mono">{b.ver}</span></span>
               </div>
             {/each}
-            {#if servers.length === 0 && !loading}
-              <div class="lrow"><span class="muted">{t('servers.empty')}</span></div>
+            {#if recentBuilds.length === 0 && !loading}
+              <div class="frow"><span class="muted">{t('overview.noBuilds')}</span></div>
             {/if}
           </div>
         </div>
 
-        {#if mods.length}
-          <div class="card">
-            <h3>{t('overview.mods')} ({mods.length})</h3>
-            <div class="scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{t('overview.col.mod')}</th>
-                    <th>{t('overview.col.loader')}</th>
-                    <th>{t('packs.col.mc')}</th>
-                    <th>{t('overview.col.versions')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each mods.slice(0, 8) as m}
+        {#if modRows.length}
+          <div>
+            <div class="seclabel">{t('overview.provenance')} ({mods.length})</div>
+            <div class="card">
+              <div class="scroll">
+                <table>
+                  <thead>
                     <tr>
-                      <td>
-                        <div class="tnm">{m.name}</div>
-                        {#if m.slug}<div class="tsub">{m.slug}</div>{/if}
-                      </td>
-                      <td>{#each m.loaders as l}<span class="tag">{l}</span> {/each}</td>
-                      <td class="mono">{m.mc_versions.join(', ')}</td>
-                      <td class="mono">{m.version_count}</td>
+                      <th>{t('overview.col.mod')}</th>
+                      <th>{t('overview.col.release')}</th>
+                      <th>{t('overview.col.loader')}</th>
+                      <th>{t('overview.col.provenance')}</th>
+                      <th>SHA1</th>
                     </tr>
-                  {/each}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {#each modRows as r}
+                      <tr>
+                        <td>
+                          <div class="tnm">{r.m.name}</div>
+                          {#if r.m.slug}<div class="tsub">{r.m.slug}</div>{/if}
+                        </td>
+                        <td class="mono">{r.version}</td>
+                        <td>{#each r.m.loaders as l}<span class="tag">{l}</span> {/each}</td>
+                        <td>
+                          {#if r.prov === 'verified'}
+                            <span class="chip ok"><span class="g"></span>{t('mm.verified')}</span>
+                          {:else if r.prov === 'repack'}
+                            <span class="chip alert"><span class="g"></span>{t('mm.repack')}</span>
+                          {:else}
+                            <span class="chip"><span class="g"></span>{t('mm.selfhost')}</span>
+                          {/if}
+                        </td>
+                        <td class="mono shacell">{r.sha ? `${r.sha.slice(0, 6)}…${r.sha.slice(-4)}` : '—'}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         {/if}
+
+        <div class="seclabel">{t('overview.controls')}</div>
+        <div class="controls">
+          <button class="primary" onclick={newPack}>{t('packs.new')}</button>
+          <button onclick={loadAll} disabled={loading}>{t('shell.refresh')}</button>
+        </div>
       </section>
     {:else if route.section === 'packs'}
       {#if packEdit !== null}
@@ -544,6 +588,55 @@
     font-family: var(--mono);
     font-size: 11px;
     color: var(--fg-faint);
+  }
+  .shacell {
+    color: var(--fg-faint);
+    font-size: 11.5px;
+  }
+  .seclabel {
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+    margin-bottom: -4px;
+  }
+  .frow {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    padding: 10px var(--space-4);
+    border-bottom: 1px solid var(--seam);
+    font-size: 13px;
+  }
+  .frow:last-child {
+    border-bottom: none;
+  }
+  .frow .ft {
+    color: var(--fg-faint);
+    font-size: 11px;
+    white-space: nowrap;
+    font-family: var(--mono);
+  }
+  .frow .fx {
+    color: var(--fg-dim);
+  }
+  .frow .fx b {
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .chip.alert {
+    color: var(--red);
+    background: var(--red-soft);
+  }
+  .chip.alert .g {
+    background: var(--red);
+  }
+  .controls {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    align-items: center;
   }
   .bar {
     margin-bottom: 14px;
