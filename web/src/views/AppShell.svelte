@@ -62,8 +62,9 @@
     <header class="topbar">
       <div class="crumb"><span class="faint">smrt /</span> {t(navKey[route.section])}</div>
       <div class="spacer"></div>
-      <button class="refresh" onclick={() => reload.request()} disabled={reload.busy}>
-        {reload.busy ? t('common.loading') : t('shell.refresh')}
+      <button class="refresh" class:busy={reload.busy} onclick={() => reload.request()} disabled={reload.busy}>
+        <span class="rlabel">{t('shell.refresh')}</span>
+        <span class="spin" aria-hidden="true"></span>
       </button>
       <div class="locale" role="group" aria-label={t('shell.locale')}>
         {#each LOCALES as loc}
@@ -205,12 +206,42 @@
     color: var(--fg-faint);
   }
   .refresh {
+    position: relative;
     font-family: var(--mono);
     font-size: 11px;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     padding: 6px 12px;
     margin-right: var(--space-3);
+  }
+  .refresh .spin {
+    display: none;
+  }
+  .refresh.busy .rlabel {
+    visibility: hidden;
+  }
+  .refresh.busy .spin {
+    display: block;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    margin: -7px 0 0 -7px;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--seam-bright);
+    border-top-color: var(--fg);
+    border-radius: 50%;
+    animation: refresh-spin 0.6s linear infinite;
+  }
+  @keyframes refresh-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .refresh.busy .spin {
+      animation: none;
+    }
   }
   .locale {
     display: inline-flex;

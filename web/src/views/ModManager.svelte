@@ -217,7 +217,7 @@
 
   <input class="search" bind:value={q} oninput={onSearch} placeholder={t('mm.search')} />
 
-  <div class="panel">
+  <div class="panel modlist">
     {#each mods as m (m.mod_id)}
       <div class="mod" class:open={openId === m.mod_id}>
         <div
@@ -377,8 +377,14 @@
   .search {
     max-width: 420px;
   }
+  .modlist {
+    overflow: hidden;
+  }
   .mod {
     border-bottom: 1px solid var(--seam);
+  }
+  .mod:last-child {
+    border-bottom: none;
   }
   .modrow {
     display: flex;
