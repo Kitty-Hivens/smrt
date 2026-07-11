@@ -2,6 +2,7 @@
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
+  import { reload } from '../lib/reload.svelte';
   import { t } from '../lib/i18n.svelte';
   import type { ModSummary, PackSummary, ServerEntry, UnassignedJar } from '../lib/types';
   import ServerEditor from './ServerEditor.svelte';
@@ -22,6 +23,7 @@
   let removed = $state<string[]>([]);
   let authoring = $state<string[]>([]);
   let cacheBytes = $state(0);
+  let cacheCount = $state(0);
   let modRows = $state<
     { m: ModSummary; prov: 'verified' | 'self' | 'repack'; version: string; sha: string }[]
   >([]);
@@ -30,6 +32,7 @@
 
   async function loadAll() {
     loading = true;
+    reload.setBusy(true);
     err = '';
     try {
       const [p, s, md, u, a, rm, ci] = await Promise.all([
@@ -48,6 +51,7 @@
       authoring = a.packs;
       removed = rm.removed;
       cacheBytes = ci.entries.reduce((n, e) => n + e.size_bytes, 0);
+      cacheCount = ci.entries.length;
       // provenance for the mods shown on the overview: a file Modrinth confirmed
       // is verified; a self-hosted file under a mod that also has a verified one
       // is a likely repackage (mm's rule), everything else is self-hosted.
@@ -70,9 +74,14 @@
       err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
     } finally {
       loading = false;
+      reload.setBusy(false);
     }
   }
   loadAll();
+  // the shell's top-bar refresh bumps reload.count; reload when it does
+  $effect(() => {
+    if (reload.count > 0) loadAll();
+  });
 
   async function delServer(id: string) {
     const ok = await dialogs.confirm(t('servers.deleteMsg', { id }), {
@@ -112,13 +121,14 @@
       }))
       .sort((a, b) => b.date.localeCompare(a.date)),
   );
-  const cacheSize = $derived(
+  const cacheNum = $derived(
     cacheBytes >= 1e9
-      ? `${(cacheBytes / 1e9).toFixed(1)} GB`
+      ? (cacheBytes / 1e9).toFixed(1)
       : cacheBytes >= 1e6
-        ? `${(cacheBytes / 1e6).toFixed(0)} MB`
-        : `${Math.max(1, Math.round(cacheBytes / 1e3))} KB`,
+        ? (cacheBytes / 1e6).toFixed(0)
+        : `${Math.max(1, Math.round(cacheBytes / 1e3))}`,
   );
+  const cacheUnit = $derived(cacheBytes >= 1e9 ? 'GB' : cacheBytes >= 1e6 ? 'MB' : 'KB');
 
   async function newPack() {
     const id = (
@@ -129,12 +139,6 @@
 </script>
 
 <div class="view">
-  <div class="toolbar">
-    <button onclick={loadAll} disabled={loading}>
-      {loading ? t('common.loading') : t('shell.refresh')}
-    </button>
-  </div>
-
   {#if err}<div class="err mono">{err}</div>{/if}
 
   <div class="body">
@@ -158,8 +162,8 @@
           </div>
           <div class="stat">
             <div class="k">{t('overview.cache')}</div>
-            <div class="v">{cacheSize}</div>
-            <div class="s">{t('overview.servers')}: {servers.length}</div>
+            <div class="v">{cacheNum}<small class="unit">{cacheUnit}</small></div>
+            <div class="s">{cacheCount} jar</div>
           </div>
           <div class="stat">
             <div class="k">{#if removed.length}<span class="d"></span>{/if}{t('overview.takedown')}</div>
@@ -269,7 +273,6 @@
         <div class="seclabel">{t('overview.controls')}</div>
         <div class="controls">
           <button class="primary" onclick={newPack}>{t('packs.new')}</button>
-          <button onclick={loadAll} disabled={loading}>{t('shell.refresh')}</button>
         </div>
       </section>
     {:else if route.section === 'packs'}
@@ -416,10 +419,6 @@
     flex-direction: column;
     gap: var(--space-4);
   }
-  .toolbar {
-    display: flex;
-    justify-content: flex-end;
-  }
   .body {
     min-width: 0;
   }
@@ -479,6 +478,12 @@
     font-variant-numeric: tabular-nums;
     letter-spacing: 0;
     margin-top: 6px;
+  }
+  .stat .v .unit {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--fg-dim);
+    margin-left: 3px;
   }
   .stat .s {
     font-size: 11.5px;

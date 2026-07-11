@@ -3,6 +3,7 @@
   import { api } from '../lib/api';
   import type { Health } from '../lib/types';
   import { route, SECTIONS, type Section } from '../lib/route.svelte';
+  import { reload } from '../lib/reload.svelte';
   import { t, i18n, LOCALES } from '../lib/i18n.svelte';
 
   let { onLogout, children }: { onLogout: () => void; children: Snippet } = $props();
@@ -59,7 +60,11 @@
 
   <div class="main">
     <header class="topbar">
+      <div class="crumb"><span class="faint">smrt /</span> {t(navKey[route.section])}</div>
       <div class="spacer"></div>
+      <button class="refresh" onclick={() => reload.request()} disabled={reload.busy}>
+        {reload.busy ? t('common.loading') : t('shell.refresh')}
+      </button>
       <div class="locale" role="group" aria-label={t('shell.locale')}>
         {#each LOCALES as loc}
           <button
@@ -188,6 +193,24 @@
     align-items: center;
     padding: var(--space-3) var(--space-5);
     border-bottom: 1px solid var(--seam);
+  }
+  .crumb {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--fg);
+  }
+  .crumb .faint {
+    color: var(--fg-faint);
+  }
+  .refresh {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 6px 12px;
+    margin-right: var(--space-3);
   }
   .locale {
     display: inline-flex;
