@@ -87,6 +87,10 @@ body {
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  /* Firefox scrollbars: the ::-webkit rules below don't apply there, so the
+     default light scrollbar drew a bright line on the black field. Inherits. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--seam-bright) transparent;
 }
 
 #app {

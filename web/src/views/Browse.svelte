@@ -229,7 +229,7 @@
 
         {#if modRows.length}
           <div>
-            <div class="seclabel">{t('overview.provenance')} ({mods.length})</div>
+            <div class="seclabel">{t('overview.mods')} ({mods.length})</div>
             <div class="card">
               <div class="scroll">
                 <table>
