@@ -24,9 +24,6 @@
   let authoring = $state<string[]>([]);
   let cacheBytes = $state(0);
   let cacheCount = $state(0);
-  let modRows = $state<
-    { m: ModSummary; prov: 'verified' | 'self' | 'repack'; version: string; sha: string }[]
-  >([]);
   let err = $state('');
   let loading = $state(true);
 
@@ -52,24 +49,6 @@
       removed = rm.removed;
       cacheBytes = ci.entries.reduce((n, e) => n + e.size_bytes, 0);
       cacheCount = ci.entries.length;
-      // provenance for the mods shown on the overview: a file Modrinth confirmed
-      // is verified; a self-hosted file under a mod that also has a verified one
-      // is a likely repackage (mm's rule), everything else is self-hosted.
-      modRows = await Promise.all(
-        md.slice(0, 8).map(async (m) => {
-          try {
-            const rels = await api.modReleases(m.mod_id);
-            const files = rels.flatMap((r) => r.files);
-            const verified = files.some((f) => f.modrinth_version_id);
-            const selfHosted = files.some((f) => !f.modrinth_version_id);
-            const prov: 'verified' | 'self' | 'repack' =
-              verified && selfHosted ? 'repack' : verified ? 'verified' : 'self';
-            return { m, prov, version: rels[0]?.version_number ?? '-', sha: files[0]?.sha1 ?? '' };
-          } catch {
-            return { m, prov: 'self' as const, version: '-', sha: '' };
-          }
-        }),
-      );
     } catch (e) {
       err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
     } finally {
@@ -226,49 +205,6 @@
             {/if}
           </div>
         </div>
-
-        {#if modRows.length}
-          <div>
-            <div class="seclabel">{t('overview.mods')} ({mods.length})</div>
-            <div class="card">
-              <div class="scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>{t('overview.col.mod')}</th>
-                      <th>{t('overview.col.release')}</th>
-                      <th>{t('overview.col.loader')}</th>
-                      <th>{t('overview.col.provenance')}</th>
-                      <th>SHA1</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {#each modRows as r}
-                      <tr>
-                        <td>
-                          <div class="tnm">{r.m.name}</div>
-                          {#if r.m.slug}<div class="tsub">{r.m.slug}</div>{/if}
-                        </td>
-                        <td class="mono">{r.version}</td>
-                        <td>{#each r.m.loaders as l}<span class="tag">{l}</span> {/each}</td>
-                        <td>
-                          {#if r.prov === 'verified'}
-                            <span class="chip ok"><span class="g"></span>{t('mm.verified')}</span>
-                          {:else if r.prov === 'repack'}
-                            <span class="chip alert"><span class="g"></span>{t('mm.repack')}</span>
-                          {:else}
-                            <span class="chip"><span class="g"></span>{t('mm.selfhost')}</span>
-                          {/if}
-                        </td>
-                        <td class="mono shacell">{r.sha ? `${r.sha.slice(0, 6)}…${r.sha.slice(-4)}` : '—'}</td>
-                      </tr>
-                    {/each}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        {/if}
 
         <div class="seclabel">{t('overview.controls')}</div>
         <div class="controls">
@@ -590,18 +526,6 @@
   .chip.ok .g {
     background: var(--fg);
   }
-  .card table td .tnm {
-    font-weight: 600;
-  }
-  .card table td .tsub {
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--fg-faint);
-  }
-  .shacell {
-    color: var(--fg-faint);
-    font-size: 11.5px;
-  }
   .seclabel {
     font-family: var(--mono);
     font-size: 11px;
@@ -634,13 +558,6 @@
   .frow .fx b {
     color: var(--fg);
     font-weight: 600;
-  }
-  .chip.alert {
-    color: var(--red);
-    background: var(--red-soft);
-  }
-  .chip.alert .g {
-    background: var(--red);
   }
   .controls {
     display: flex;
