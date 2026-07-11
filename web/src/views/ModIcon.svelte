@@ -11,8 +11,16 @@
     iconUrl = null,
     source,
     size = 34,
-  }: { name: string; iconUrl?: string | null; source: Source | SourceDecl; size?: number } =
-    $props();
+    mono = false,
+  }: {
+    name: string;
+    iconUrl?: string | null;
+    source: Source | SourceDecl;
+    size?: number;
+    // monochrome letter fallback for the control panel; the launcher preview
+    // keeps the hashed colour
+    mono?: boolean;
+  } = $props();
 
   const avatar = $derived(letterAvatar(name));
   const explicit = $derived(iconUrl?.trim() || null);
@@ -60,9 +68,10 @@
 {:else}
   <span
     class="mi avatar"
-    style="width:{size}px;height:{size}px;background:{avatar.color};font-size:{Math.round(
-      size * 0.4,
-    )}px"
+    class:mono
+    style="width:{size}px;height:{size}px;font-size:{Math.round(size * 0.4)}px{mono
+      ? ''
+      : `;background:${avatar.color}`}"
     aria-label={name}>{avatar.initials}</span
   >
 {/if}
@@ -81,5 +90,9 @@
     font-weight: 600;
     letter-spacing: -0.02em;
     user-select: none;
+  }
+  .avatar.mono {
+    background: var(--panel-3);
+    color: var(--fg-dim);
   }
 </style>

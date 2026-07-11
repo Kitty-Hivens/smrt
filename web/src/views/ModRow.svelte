@@ -40,7 +40,7 @@
     title={locked ? t('mr.lockedHint') : t('mr.optionalHint')}
     onchange={(e) => onToggle(e.currentTarget.checked)}
   />
-  <ModIcon name={mod.filename} iconUrl={d?.icon_url} source={mod.source} size={34} />
+  <ModIcon name={mod.filename} iconUrl={d?.icon_url} source={mod.source} size={34} mono />
   <div class="meta">
     <div class="l1">
       <span class="nm">{modName(mod)}</span>

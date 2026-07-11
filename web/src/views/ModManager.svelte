@@ -233,7 +233,7 @@
             }
           }}
         >
-          <ModIcon name={m.name} source={{ type: 'smrt_static', rel_path: '' }} size={30} />
+          <ModIcon name={m.name} source={{ type: 'smrt_static', rel_path: '' }} size={30} mono />
           <div class="minfo">
             <div class="mname">
               {m.name}
@@ -269,6 +269,7 @@
                       name={f.filename ?? m.name}
                       source={{ type: 'smrt_cache', sha1: f.sha1 }}
                       size={22}
+                      mono
                     />
                     <div class="finfo">
                       <div class="fname">{f.filename ?? f.sha1.slice(0, 16)}</div>

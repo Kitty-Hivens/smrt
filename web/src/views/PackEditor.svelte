@@ -599,7 +599,7 @@
           <div class="mods">
             {#each cfg.mods as m, i (m)}
               <div class="modrow">
-                <ModIcon name={m.filename} iconUrl={m.display?.icon_url} source={m.source} size={24} />
+                <ModIcon name={m.filename} iconUrl={m.display?.icon_url} source={m.source} size={24} mono />
                 <input class="fn mono" bind:value={m.filename} placeholder={t('pe.filename')} />
                 <select
                   class="srcsel"
