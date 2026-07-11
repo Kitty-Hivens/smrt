@@ -73,12 +73,12 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-2);
-    padding: var(--space-4);
+    padding: 10px var(--space-4);
     border: 1px dashed var(--seam-bright);
     border-radius: var(--radius-md);
     background: var(--bg-2);
     color: var(--fg-dim);
-    font-size: 13px;
+    font-size: 12.5px;
     cursor: pointer;
     text-align: center;
     transition:
