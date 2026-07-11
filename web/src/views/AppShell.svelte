@@ -83,25 +83,28 @@
 <style>
   .shell {
     display: grid;
-    grid-template-columns: 232px minmax(0, 1fr);
+    grid-template-columns: 224px minmax(0, 1fr);
     height: 100%;
+    background-color: var(--bg);
+    background-image: radial-gradient(var(--dotfield) 1px, transparent 1px);
+    background-size: 20px 20px;
   }
   .rail {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: 2px;
     padding: var(--space-4) var(--space-3);
     border-right: 1px solid var(--seam);
-    background: var(--bg-2);
+    background: color-mix(in srgb, var(--panel) 55%, transparent);
   }
   .brand {
     display: flex;
     align-items: center;
     gap: 9px;
-    font-family: var(--sans);
-    font-weight: 680;
+    font-family: var(--mono);
+    font-weight: 700;
     font-size: 15px;
-    letter-spacing: -0.01em;
+    letter-spacing: 0;
     padding: var(--space-2) var(--space-3) var(--space-5);
   }
   .brand .mk {
@@ -124,24 +127,37 @@
     gap: 2px;
   }
   .item {
+    position: relative;
     width: 100%;
     text-align: left;
     background: transparent;
-    border: 1px solid transparent;
+    border: none;
     border-radius: var(--radius-sm);
-    padding: 9px 12px;
+    padding: 10px 12px 10px 14px;
     color: var(--fg-dim);
-    font-size: 14px;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     box-shadow: none;
   }
   .item:hover {
     background: var(--panel-2);
-    border-color: transparent;
     color: var(--fg);
   }
   .item.active {
-    background: var(--accent-soft);
-    color: var(--accent-strong);
+    background: transparent;
+    color: var(--fg);
+  }
+  .item.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    border-radius: 3px;
+    background: var(--red);
   }
   .spacer {
     flex: 1;

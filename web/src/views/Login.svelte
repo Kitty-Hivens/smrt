@@ -53,6 +53,9 @@
     align-content: center;
     height: 100%;
     gap: var(--space-5);
+    background-color: var(--bg);
+    background-image: radial-gradient(var(--dotfield) 1px, transparent 1px);
+    background-size: 20px 20px;
   }
   .locale {
     position: absolute;
@@ -91,10 +94,10 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    font-family: var(--sans);
-    font-weight: 680;
+    font-family: var(--mono);
+    font-weight: 700;
     font-size: 20px;
-    letter-spacing: -0.01em;
+    letter-spacing: 0;
   }
   .brand .mk {
     width: 24px;

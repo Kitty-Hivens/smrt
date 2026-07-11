@@ -473,10 +473,11 @@
     background: var(--red);
   }
   .stat .v {
+    font-family: var(--mono);
     font-size: 30px;
-    font-weight: 700;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     margin-top: 6px;
   }
   .stat .s {
@@ -502,8 +503,11 @@
     box-shadow: var(--shadow-1);
   }
   .card h3 {
-    font-size: 12px;
+    font-family: var(--mono);
+    font-size: 11px;
     font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     color: var(--fg-dim);
     margin: 0;
     padding: var(--space-3) var(--space-4);
@@ -594,9 +598,10 @@
     font-size: 11.5px;
   }
   .seclabel {
-    font-size: 11.5px;
+    font-family: var(--mono);
+    font-size: 11px;
     font-weight: 600;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--fg-faint);
     margin-bottom: -4px;
