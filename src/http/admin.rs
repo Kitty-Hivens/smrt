@@ -41,6 +41,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/admin/packs/:pack_id/config/revert",
             post(revert_pack_config),
         )
+        .route("/v1/admin/packs/:pack_id/duplicate", post(duplicate_pack))
         .route("/v1/admin/featured", post(save_featured))
         .route("/v1/admin/packs/:pack_id/validate", post(validate_pack))
         .route("/v1/admin/cache/removed", get(list_removed))
@@ -527,6 +528,32 @@ async fn revert_pack_config(
     let cfg = reconstruct_config(&manifest, &summary);
     state.storage.save_pack_config(&pack_id, &cfg).await?;
     Ok(Json(cfg))
+}
+
+#[derive(serde::Deserialize)]
+struct DuplicatePackReq {
+    target_id: String,
+    // Optional loader override, so a loader variant (e.g. a Cleanroom trial of a
+    // Forge pack) is one call. Absent -> keep the source loader.
+    #[serde(default)]
+    loader: Option<LoaderSpec>,
+}
+
+// Clone a curated pack under a new id -- copy config + the per-pack static tree,
+// with an optional loader override -- leaving the source untouched. The shared
+// content-addressed cache means mod sources resolve without re-upload; the
+// operator builds the new pack via the usual build endpoint. This is the
+// single-admin primitive; ownership-aware forks (#36) layer on top of it.
+async fn duplicate_pack(
+    State(state): State<AppState>,
+    Path(pack_id): Path<String>,
+    Json(req): Json<DuplicatePackReq>,
+) -> Result<(StatusCode, Json<PackConfig>), ApiError> {
+    let cfg = state
+        .storage
+        .duplicate_pack(&pack_id, &req.target_id, req.loader)
+        .await?;
+    Ok((StatusCode::CREATED, Json(cfg)))
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────

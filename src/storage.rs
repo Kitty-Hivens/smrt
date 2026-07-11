@@ -208,6 +208,56 @@ impl Storage {
         serde_json::from_slice(&bytes).map_err(json_err)
     }
 
+    /// Clone an existing pack's authoring inputs under a new id: copy its
+    /// `authoring/config.json` with `pack_id` rewritten (and the loader
+    /// optionally overridden, for a loader-variant fork), then copy the whole
+    /// per-pack `static/` tree. The mod cache is content-addressed and shared,
+    /// so every `smrt_cache` / Modrinth source resolves under the new pack with
+    /// no jar re-upload. Returns the new config.
+    ///
+    /// Refuses to overwrite a target that already has a config, so a variant
+    /// can never clobber a working pack. Static is copied before the config is
+    /// written -- a pack "exists" only once its config lands, so a mid-copy
+    /// failure leaves no config.json and a retry runs clean.
+    pub async fn duplicate_pack(
+        &self,
+        from: &str,
+        to: &str,
+        loader: Option<LoaderSpec>,
+    ) -> Result<PackConfig, ApiError> {
+        if !is_safe_id(to) {
+            return Err(ApiError::BadRequest("invalid target pack id".into()));
+        }
+        if from == to {
+            return Err(ApiError::BadRequest(
+                "source and target pack id are the same".into(),
+            ));
+        }
+        if fs::metadata(self.authoring_path(to, "config.json"))
+            .await
+            .is_ok()
+        {
+            return Err(ApiError::Conflict(format!(
+                "pack {to:?} already has a config"
+            )));
+        }
+
+        let mut cfg = self.load_pack_config(from).await?;
+        cfg.pack_id = to.to_string();
+        if let Some(loader) = loader {
+            cfg.loader = loader;
+        }
+
+        for rel in self.list_pack_static(from).await? {
+            let bytes = fs::read(self.pack_static_path(from, &rel)?)
+                .await
+                .map_err(io_err)?;
+            self.save_pack_static(to, &rel, &bytes).await?;
+        }
+        self.save_pack_config(to, &cfg).await?;
+        Ok(cfg)
+    }
+
     /// Pack ids that have authoring inputs (an `authoring/config.json`),
     /// including packs not yet built (so no summary.json). Sorted.
     pub async fn list_authoring_packs(&self) -> Result<Vec<String>, ApiError> {
@@ -718,5 +768,66 @@ mod tests {
             s.list_authoring_packs().await.unwrap(),
             vec!["Industrial".to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn duplicate_pack_clones_config_and_static_with_loader_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        s.save_pack_config("Industrial", &sample_config())
+            .await
+            .unwrap();
+        s.save_pack_static("Industrial", "config/foamfix.cfg", b"a=1")
+            .await
+            .unwrap();
+
+        let cleanroom = LoaderSpec {
+            name: "cleanroom".into(),
+            version: "0.2.3".into(),
+        };
+        let new_cfg = s
+            .duplicate_pack("Industrial", "Industrial-cleanroom", Some(cleanroom))
+            .await
+            .unwrap();
+
+        // returned + persisted config carries the new id and the overridden loader
+        assert_eq!(new_cfg.pack_id, "Industrial-cleanroom");
+        assert_eq!(new_cfg.loader.name, "cleanroom");
+        let loaded = s.load_pack_config("Industrial-cleanroom").await.unwrap();
+        assert_eq!(loaded.loader.version, "0.2.3");
+
+        // static tree copied verbatim
+        assert_eq!(
+            s.list_pack_static("Industrial-cleanroom").await.unwrap(),
+            vec!["config/foamfix.cfg".to_string()]
+        );
+
+        // source is untouched -- still Forge
+        let src = s.load_pack_config("Industrial").await.unwrap();
+        assert_eq!(src.loader.name, "forge");
+    }
+
+    #[tokio::test]
+    async fn duplicate_pack_refuses_existing_target_and_self() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        s.save_pack_config("Industrial", &sample_config())
+            .await
+            .unwrap();
+        s.save_pack_config("Taken", &sample_config()).await.unwrap();
+
+        assert!(matches!(
+            s.duplicate_pack("Industrial", "Taken", None).await,
+            Err(ApiError::Conflict(_))
+        ));
+        assert!(matches!(
+            s.duplicate_pack("Industrial", "Industrial", None).await,
+            Err(ApiError::BadRequest(_))
+        ));
+        // unknown source -> NotFound (from the underlying config load)
+        assert!(matches!(
+            s.duplicate_pack("Nope", "Fresh", None).await,
+            Err(ApiError::NotFound)
+        ));
     }
 }
