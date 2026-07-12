@@ -184,6 +184,13 @@
     } while (n >= 1024 && i < u.length - 1);
     return `${n.toFixed(1)} ${u[i]}`;
   }
+
+  // Wide mods span many MC versions; the backend returns them oldest-first, so a
+  // long run collapses to its bounds plus a count rather than a flat tag soup.
+  function mcFacet(vs: string[]): { span: boolean; items: string[]; count: number } {
+    if (vs.length <= 4) return { span: false, items: vs, count: vs.length };
+    return { span: true, items: [vs[0], vs[vs.length - 1]], count: vs.length };
+  }
 </script>
 
 <div class="view">
@@ -241,8 +248,24 @@
             </div>
             {#if m.loaders.length || m.mc_versions.length}
               <div class="mtags">
-                {#each m.loaders as l}<span class="tag">{l}</span>{/each}
-                {#each m.mc_versions as v}<span class="tag">{v}</span>{/each}
+                {#if m.loaders.length}
+                  <span class="facet">
+                    {#each m.loaders as l}<span class="tag">{l}</span>{/each}
+                  </span>
+                {/if}
+                {#if m.mc_versions.length}
+                  {@const mc = mcFacet(m.mc_versions)}
+                  <span class="facet mc">
+                    {#if mc.span}
+                      <span class="tag">{mc.items[0]}</span>
+                      <span class="ell" aria-hidden="true">&hellip;</span>
+                      <span class="tag">{mc.items[1]}</span>
+                      <span class="fcount mono">{mc.count}</span>
+                    {:else}
+                      {#each mc.items as v}<span class="tag">{v}</span>{/each}
+                    {/if}
+                  </span>
+                {/if}
               </div>
             {/if}
           </div>
@@ -430,6 +453,27 @@
     gap: 5px;
     margin-top: 6px;
     flex-wrap: wrap;
+    align-items: center;
+  }
+  .facet {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+  .facet.mc {
+    padding-left: 8px;
+    margin-left: 3px;
+    border-left: 1px solid var(--seam);
+  }
+  .ell {
+    color: var(--fg-faint);
+    font-size: 11px;
+  }
+  .fcount {
+    font-size: 10px;
+    color: var(--fg-faint);
+    margin-left: 1px;
   }
   .modactions {
     display: flex;
