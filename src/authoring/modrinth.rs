@@ -259,6 +259,37 @@ impl Modrinth {
         }
         Ok(buf)
     }
+
+    /// Fetch a remote image (e.g. a GitHub avatar) through the pooled client,
+    /// returning its bytes and content type. Reuses the shared client so an
+    /// image proxy does not open a TLS handshake per request, and caps small --
+    /// avatars are tiny, and this bounds what the proxy will pull. A non-image
+    /// content type is normalised to `image/png`; the caller serves it `nosniff`.
+    pub async fn fetch_image(&self, url: &str) -> Result<(Vec<u8>, String)> {
+        const MAX_BYTES: u64 = 8 * 1024 * 1024;
+        let resp = self.http.get(url).send().await.context("image GET")?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(anyhow!("image HTTP {status} for {url}"));
+        }
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .filter(|v| v.starts_with("image/"))
+            .unwrap_or("image/png")
+            .to_string();
+        if let Some(len) = resp.content_length()
+            && len > MAX_BYTES
+        {
+            return Err(anyhow!("image at {url} is {len} bytes, over the cap"));
+        }
+        let bytes = resp.bytes().await.context("image body")?;
+        if bytes.len() as u64 > MAX_BYTES {
+            return Err(anyhow!("image at {url} exceeds the cap"));
+        }
+        Ok((bytes.to_vec(), content_type))
+    }
 }
 
 #[derive(Serialize)]

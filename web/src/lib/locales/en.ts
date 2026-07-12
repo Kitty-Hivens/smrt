@@ -312,6 +312,7 @@ export const en = {
   // ── mod management (replaces the raw sha1 cache view) ──
   'nav.mods': 'Mods',
   'nav.users': 'Users',
+  'nav.profile': 'Profile',
   'users.empty': 'No one has signed in yet.',
   'users.lastLogin': 'last seen',
   'users.never': 'never',

@@ -311,6 +311,7 @@ export const ru: Dict = {
   // ── управление модами (вместо сырого sha1-вида кэша) ──
   'nav.mods': 'Моды',
   'nav.users': 'Пользователи',
+  'nav.profile': 'Профиль',
   'users.empty': 'Пока никто не заходил.',
   'users.lastLogin': 'заходил',
   'users.never': 'никогда',

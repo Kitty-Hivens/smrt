@@ -32,6 +32,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/featured", get(get_featured))
         .route("/v1/cache/:prefix/:filename", get(get_cache_jar))
         .route("/v1/cache/inventory", get(get_cache_inventory))
+        .route("/v1/users/:uid/avatar", get(get_user_avatar))
         .with_state(state)
 }
 
@@ -159,6 +160,38 @@ async fn get_cache_inventory(
         generated_at: now_rfc3339(),
         entries,
     }))
+}
+
+// ── /v1/users/:uid/avatar ──────────────────────────────────────────────────
+
+/// Proxy a GitHub avatar through the mirror, keyed by the numeric uid we already
+/// store. Serving it from our own origin means the panel never hotlinks
+/// `avatars.githubusercontent.com` from the viewer's browser -- no viewer IP
+/// handed to GitHub, no third-party origin on the page. A bad uid or an upstream
+/// miss is a 404 the panel falls back from to a letter tile.
+async fn get_user_avatar(
+    State(state): State<AppState>,
+    Path(uid): Path<i64>,
+) -> Result<Response, ApiError> {
+    if uid <= 0 {
+        return Err(ApiError::NotFound);
+    }
+    let url = format!("https://avatars.githubusercontent.com/u/{uid}?s=160&v=4");
+    let (bytes, content_type) = state
+        .modrinth
+        .fetch_image(&url)
+        .await
+        .map_err(|_| ApiError::NotFound)?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "public, max-age=86400".to_string()),
+            // proxied third-party bytes: pin the type so the browser can't sniff
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+        ],
+        bytes,
+    )
+        .into_response())
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────

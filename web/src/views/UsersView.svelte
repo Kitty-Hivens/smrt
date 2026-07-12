@@ -2,6 +2,7 @@
   import { api } from '../lib/api';
   import { t } from '../lib/i18n.svelte';
   import type { UserRow } from '../lib/types';
+  import Avatar from './Avatar.svelte';
 
   let users = $state<UserRow[]>([]);
   let meUid = $state<number | null>(null);
@@ -46,7 +47,7 @@
   <div class="panel ulist">
     {#each users as u (u.github_uid)}
       <div class="urow">
-        <span class="avatar mono">{u.login.slice(0, 1).toUpperCase()}</span>
+        <Avatar uid={u.github_uid} login={u.login} size={32} />
         <div class="uinfo">
           <div class="uname">
             {u.login}{#if u.github_uid === meUid}<span class="me mono">{t('users.you')}</span>{/if}
@@ -97,17 +98,6 @@
   }
   .urow:last-child {
     border-bottom: none;
-  }
-  .avatar {
-    width: 32px;
-    height: 32px;
-    flex: none;
-    display: grid;
-    place-items: center;
-    border-radius: var(--radius-sm);
-    background: var(--panel-3);
-    color: var(--fg-dim);
-    font-size: 13px;
   }
   .uinfo {
     flex: 1;

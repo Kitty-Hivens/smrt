@@ -5,8 +5,9 @@
   import { route, visibleSections, type Section } from '../lib/route.svelte';
   import { reload } from '../lib/reload.svelte';
   import { t, i18n, LOCALES } from '../lib/i18n.svelte';
+  import Avatar from './Avatar.svelte';
 
-  type Me = { login: string; role: string };
+  type Me = { uid: number; login: string; role: string };
   let {
     me,
     onSignIn,
@@ -35,7 +36,7 @@
   // Keep the active section within what this role may see: a stored operator
   // section from a prior admin session shouldn't strand a guest on a blank tab.
   $effect(() => {
-    if (!visibleSections(isAdmin).includes(route.section)) route.go('browse');
+    if (!visibleSections(me).includes(route.section)) route.go('browse');
   });
 
   const navKey: Record<Section, Parameters<typeof t>[0]> = {
@@ -45,6 +46,7 @@
     servers: 'nav.servers',
     mods: 'nav.mods',
     users: 'nav.users',
+    profile: 'nav.profile',
   };
 </script>
 
@@ -53,7 +55,7 @@
     <div class="brand"><span class="mk"></span>smrt<span class="faint">/control</span></div>
 
     <ul class="nav">
-      {#each visibleSections(isAdmin) as s}
+      {#each visibleSections(me) as s}
         <li>
           <button
             class="item"
@@ -76,7 +78,10 @@
         </div>
       {/if}
       {#if me}
-        <div class="who faint mono">{me.login} &middot; {me.role}</div>
+        <button class="who" onclick={() => route.go('profile')} title={t('nav.profile')}>
+          <Avatar uid={me.uid} login={me.login} size={26} />
+          <span class="whotext faint mono">{me.login} &middot; {me.role}</span>
+        </button>
         <button class="signout" onclick={onLogout}>{t('shell.signOut')}</button>
       {:else}
         <button class="signin primary" onclick={onSignIn}>{t('shell.signIn')}</button>
@@ -220,8 +225,22 @@
     font-size: 12.5px;
   }
   .who {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+    padding: 4px var(--space-2);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    text-align: left;
+  }
+  .who:hover {
+    background: var(--panel-2);
+  }
+  .whotext {
     font-size: 11px;
-    padding: 0 var(--space-2);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

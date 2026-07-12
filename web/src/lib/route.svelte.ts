@@ -2,12 +2,24 @@
 // (which highlights + sets it) and the content area (which renders by it).
 // Persisted so a refresh keeps you where you were.
 
-export type Section = 'browse' | 'overview' | 'packs' | 'servers' | 'mods' | 'users';
-export const SECTIONS: Section[] = ['browse', 'overview', 'packs', 'servers', 'mods', 'users'];
-// Sections a guest or member may open; everything else is operator-only.
-export const PUBLIC_SECTIONS: Section[] = ['browse'];
-export function visibleSections(isAdmin: boolean): Section[] {
-  return isAdmin ? SECTIONS : PUBLIC_SECTIONS;
+export type Section = 'browse' | 'overview' | 'packs' | 'servers' | 'mods' | 'users' | 'profile';
+export const SECTIONS: Section[] = [
+  'browse',
+  'overview',
+  'packs',
+  'servers',
+  'mods',
+  'users',
+  'profile',
+];
+// Guest sees only the public catalog; a signed-in member also gets their
+// profile; everything else is operator-only.
+export const GUEST_SECTIONS: Section[] = ['browse'];
+export const MEMBER_SECTIONS: Section[] = ['browse', 'profile'];
+export function visibleSections(me: { role: string } | null): Section[] {
+  if (!me) return GUEST_SECTIONS;
+  if (me.role === 'admin') return SECTIONS;
+  return MEMBER_SECTIONS;
 }
 
 const STORAGE_KEY = 'smrt.section';
