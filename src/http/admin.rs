@@ -1,4 +1,5 @@
 use super::ApiError;
+use crate::accounts::UserRow;
 use crate::authoring::{ValidateReport, jar_icon, modrinth, reconstruct_config, validate};
 use crate::domain::*;
 use crate::state::AppState;
@@ -50,12 +51,44 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/admin/modrinth/search", get(modrinth_search))
         .route("/v1/admin/modrinth/versions", get(modrinth_versions))
         .route("/v1/admin/modrinth/icon", get(modrinth_icon))
+        .route("/v1/admin/users", get(list_users))
+        .route("/v1/admin/users/:uid/role", post(set_user_role))
         .layer(DefaultBodyLimit::max(ADMIN_BODY_LIMIT))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
         .with_state(state)
 }
 
 // ── handlers ───────────────────────────────────────────────────────────────
+
+/// Every registered user and their role, for the operator's user-management
+/// view. Break-glass is excluded (it is a synthetic row, not a person).
+async fn list_users(State(state): State<AppState>) -> Result<Json<Vec<UserRow>>, ApiError> {
+    let acc = state.accounts.clone();
+    let users = tokio::task::spawn_blocking(move || acc.list_users())
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("users task: {e}")))??;
+    Ok(Json(users))
+}
+
+#[derive(serde::Deserialize)]
+struct RoleReq {
+    role: String,
+}
+
+/// Set a user's role (member/admin) by GitHub uid.
+async fn set_user_role(
+    State(state): State<AppState>,
+    Path(uid): Path<i64>,
+    Json(req): Json<RoleReq>,
+) -> Result<StatusCode, ApiError> {
+    let acc = state.accounts.clone();
+    let role = req.role;
+    tokio::task::spawn_blocking(move || acc.set_role(uid, &role))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("role task: {e}")))?
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
 
 async fn save_server(
     State(state): State<AppState>,

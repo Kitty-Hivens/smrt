@@ -7,9 +7,11 @@
 use anyhow::{Context, Result};
 use rand::RngCore;
 use rusqlite::{Connection, OptionalExtension, params};
+use serde::Serialize;
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use ts_rs::TS;
 
 const SCHEMA: &str = include_str!("schema.sql");
 const SESSION_TTL: Duration = Duration::from_secs(86_400);
@@ -49,6 +51,20 @@ pub struct Identity {
     pub uid: i64,
     pub login: String,
     pub role: Role,
+}
+
+/// A registered user, for the operator's user-management view.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct UserRow {
+    #[ts(type = "number")]
+    pub github_uid: i64,
+    pub login: String,
+    pub role: String,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[ts(type = "number")]
+    pub last_login_at: i64,
 }
 
 pub struct Accounts {
@@ -91,19 +107,24 @@ impl Accounts {
     /// refresh. Blocking; wrap in `spawn_blocking`.
     pub fn sign_in_github(&self, github_uid: i64, login: &str, is_admin: bool) -> Result<String> {
         let now = unix_now();
-        let role = if is_admin { Role::Admin } else { Role::Member };
+        // Allowlisted uids: env is authoritative, always admin. Others: seed
+        // member on first sight, then leave the role alone so an operator's UI
+        // promotion sticks across the user's later logins.
+        let sql = if is_admin {
+            "INSERT INTO users (github_uid, login, role, created_at, last_login_at)
+             VALUES (?1, ?2, 'admin', ?3, ?3)
+             ON CONFLICT(github_uid) DO UPDATE SET
+               login = excluded.login, role = 'admin', last_login_at = excluded.last_login_at"
+        } else {
+            "INSERT INTO users (github_uid, login, role, created_at, last_login_at)
+             VALUES (?1, ?2, 'member', ?3, ?3)
+             ON CONFLICT(github_uid) DO UPDATE SET
+               login = excluded.login, last_login_at = excluded.last_login_at"
+        };
         let mut guard = self.conn.lock().expect("accounts mutex poisoned");
         let tx = guard.transaction().context("begin sign-in txn")?;
-        tx.execute(
-            "INSERT INTO users (github_uid, login, role, created_at, last_login_at)
-             VALUES (?1, ?2, ?3, ?4, ?4)
-             ON CONFLICT(github_uid) DO UPDATE SET
-               login = excluded.login,
-               role = excluded.role,
-               last_login_at = excluded.last_login_at",
-            params![github_uid, login, role.as_str(), now],
-        )
-        .context("upsert user")?;
+        tx.execute(sql, params![github_uid, login, now])
+            .context("upsert user")?;
         let user_id: i64 = tx
             .query_row(
                 "SELECT id FROM users WHERE github_uid = ?1",
@@ -172,6 +193,51 @@ impl Accounts {
     pub fn delete_session(&self, session_id: &str) -> Result<()> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
         guard.execute("DELETE FROM sessions WHERE id = ?1", params![session_id])?;
+        Ok(())
+    }
+
+    /// Every registered user except the synthetic break-glass row, newest login
+    /// first. Blocking; wrap in `spawn_blocking`.
+    pub fn list_users(&self) -> Result<Vec<UserRow>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let mut stmt = guard.prepare(
+            "SELECT github_uid, login, role, created_at, last_login_at
+             FROM users WHERE github_uid != 0
+             ORDER BY last_login_at DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(UserRow {
+                    github_uid: r.get(0)?,
+                    login: r.get(1)?,
+                    role: r.get(2)?,
+                    created_at: r.get(3)?,
+                    last_login_at: r.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Set a user's role by GitHub uid. Refuses the reserved break-glass row and
+    /// an unknown role. An allowlisted uid re-promotes to admin on its next login
+    /// regardless, so demoting one here only holds until they sign in again.
+    /// Blocking; wrap in `spawn_blocking`.
+    pub fn set_role(&self, github_uid: i64, role: &str) -> Result<()> {
+        if github_uid == BREAK_GLASS_UID {
+            anyhow::bail!("cannot change the break-glass user");
+        }
+        if role != "member" && role != "admin" {
+            anyhow::bail!("invalid role '{role}'");
+        }
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let n = guard.execute(
+            "UPDATE users SET role = ?2 WHERE github_uid = ?1",
+            params![github_uid, role],
+        )?;
+        if n == 0 {
+            anyhow::bail!("no user with uid {github_uid}");
+        }
         Ok(())
     }
 }
@@ -249,5 +315,32 @@ mod tests {
         let sid = a.sign_in_github(7, "x", true).unwrap();
         a.delete_session(&sid).unwrap();
         assert!(a.session_identity(&sid).unwrap().is_none());
+    }
+
+    #[test]
+    fn ui_promotion_sticks_but_allowlist_stays_authoritative() {
+        let a = Accounts::open_in_memory().unwrap();
+        // a non-allowlisted member is promoted via the UI, then signs in again
+        a.sign_in_github(5, "m", false).unwrap();
+        a.set_role(5, "admin").unwrap();
+        let sid = a.sign_in_github(5, "m", false).unwrap();
+        assert_eq!(a.session_identity(&sid).unwrap().unwrap().role, Role::Admin);
+
+        // an allowlisted user re-promotes to admin on login even after a demote
+        a.sign_in_github(9, "op", true).unwrap();
+        a.set_role(9, "member").unwrap();
+        let sid2 = a.sign_in_github(9, "op", true).unwrap();
+        assert_eq!(
+            a.session_identity(&sid2).unwrap().unwrap().role,
+            Role::Admin
+        );
+
+        // list excludes the break-glass row
+        let users = a.list_users().unwrap();
+        assert_eq!(users.len(), 2);
+        assert!(users.iter().all(|u| u.github_uid != 0));
+
+        // the break-glass row is untouchable
+        assert!(a.set_role(0, "member").is_err());
     }
 }

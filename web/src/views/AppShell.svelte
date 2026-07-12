@@ -24,6 +24,7 @@
     packs: 'nav.packs',
     servers: 'nav.servers',
     mods: 'nav.mods',
+    users: 'nav.users',
   };
 </script>
 

@@ -40,6 +40,9 @@ export type { Requirement } from './bindings/Requirement';
 // validate report (config vs SC archive)
 export type { ValidateReport } from './bindings/ValidateReport';
 
+// accounts (users + roles)
+export type { UserRow } from './bindings/UserRow';
+
 // registry browser (mods + builds, faceted)
 export type { ModSummary } from './bindings/ModSummary';
 export type { VersionRow } from './bindings/VersionRow';

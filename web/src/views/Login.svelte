@@ -19,10 +19,10 @@
         : authParam === 'unconfigured'
           ? 'login.unconfigured'
           : '';
-  if (authParam) history.replaceState({}, '', '/admin/');
+  if (authParam) history.replaceState({}, '', '/');
 
   function github() {
-    window.location.href = '/admin/api/auth/github/login';
+    window.location.href = '/v1/auth/github/login';
   }
 
   async function submit(e: Event) {

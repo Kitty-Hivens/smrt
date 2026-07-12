@@ -2,8 +2,8 @@
 // (which highlights + sets it) and the content area (which renders by it).
 // Persisted so a refresh keeps you where you were.
 
-export type Section = 'overview' | 'packs' | 'servers' | 'mods';
-export const SECTIONS: Section[] = ['overview', 'packs', 'servers', 'mods'];
+export type Section = 'overview' | 'packs' | 'servers' | 'mods' | 'users';
+export const SECTIONS: Section[] = ['overview', 'packs', 'servers', 'mods', 'users'];
 
 const STORAGE_KEY = 'smrt.section';
 

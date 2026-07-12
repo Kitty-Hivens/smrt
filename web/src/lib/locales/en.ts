@@ -304,6 +304,13 @@ export const en = {
 
   // ── mod management (replaces the raw sha1 cache view) ──
   'nav.mods': 'Mods',
+  'nav.users': 'Users',
+  'users.empty': 'No one has signed in yet.',
+  'users.lastLogin': 'last seen',
+  'users.never': 'never',
+  'users.promote': 'Make admin',
+  'users.demote': 'Make member',
+  'users.you': 'you',
   'mm.needsIdentity': 'Needs identity',
   'mm.needsIdentitySub': '{n} cached jars with no mod assigned',
   'mm.assign': 'Assign',

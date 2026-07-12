@@ -1,4 +1,4 @@
-//! Serve the built Svelte panel under `/admin`. Assets are embedded into the
+//! Serve the built Svelte panel at the site root. Assets are embedded into the
 //! binary at release build (`rust-embed`), so the deploy story stays "ship one
 //! binary"; in debug builds rust-embed reads `web/dist` from disk so the panel
 //! can be rebuilt without recompiling Rust.
@@ -16,9 +16,8 @@ struct Assets;
 
 pub fn router() -> Router {
     Router::new()
-        .route("/admin", get(index))
-        .route("/admin/", get(index))
-        .route("/admin/assets/*path", get(asset))
+        .route("/", get(index))
+        .route("/assets/*path", get(asset))
 }
 
 async fn index() -> Response {

@@ -8,6 +8,7 @@
   import ServerEditor from './ServerEditor.svelte';
   import PackEditor from './PackEditor.svelte';
   import ModManager from './ModManager.svelte';
+  import UsersView from './UsersView.svelte';
 
   // the active section comes from the shared route store; the shell rail drives it
 
@@ -345,6 +346,8 @@
       {/if}
     {:else if route.section === 'mods'}
       <ModManager />
+    {:else if route.section === 'users'}
+      <UsersView />
     {/if}
   </div>
 </div>

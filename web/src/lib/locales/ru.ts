@@ -303,6 +303,13 @@ export const ru: Dict = {
 
   // ── управление модами (вместо сырого sha1-вида кэша) ──
   'nav.mods': 'Моды',
+  'nav.users': 'Пользователи',
+  'users.empty': 'Пока никто не заходил.',
+  'users.lastLogin': 'заходил',
+  'users.never': 'никогда',
+  'users.promote': 'Сделать админом',
+  'users.demote': 'Сделать участником',
+  'users.you': 'вы',
   'mm.needsIdentity': 'Нужна identity',
   'mm.needsIdentitySub': '{n} джарок в кэше без мода',
   'mm.assign': 'Назначить',

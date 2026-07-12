@@ -21,6 +21,7 @@ import type {
   ServerEntry,
   ServerListing,
   UnassignedJar,
+  UserRow,
   ValidateReport,
   VersionRow,
 } from './types';
@@ -318,12 +319,16 @@ export const api = {
       `/v1/admin/registry/builds/${encodeURIComponent(packId)}/${encodeURIComponent(packVersion)}/assets`,
     ),
 
+  listUsers: () => getJson<UserRow[]>('/v1/admin/users'),
+  setUserRole: (uid: number, role: string) =>
+    send('POST', `/v1/admin/users/${uid}/role`, { role }),
+
   async me(): Promise<{ uid: number; login: string; role: string } | null> {
     const r = await fetch('/v1/me', { credentials: 'include' });
     return r.ok ? r.json() : null;
   },
   async login(token: string): Promise<boolean> {
-    const r = await fetch('/admin/api/login', {
+    const r = await fetch('/v1/auth/login', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -332,6 +337,6 @@ export const api = {
     return r.ok;
   },
   async logout(): Promise<void> {
-    await fetch('/admin/api/logout', { method: 'POST', credentials: 'include' });
+    await fetch('/v1/auth/logout', { method: 'POST', credentials: 'include' });
   },
 };

@@ -36,10 +36,10 @@ const GH_USER: &str = "https://api.github.com/user";
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route("/admin/api/login", post(login))
-        .route("/admin/api/auth/github/login", get(github_login))
-        .route("/admin/api/auth/github/callback", get(github_callback))
-        .route("/admin/api/logout", post(logout))
+        .route("/v1/auth/login", post(login))
+        .route("/v1/auth/github/login", get(github_login))
+        .route("/v1/auth/github/callback", get(github_callback))
+        .route("/v1/auth/logout", post(logout))
         .route("/v1/me", get(me))
         .with_state(state)
 }
@@ -81,7 +81,7 @@ async fn login(State(state): State<AppState>, Json(req): Json<LoginReq>) -> Resp
 async fn github_login(State(state): State<AppState>) -> Response {
     let Some(client_id) = state.config.github_client_id.as_deref() else {
         // Not configured: bounce to the panel, which still offers the token form.
-        return Redirect::to("/admin/?auth=unconfigured").into_response();
+        return Redirect::to("/?auth=unconfigured").into_response();
     };
     let csrf = random_token();
     let url = format!(
@@ -115,23 +115,23 @@ async fn github_callback(
     // The state param must be present and match the cookie the redirect set --
     // the CSRF check on the callback.
     let (Some(code), Some(ret_state), Some(exp_state)) = (q.code, q.state, cookie_state) else {
-        return redirect_clearing_state("/admin/?auth=failed", secure);
+        return redirect_clearing_state("/?auth=failed", secure);
     };
     if !constant_time_eq(ret_state.as_bytes(), exp_state.as_bytes()) {
-        return redirect_clearing_state("/admin/?auth=failed", secure);
+        return redirect_clearing_state("/?auth=failed", secure);
     }
     let (Some(cid), Some(secret)) = (
         state.config.github_client_id.as_deref(),
         state.config.github_client_secret.as_deref(),
     ) else {
-        return redirect_clearing_state("/admin/?auth=unconfigured", secure);
+        return redirect_clearing_state("/?auth=unconfigured", secure);
     };
 
     // Exchange the code and read the GitHub account. Every valid account gets an
     // identity; the allowlist only sets whether that identity is an admin.
     let (uid, login) = match exchange_and_fetch(cid, secret, &code, &callback_uri(&state)).await {
         Ok(user) => user,
-        Err(_) => return redirect_clearing_state("/admin/?auth=failed", secure),
+        Err(_) => return redirect_clearing_state("/?auth=failed", secure),
     };
     let is_admin = state.config.admin_github_uids.contains(&uid);
 
@@ -141,10 +141,10 @@ async fn github_callback(
             .await
         {
             Ok(Ok(sid)) => sid,
-            _ => return redirect_clearing_state("/admin/?auth=failed", secure),
+            _ => return redirect_clearing_state("/?auth=failed", secure),
         };
 
-    let mut resp = Redirect::to("/admin/").into_response();
+    let mut resp = Redirect::to("/").into_response();
     resp.headers_mut().append(
         header::SET_COOKIE,
         header_val(&session_cookie(&sid, secure, false)),
@@ -290,10 +290,7 @@ fn break_glass() -> Identity {
 }
 
 fn callback_uri(state: &AppState) -> String {
-    format!(
-        "{}/admin/api/auth/github/callback",
-        state.config.mirror_base
-    )
+    format!("{}/v1/auth/github/callback", state.config.mirror_base)
 }
 
 fn enc(s: &str) -> String {
@@ -323,14 +320,7 @@ fn state_cookie(value: &str, secure: bool, clear: bool) -> String {
     // Lax, not Strict: the callback is a top-level navigation from github.com,
     // and a Strict cookie would be withheld on that cross-site redirect.
     let max_age = if clear { 0 } else { STATE_MAX_AGE_SECS };
-    build_cookie(
-        STATE_COOKIE,
-        value,
-        secure,
-        "Lax",
-        "/admin/api/auth",
-        max_age,
-    )
+    build_cookie(STATE_COOKIE, value, secure, "Lax", "/v1/auth", max_age)
 }
 
 fn build_cookie(
@@ -398,7 +388,7 @@ mod tests {
     fn state_cookie_is_lax_and_scoped_to_the_callback_path() {
         let c = state_cookie("nonce", true, false);
         assert!(c.contains("SameSite=Lax"));
-        assert!(c.contains("Path=/admin/api/auth"));
+        assert!(c.contains("Path=/v1/auth"));
         assert!(c.contains("Secure"));
     }
 
