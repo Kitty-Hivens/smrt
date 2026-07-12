@@ -14,11 +14,17 @@ export const ru: Dict = {
   'shell.health': 'v{version} / схема {schema}',
   'shell.locale': 'Язык',
 
-  'login.subtitle': 'Админка зеркала. Вставь токен, чтобы продолжить.',
+  'login.subtitle': 'Панель управления зеркалом. Войди через GitHub.',
   'login.submit': 'Войти',
   'login.checking': 'Проверка...',
   'login.rejected': 'Отклонено. Проверь токен.',
   'login.foot': 'панель управления зеркалом smrt',
+  'login.github': 'Войти через GitHub',
+  'login.or': 'или',
+  'login.useToken': 'Войти по admin-токену',
+  'login.denied': 'Этот GitHub-аккаунт не в списке операторов.',
+  'login.failed': 'Не удалось войти через GitHub. Попробуй снова.',
+  'login.unconfigured': 'Вход через GitHub на этом зеркале не настроен.',
 
   'dialog.confirmTitle': 'Подтверждение',
   'dialog.inputTitle': 'Ввод',

@@ -15,11 +15,17 @@ export const en = {
   'shell.health': 'v{version} / schema {schema}',
   'shell.locale': 'Language',
 
-  'login.subtitle': 'Mirror admin. Paste the admin token to continue.',
+  'login.subtitle': 'Mirror control panel. Sign in with GitHub to continue.',
   'login.submit': 'Enter',
   'login.checking': 'Checking...',
   'login.rejected': 'Rejected. Check the admin token.',
   'login.foot': 'smrt mirror control panel',
+  'login.github': 'Continue with GitHub',
+  'login.or': 'or',
+  'login.useToken': 'Use admin token',
+  'login.denied': 'This GitHub account is not an authorized operator.',
+  'login.failed': 'GitHub sign-in failed. Try again.',
+  'login.unconfigured': 'GitHub sign-in is not configured on this mirror.',
 
   'dialog.confirmTitle': 'Confirm',
   'dialog.inputTitle': 'Input',

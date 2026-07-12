@@ -1,5 +1,6 @@
 use crate::authoring::{HarvestScheduler, Modrinth};
 use crate::config::Config;
+use crate::http::session::SessionStore;
 use crate::jobs::JobRegistry;
 use crate::registry::Registry;
 use crate::storage::Storage;
@@ -18,6 +19,8 @@ pub struct AppState {
     /// Coalescing background harvester. Construction only wires the deps; call
     /// `harvest.clone().spawn()` once after the runtime is up to start it.
     pub harvest: Arc<HarvestScheduler>,
+    /// Server-side panel sessions (opaque cookie id -> GitHub identity + role).
+    pub sessions: Arc<SessionStore>,
 }
 
 impl AppState {
@@ -36,6 +39,7 @@ impl AppState {
             harvest,
             config: Arc::new(config),
             jobs: Arc::new(JobRegistry::default()),
+            sessions: Arc::new(SessionStore::default()),
         })
     }
 }

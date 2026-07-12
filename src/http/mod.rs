@@ -9,6 +9,7 @@ pub mod jobs;
 pub mod panel;
 pub mod public;
 pub mod registry;
+pub mod session;
 
 pub use error::ApiError;
 
@@ -45,6 +46,9 @@ mod tests {
             admin_token: None,
             cookie_secure: false,
             mirror_base: "http://localhost".into(),
+            github_client_id: None,
+            github_client_secret: None,
+            admin_github_uids: Vec::new(),
         };
         let state = AppState::new(config).unwrap();
         let _ = router(state);

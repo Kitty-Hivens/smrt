@@ -365,6 +365,9 @@ mod tests {
             admin_token: None,
             cookie_secure: false,
             mirror_base: "https://test.example".into(),
+            github_client_id: None,
+            github_client_secret: None,
+            admin_github_uids: Vec::new(),
         }
     }
 

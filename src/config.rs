@@ -12,8 +12,16 @@ pub struct Config {
     /// dev so the cookie is still sent over plain `127.0.0.1`.
     pub cookie_secure: bool,
     /// Public base URL baked into built manifest URLs (cache + static). The
-    /// authoring build uses it; defaults to the production mirror host.
+    /// authoring build uses it; defaults to the production mirror host. Also the
+    /// origin the GitHub OAuth callback redirect_uri is built from.
     pub mirror_base: String,
+    /// GitHub OAuth app credentials. When unset, the panel offers only the
+    /// break-glass admin-token login.
+    pub github_client_id: Option<String>,
+    pub github_client_secret: Option<String>,
+    /// GitHub numeric user ids granted the admin role on sign-in. Keyed by uid,
+    /// not login: a login can be renamed or reassigned, a uid cannot.
+    pub admin_github_uids: Vec<u64>,
 }
 
 impl Config {
@@ -36,12 +44,24 @@ impl Config {
         let mirror_base = std::env::var("SMRT_MIRROR_BASE")
             .unwrap_or_else(|_| "https://smrt.hivens.dev".to_string());
 
+        let nonempty = |k: &str| std::env::var(k).ok().filter(|s| !s.trim().is_empty());
+        let github_client_id = nonempty("SMRT_GITHUB_CLIENT_ID");
+        let github_client_secret = nonempty("SMRT_GITHUB_CLIENT_SECRET");
+        let admin_github_uids = std::env::var("SMRT_ADMIN_GITHUB_UIDS")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|s| s.trim().parse::<u64>().ok())
+            .collect();
+
         Ok(Self {
             bind_addr,
             storage_dir,
             admin_token,
             cookie_secure,
             mirror_base,
+            github_client_id,
+            github_client_secret,
+            admin_github_uids,
         })
     }
 }
