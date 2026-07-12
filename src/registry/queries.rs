@@ -9,8 +9,35 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// Decode a `mod_version.mc_versions` cell (a JSON array of strings, or NULL)
 /// into a plain vec. Tolerant: a NULL or unparseable cell yields an empty vec.
 fn decode_mc(raw: Option<String>) -> Vec<String> {
-    raw.and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
-        .unwrap_or_default()
+    let mut v = raw
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default();
+    sort_mc(&mut v);
+    v
+}
+
+/// Order Minecraft versions numerically -- 1.7.10 sorts below 1.10.2, not above
+/// it the way a lexical compare would. Splits on '.', reading the leading digits
+/// of each segment; a non-numeric segment sinks to the front and ties break on
+/// the raw string so snapshots stay deterministic.
+fn mc_version_key(v: &str) -> Vec<i64> {
+    v.split('.')
+        .map(|seg| {
+            seg.chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .parse::<i64>()
+                .unwrap_or(-1)
+        })
+        .collect()
+}
+
+fn sort_mc(v: &mut [String]) {
+    v.sort_by(|a, b| {
+        mc_version_key(a)
+            .cmp(&mc_version_key(b))
+            .then_with(|| a.cmp(b))
+    });
 }
 
 /// Escape the `LIKE` metacharacters in an operator's search value so a literal
@@ -327,7 +354,11 @@ pub fn list_mods(
                 .unwrap_or_default();
             m.mc_versions = mc_by_mod
                 .get(&m.mod_id)
-                .map(|s| s.iter().cloned().collect())
+                .map(|s| {
+                    let mut v: Vec<String> = s.iter().cloned().collect();
+                    sort_mc(&mut v);
+                    v
+                })
                 .unwrap_or_default();
             m
         })
@@ -485,4 +516,18 @@ pub fn stats(conn: &Connection) -> Result<RegistryStats> {
              WHERE pbm.build_id IS NULL",
         )?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sort_mc;
+
+    #[test]
+    fn mc_versions_sort_numerically() {
+        let mut v = ["1.10.2", "1.7.10", "1.12.2", "1.16.5", "1.8.9"]
+            .map(String::from)
+            .to_vec();
+        sort_mc(&mut v);
+        assert_eq!(v, ["1.7.10", "1.8.9", "1.10.2", "1.12.2", "1.16.5"]);
+    }
 }
