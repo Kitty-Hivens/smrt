@@ -2,7 +2,7 @@
   import { api } from '../lib/api';
   import { t, i18n, LOCALES } from '../lib/i18n.svelte';
 
-  let { onAuthed }: { onAuthed: () => void } = $props();
+  let { onAuthed, onClose }: { onAuthed: () => void; onClose?: () => void } = $props();
   let token = $state('');
   let busy = $state(false);
   let error = $state('');
@@ -38,6 +38,9 @@
 </script>
 
 <div class="wrap">
+  {#if onClose}
+    <button class="back mono" onclick={onClose}>&larr; {t('login.back')}</button>
+  {/if}
   <div class="locale" role="group" aria-label={t('shell.locale')}>
     {#each LOCALES as loc}
       <button
@@ -99,6 +102,20 @@
     background-color: var(--bg);
     background-image: radial-gradient(var(--dotfield) 1px, transparent 1px);
     background-size: 20px 20px;
+  }
+  .back {
+    position: absolute;
+    top: var(--space-5);
+    left: var(--space-5);
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    color: var(--fg-faint);
+    font-size: 12px;
+    padding: 4px 6px;
+  }
+  .back:hover {
+    color: var(--fg-dim);
   }
   .locale {
     position: absolute;

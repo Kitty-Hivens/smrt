@@ -2,11 +2,24 @@
   import type { Snippet } from 'svelte';
   import { api } from '../lib/api';
   import type { Health } from '../lib/types';
-  import { route, SECTIONS, type Section } from '../lib/route.svelte';
+  import { route, visibleSections, type Section } from '../lib/route.svelte';
   import { reload } from '../lib/reload.svelte';
   import { t, i18n, LOCALES } from '../lib/i18n.svelte';
 
-  let { onLogout, children }: { onLogout: () => void; children: Snippet } = $props();
+  type Me = { login: string; role: string };
+  let {
+    me,
+    onSignIn,
+    onLogout,
+    children,
+  }: {
+    me: Me | null;
+    onSignIn: () => void;
+    onLogout: () => void;
+    children: Snippet;
+  } = $props();
+
+  const isAdmin = $derived(me?.role === 'admin');
 
   let health = $state<Health | null>(null);
 
@@ -19,7 +32,14 @@
       });
   });
 
+  // Keep the active section within what this role may see: a stored operator
+  // section from a prior admin session shouldn't strand a guest on a blank tab.
+  $effect(() => {
+    if (!visibleSections(isAdmin).includes(route.section)) route.go('browse');
+  });
+
   const navKey: Record<Section, Parameters<typeof t>[0]> = {
+    browse: 'nav.browse',
     overview: 'nav.overview',
     packs: 'nav.packs',
     servers: 'nav.servers',
@@ -33,7 +53,7 @@
     <div class="brand"><span class="mk"></span>smrt<span class="faint">/control</span></div>
 
     <ul class="nav">
-      {#each SECTIONS as s}
+      {#each visibleSections(isAdmin) as s}
         <li>
           <button
             class="item"
@@ -55,7 +75,12 @@
           {t('shell.health', { version: health.version, schema: health.schema_version })}
         </div>
       {/if}
-      <button class="signout" onclick={onLogout}>{t('shell.signOut')}</button>
+      {#if me}
+        <div class="who faint mono">{me.login} &middot; {me.role}</div>
+        <button class="signout" onclick={onLogout}>{t('shell.signOut')}</button>
+      {:else}
+        <button class="signin primary" onclick={onSignIn}>{t('shell.signIn')}</button>
+      {/if}
     </div>
   </nav>
 
@@ -63,10 +88,17 @@
     <header class="topbar">
       <div class="crumb"><span class="faint">smrt /</span> {t(navKey[route.section])}</div>
       <div class="spacer"></div>
-      <button class="refresh" class:busy={reload.busy} onclick={() => reload.request()} disabled={reload.busy}>
-        <span class="rlabel">{t('shell.refresh')}</span>
-        <span class="spin" aria-hidden="true"></span>
-      </button>
+      {#if isAdmin}
+        <button
+          class="refresh"
+          class:busy={reload.busy}
+          onclick={() => reload.request()}
+          disabled={reload.busy}
+        >
+          <span class="rlabel">{t('shell.refresh')}</span>
+          <span class="spin" aria-hidden="true"></span>
+        </button>
+      {/if}
       <div class="locale" role="group" aria-label={t('shell.locale')}>
         {#each LOCALES as loc}
           <button
@@ -182,6 +214,17 @@
   .signout {
     width: 100%;
     font-size: 12.5px;
+  }
+  .signin {
+    width: 100%;
+    font-size: 12.5px;
+  }
+  .who {
+    font-size: 11px;
+    padding: 0 var(--space-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .main {

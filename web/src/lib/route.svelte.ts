@@ -2,8 +2,13 @@
 // (which highlights + sets it) and the content area (which renders by it).
 // Persisted so a refresh keeps you where you were.
 
-export type Section = 'overview' | 'packs' | 'servers' | 'mods' | 'users';
-export const SECTIONS: Section[] = ['overview', 'packs', 'servers', 'mods', 'users'];
+export type Section = 'browse' | 'overview' | 'packs' | 'servers' | 'mods' | 'users';
+export const SECTIONS: Section[] = ['browse', 'overview', 'packs', 'servers', 'mods', 'users'];
+// Sections a guest or member may open; everything else is operator-only.
+export const PUBLIC_SECTIONS: Section[] = ['browse'];
+export function visibleSections(isAdmin: boolean): Section[] {
+  return isAdmin ? SECTIONS : PUBLIC_SECTIONS;
+}
 
 const STORAGE_KEY = 'smrt.section';
 
@@ -16,7 +21,7 @@ function initial(): Section {
   } catch {
     // blocked storage -- default below
   }
-  return 'overview';
+  return 'browse';
 }
 
 let section = $state<Section>(initial());
