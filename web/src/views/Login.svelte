@@ -2,10 +2,11 @@
   import { api } from '../lib/api';
   import { t, i18n, LOCALES } from '../lib/i18n.svelte';
 
-  let { onAuthed, onClose }: { onAuthed: () => void; onClose?: () => void } = $props();
+  let { onClose }: { onClose?: () => void } = $props();
   let token = $state('');
   let busy = $state(false);
   let error = $state('');
+  let notice = $state('');
   let showToken = $state(false);
 
   // Surface an OAuth outcome the callback handed back, then wipe it from the URL
@@ -25,14 +26,17 @@
     window.location.href = '/v1/auth/github/login';
   }
 
+  // The token form no longer signs anyone in. A valid token is answered with a
+  // deprecation notice pointing at GitHub; an invalid one is rejected as before.
   async function submit(e: Event) {
     e.preventDefault();
     if (!token.trim()) return;
     busy = true;
     error = '';
-    const ok = await api.login(token.trim());
+    notice = '';
+    const res = await api.login(token.trim());
     busy = false;
-    if (ok) onAuthed();
+    if (res === 'deprecated') notice = t('login.deprecated');
     else error = t('login.rejected');
   }
 </script>
@@ -82,6 +86,7 @@
           autocomplete="off"
         />
         {#if error}<div class="err mono">{error}</div>{/if}
+        {#if notice}<div class="note mono">{notice}</div>{/if}
         <button class="primary" type="submit" disabled={busy || !token.trim()}>
           {busy ? t('login.checking') : t('login.submit')}
         </button>
@@ -220,6 +225,11 @@
   .err {
     color: var(--danger);
     font-size: 12px;
+  }
+  .note {
+    color: var(--fg-dim);
+    font-size: 12px;
+    line-height: 1.5;
   }
   .foot {
     font-size: 11px;

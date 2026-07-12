@@ -1,11 +1,12 @@
-//! Panel auth over the persistent accounts store. Two ways in:
-//!   - GitHub OAuth (the daily path): sign in with GitHub; the callback upserts a
-//!     `users` row (role from the operator allowlist) and opens a server-side
-//!     session. Any GitHub account can identify; the admin role is what unlocks
-//!     the operator panel.
-//!   - the admin token (break-glass, kept temporarily): the CLI sends it as
-//!     `Authorization: Bearer`, or it is typed into the panel's fallback form. It
-//!     opens a session for the reserved break-glass user.
+//! Panel auth over the persistent accounts store. Human sign-in is GitHub-only:
+//!   - GitHub OAuth (the only human path): sign in with GitHub; the callback
+//!     upserts a `users` row (role from the operator allowlist) and opens a
+//!     server-side session. Any GitHub account can identify; the admin role is
+//!     what unlocks the operator panel.
+//!   - the admin token is machine auth only: the CLI/pipeline sends it as
+//!     `Authorization: Bearer` and `resolve_identity` maps it to a synthetic
+//!     admin. It is no longer a human login -- the panel's token form is
+//!     deprecated, and a valid token there returns 410 and opens no session.
 //!
 //! `require_auth` guards the admin API: it resolves the caller's [`Identity`]
 //! from the session cookie or a bearer token and requires the admin role.
@@ -44,13 +45,17 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-// -- break-glass admin-token login ------------------------------------------
+// -- deprecated admin-token form login --------------------------------------
 
 #[derive(Deserialize)]
 struct LoginReq {
     token: String,
 }
 
+/// The panel's legacy token form. The admin token is machine auth only now (a
+/// `Bearer` header, resolved in `resolve_identity`); it is no longer a human
+/// login. A valid token here is answered with 410 and no session, so the panel
+/// can tell the operator the path is gone; an invalid one is a plain 401.
 async fn login(State(state): State<AppState>, Json(req): Json<LoginReq>) -> Response {
     let Some(expected) = state.config.admin_token.as_deref() else {
         return ApiError::Unauthorized.into_response();
@@ -58,22 +63,7 @@ async fn login(State(state): State<AppState>, Json(req): Json<LoginReq>) -> Resp
     if !constant_time_eq(expected.as_bytes(), req.token.as_bytes()) {
         return ApiError::Unauthorized.into_response();
     }
-    let acc = state.accounts.clone();
-    let sid = match tokio::task::spawn_blocking(move || acc.sign_in_break_glass()).await {
-        Ok(Ok(sid)) => sid,
-        _ => {
-            return ApiError::Internal(anyhow::anyhow!("open break-glass session")).into_response();
-        }
-    };
-    (
-        StatusCode::OK,
-        [(
-            header::SET_COOKIE,
-            session_cookie(&sid, state.config.cookie_secure, false),
-        )],
-        Json(json!({ "authenticated": true, "login": "break-glass", "role": "admin" })),
-    )
-        .into_response()
+    (StatusCode::GONE, Json(json!({ "deprecated": true }))).into_response()
 }
 
 // -- GitHub OAuth -----------------------------------------------------------

@@ -22,6 +22,7 @@ export const en = {
   'login.submit': 'Enter',
   'login.checking': 'Checking...',
   'login.rejected': 'Rejected. Check the admin token.',
+  'login.deprecated': 'This token is deprecated. Sign in with GitHub.',
   'login.foot': 'smrt mirror control panel',
   'login.back': 'back to browse',
   'browse.empty': 'No packs published yet.',

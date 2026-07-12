@@ -21,6 +21,7 @@ export const ru: Dict = {
   'login.submit': 'Войти',
   'login.checking': 'Проверка...',
   'login.rejected': 'Отклонено. Проверь токен.',
+  'login.deprecated': 'Токен устарел. Войди через GitHub.',
   'login.foot': 'панель управления зеркалом smrt',
   'login.back': 'назад в каталог',
   'browse.empty': 'Пока нет опубликованных паков.',

@@ -327,14 +327,16 @@ export const api = {
     const r = await fetch('/v1/me', { credentials: 'include' });
     return r.ok ? r.json() : null;
   },
-  async login(token: string): Promise<boolean> {
+  // The admin token no longer authenticates a human. A valid one comes back 410
+  // so the panel can say it's deprecated; anything else is a plain rejection.
+  async login(token: string): Promise<'deprecated' | 'rejected'> {
     const r = await fetch('/v1/auth/login', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token }),
     });
-    return r.ok;
+    return r.status === 410 ? 'deprecated' : 'rejected';
   },
   async logout(): Promise<void> {
     await fetch('/v1/auth/logout', { method: 'POST', credentials: 'include' });

@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 
--- The reserved break-glass user (github_uid = 0): the admin-token login opens a
--- session for it, so every session maps to a real users row.
-INSERT OR IGNORE INTO users (github_uid, login, role, created_at, last_login_at)
-VALUES (0, 'break-glass', 'admin', 0, 0);
+-- Retire the seeded break-glass user (github_uid = 0) that the removed token
+-- login opened sessions for. A DB created before that path was dropped still
+-- carries the row; delete it so its sessions cascade away and nothing is left
+-- pinned to the reserved uid. A no-op on fresh DBs, which never seed it.
+DELETE FROM users WHERE github_uid = 0;

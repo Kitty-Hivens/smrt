@@ -15,8 +15,9 @@ use ts_rs::TS;
 
 const SCHEMA: &str = include_str!("schema.sql");
 const SESSION_TTL: Duration = Duration::from_secs(86_400);
-/// The reserved break-glass user seeded by the schema; the admin-token login
-/// opens a session for it so sessions always map to a real `users` row.
+/// Reserved uid for the synthetic machine-bearer admin (the `Bearer` token path
+/// in the http layer). It is never persisted as a `users` row; the guards below
+/// keep uid 0 unassignable so it can't collide with a real GitHub account.
 const BREAK_GLASS_UID: i64 = 0;
 
 /// The panel's authorization tiers. `member` is the default on sign-in; `admin`
@@ -137,21 +138,6 @@ impl Accounts {
         Ok(sid)
     }
 
-    /// Open a session for the reserved break-glass user (admin-token login).
-    /// Blocking; wrap in `spawn_blocking`.
-    pub fn sign_in_break_glass(&self) -> Result<String> {
-        let now = unix_now();
-        let guard = self.conn.lock().expect("accounts mutex poisoned");
-        let user_id: i64 = guard
-            .query_row(
-                "SELECT id FROM users WHERE github_uid = ?1",
-                params![BREAK_GLASS_UID],
-                |r| r.get(0),
-            )
-            .context("read break-glass user")?;
-        insert_session(&guard, user_id, now)
-    }
-
     /// The identity behind a session id, if the session exists and has not
     /// expired. A lapsed session is deleted on read so the table self-prunes.
     /// Blocking; wrap in `spawn_blocking`.
@@ -196,8 +182,8 @@ impl Accounts {
         Ok(())
     }
 
-    /// Every registered user except the synthetic break-glass row, newest login
-    /// first. Blocking; wrap in `spawn_blocking`.
+    /// Every registered user except the reserved uid 0, newest login first.
+    /// Blocking; wrap in `spawn_blocking`.
     pub fn list_users(&self) -> Result<Vec<UserRow>> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
         let mut stmt = guard.prepare(
@@ -219,13 +205,13 @@ impl Accounts {
         Ok(rows)
     }
 
-    /// Set a user's role by GitHub uid. Refuses the reserved break-glass row and
-    /// an unknown role. An allowlisted uid re-promotes to admin on its next login
+    /// Set a user's role by GitHub uid. Refuses the reserved uid 0 and an unknown
+    /// role. An allowlisted uid re-promotes to admin on its next login
     /// regardless, so demoting one here only holds until they sign in again.
     /// Blocking; wrap in `spawn_blocking`.
     pub fn set_role(&self, github_uid: i64, role: &str) -> Result<()> {
         if github_uid == BREAK_GLASS_UID {
-            anyhow::bail!("cannot change the break-glass user");
+            anyhow::bail!("cannot change the reserved uid 0");
         }
         if role != "member" && role != "admin" {
             anyhow::bail!("invalid role '{role}'");
@@ -301,15 +287,6 @@ mod tests {
     }
 
     #[test]
-    fn break_glass_session_is_admin() {
-        let a = Accounts::open_in_memory().unwrap();
-        let sid = a.sign_in_break_glass().unwrap();
-        let id = a.session_identity(&sid).unwrap().unwrap();
-        assert_eq!(id.uid, 0);
-        assert_eq!(id.role, Role::Admin);
-    }
-
-    #[test]
     fn deleted_session_stops_resolving() {
         let a = Accounts::open_in_memory().unwrap();
         let sid = a.sign_in_github(7, "x", true).unwrap();
@@ -335,12 +312,12 @@ mod tests {
             Role::Admin
         );
 
-        // list excludes the break-glass row
+        // list excludes the reserved uid 0
         let users = a.list_users().unwrap();
         assert_eq!(users.len(), 2);
         assert!(users.iter().all(|u| u.github_uid != 0));
 
-        // the break-glass row is untouchable
+        // the reserved uid 0 is untouchable
         assert!(a.set_role(0, "member").is_err());
     }
 }

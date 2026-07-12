@@ -22,11 +22,6 @@
     me = null;
   });
 
-  async function refresh() {
-    me = await api.me();
-    showLogin = false;
-  }
-
   async function logout() {
     await api.logout();
     me = null;
@@ -36,7 +31,7 @@
 {#if me === undefined}
   <div class="boot"><span class="muted mono">{t('app.checkingSession')}</span></div>
 {:else if showLogin}
-  <Login onAuthed={refresh} onClose={() => (showLogin = false)} />
+  <Login onClose={() => (showLogin = false)} />
 {:else}
   <AppShell me={me ?? null} onSignIn={() => (showLogin = true)} onLogout={logout}>
     {#if me?.role === 'admin' && route.section !== 'browse'}
