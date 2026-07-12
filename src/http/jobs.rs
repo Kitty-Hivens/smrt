@@ -21,10 +21,13 @@ use std::time::Duration;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route("/v1/admin/packs/:pack_id/build", post(build_pack))
-        .route("/v1/admin/packs/:pack_id/bootstrap", post(bootstrap_pack))
-        .route("/v1/admin/jobs/:job_id", get(job_status))
-        .route("/v1/admin/jobs/:job_id/events", get(job_events))
+        .route("/v1/authoring/packs/:pack_id/build", post(build_pack))
+        .route(
+            "/v1/authoring/packs/:pack_id/bootstrap",
+            post(bootstrap_pack),
+        )
+        .route("/v1/jobs/:job_id", get(job_status))
+        .route("/v1/jobs/:job_id/events", get(job_events))
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
         .with_state(state)

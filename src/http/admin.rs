@@ -21,38 +21,41 @@ const ADMIN_BODY_LIMIT: usize = 256 * 1024 * 1024;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route("/v1/admin/servers", post(save_server))
-        .route("/v1/admin/servers/:server_id", delete(delete_server))
+        .route("/v1/servers", post(save_server))
+        .route("/v1/servers/:server_id", delete(delete_server))
         .route(
-            "/v1/admin/cache/:prefix/:filename",
+            "/v1/cache/:prefix/:filename",
             put(put_cache_jar).delete(delete_cache_jar),
         )
-        .route("/v1/admin/cache/icon/:sha1", get(get_cache_icon))
+        .route("/v1/cache/icon/:sha1", get(get_cache_icon))
         .route(
-            "/v1/admin/packs/:pack_id/static/*rel_path",
+            "/v1/authoring/packs/:pack_id/static/*rel_path",
             put(put_pack_static).delete(delete_pack_static),
         )
-        .route("/v1/admin/packs/:pack_id/static", get(list_pack_static))
-        .route("/v1/admin/packs", get(list_authoring_packs))
+        .route("/v1/authoring/packs/:pack_id/static", get(list_pack_static))
+        .route("/v1/authoring/packs", get(list_authoring_packs))
         .route(
-            "/v1/admin/packs/:pack_id/config",
+            "/v1/authoring/packs/:pack_id/config",
             get(get_pack_config).put(put_pack_config),
         )
         .route(
-            "/v1/admin/packs/:pack_id/config/revert",
+            "/v1/authoring/packs/:pack_id/config/revert",
             post(revert_pack_config),
         )
-        .route("/v1/admin/packs/:pack_id/duplicate", post(duplicate_pack))
-        .route("/v1/admin/featured", post(save_featured))
-        .route("/v1/admin/packs/:pack_id/validate", post(validate_pack))
-        .route("/v1/admin/cache/removed", get(list_removed))
-        .route("/v1/admin/cache/inventory", get(list_cache_usage))
-        .route("/v1/admin/cache/github", post(ingest_github))
-        .route("/v1/admin/modrinth/search", get(modrinth_search))
-        .route("/v1/admin/modrinth/versions", get(modrinth_versions))
-        .route("/v1/admin/modrinth/icon", get(modrinth_icon))
-        .route("/v1/admin/users", get(list_users))
-        .route("/v1/admin/users/:uid/role", post(set_user_role))
+        .route(
+            "/v1/authoring/packs/:pack_id/duplicate",
+            post(duplicate_pack),
+        )
+        .route("/v1/featured", post(save_featured))
+        .route("/v1/authoring/packs/:pack_id/validate", post(validate_pack))
+        .route("/v1/cache/removed", get(list_removed))
+        .route("/v1/cache/usage", get(list_cache_usage))
+        .route("/v1/cache/github", post(ingest_github))
+        .route("/v1/modrinth/search", get(modrinth_search))
+        .route("/v1/modrinth/versions", get(modrinth_versions))
+        .route("/v1/modrinth/icon", get(modrinth_icon))
+        .route("/v1/users", get(list_users))
+        .route("/v1/users/:uid/role", post(set_user_role))
         .layer(DefaultBodyLimit::max(ADMIN_BODY_LIMIT))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
         .with_state(state)

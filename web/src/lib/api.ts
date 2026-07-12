@@ -109,7 +109,7 @@ async function resolveModrinthIcon(projectId: string): Promise<string | null> {
   if (cached !== undefined) return cached;
   try {
     const r = await getJson<{ icon_url: string | null }>(
-      `/v1/admin/modrinth/icon?id=${encodeURIComponent(projectId)}`,
+      `/v1/modrinth/icon?id=${encodeURIComponent(projectId)}`,
     );
     const url = r.icon_url ?? null;
     modrinthIconCache.set(projectId, url);
@@ -126,12 +126,12 @@ export const api = {
   servers: () => getJson<ServerListing>('/v1/servers'),
   cacheInventory: () => getJson<CacheInventory>('/v1/cache/inventory'),
   // admin-only: same jars, enriched with which pack/filename uses each sha1
-  cacheUsage: () => getJson<CacheUsageListing>('/v1/admin/cache/inventory'),
-  authoringPacks: () => getJson<AuthoringPacksListing>('/v1/admin/packs'),
+  cacheUsage: () => getJson<CacheUsageListing>('/v1/cache/usage'),
+  authoringPacks: () => getJson<AuthoringPacksListing>('/v1/authoring/packs'),
 
   // ── admin writes ──
-  saveServer: (e: ServerEntry) => send('POST', '/v1/admin/servers', e),
-  deleteServer: (id: string) => send('DELETE', `/v1/admin/servers/${encodeURIComponent(id)}`),
+  saveServer: (e: ServerEntry) => send('POST', '/v1/servers', e),
+  deleteServer: (id: string) => send('DELETE', `/v1/servers/${encodeURIComponent(id)}`),
 
   // Content-addressed: hash client-side and PUT under the sha1 path. The
   // mirror re-verifies the body hashes to the claimed sha1.
@@ -140,14 +140,14 @@ export const api = {
     const sha1 = await sha1Hex(buf);
     await sendRaw(
       'PUT',
-      `/v1/admin/cache/${sha1.slice(0, 2)}/${sha1}.jar`,
+      `/v1/cache/${sha1.slice(0, 2)}/${sha1}.jar`,
       buf,
       'application/java-archive',
     );
     return sha1;
   },
   deleteCacheJar: (sha1: string) =>
-    send('DELETE', `/v1/admin/cache/${sha1.slice(0, 2)}/${sha1}.jar`),
+    send('DELETE', `/v1/cache/${sha1.slice(0, 2)}/${sha1}.jar`),
 
   // server-side fetch of a GitHub release asset into the cache, returning its
   // content hash; the caller adds it as a normal smrt_cache mod
@@ -156,7 +156,7 @@ export const api = {
     tag: string,
     asset: string,
   ): Promise<{ sha1: string; size_bytes: number }> {
-    const r = await fetch('/v1/admin/cache/github', {
+    const r = await fetch('/v1/cache/github', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -165,17 +165,17 @@ export const api = {
     if (!r.ok) throw await toError(r);
     return (await r.json()) as { sha1: string; size_bytes: number };
   },
-  removed: () => getJson<{ schema_version: number; removed: string[] }>('/v1/admin/cache/removed'),
+  removed: () => getJson<{ schema_version: number; removed: string[] }>('/v1/cache/removed'),
 
   // ── authoring: config, build ──
   packConfig: (id: string) =>
-    getJson<PackConfig>(`/v1/admin/packs/${encodeURIComponent(id)}/config`),
+    getJson<PackConfig>(`/v1/authoring/packs/${encodeURIComponent(id)}/config`),
   savePackConfig: (id: string, cfg: PackConfig) =>
-    send('PUT', `/v1/admin/packs/${encodeURIComponent(id)}/config`, cfg),
+    send('PUT', `/v1/authoring/packs/${encodeURIComponent(id)}/config`, cfg),
   // overwrite the config with one reconstructed from a published build; returns it
   async revertPackConfig(id: string, version: string): Promise<PackConfig> {
     const r = await fetch(
-      `/v1/admin/packs/${encodeURIComponent(id)}/config/revert?version=${encodeURIComponent(version)}`,
+      `/v1/authoring/packs/${encodeURIComponent(id)}/config/revert?version=${encodeURIComponent(version)}`,
       { method: 'POST', credentials: 'include' },
     );
     if (!r.ok) throw await toError(r);
@@ -189,15 +189,15 @@ export const api = {
     if (opts?.dryRun) q.set('dry_run', 'true');
     if (opts?.packVersion) q.set('pack_version', opts.packVersion);
     const qs = q.toString();
-    const r = await fetch(`/v1/admin/packs/${encodeURIComponent(id)}/build${qs ? `?${qs}` : ''}`, {
+    const r = await fetch(`/v1/authoring/packs/${encodeURIComponent(id)}/build${qs ? `?${qs}` : ''}`, {
       method: 'POST',
       credentials: 'include',
     });
     if (!r.ok) throw await toError(r);
     return (await r.json()) as { job_id: string };
   },
-  jobEventsUrl: (jobId: string) => `/v1/admin/jobs/${encodeURIComponent(jobId)}/events`,
-  jobStatus: (jobId: string) => getJson<JobResult>(`/v1/admin/jobs/${encodeURIComponent(jobId)}`),
+  jobEventsUrl: (jobId: string) => `/v1/jobs/${encodeURIComponent(jobId)}/events`,
+  jobStatus: (jobId: string) => getJson<JobResult>(`/v1/jobs/${encodeURIComponent(jobId)}`),
 
   // ── published manifest (preview baseline + version diff) ──
   manifest: (id: string) => getJson<PackManifest>(`/v1/packs/${encodeURIComponent(id)}/manifest`),
@@ -211,7 +211,7 @@ export const api = {
   // ── validate a config against an SC archive ──
   async validatePack(id: string, file: File): Promise<ValidateReport> {
     const buf = await file.arrayBuffer();
-    const r = await fetch(`/v1/admin/packs/${encodeURIComponent(id)}/validate`, {
+    const r = await fetch(`/v1/authoring/packs/${encodeURIComponent(id)}/validate`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/zip' },
@@ -242,7 +242,7 @@ export const api = {
     if (params.loader_name) q.set('loader_name', params.loader_name);
     if (params.java_major != null) q.set('java_major', String(params.java_major));
     const buf = await file.arrayBuffer();
-    const r = await fetch(`/v1/admin/packs/${encodeURIComponent(id)}/bootstrap?${q}`, {
+    const r = await fetch(`/v1/authoring/packs/${encodeURIComponent(id)}/bootstrap?${q}`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/zip' },
@@ -253,21 +253,21 @@ export const api = {
   },
   packStatic: (id: string) =>
     getJson<{ schema_version: number; pack_id: string; files: string[] }>(
-      `/v1/admin/packs/${encodeURIComponent(id)}/static`,
+      `/v1/authoring/packs/${encodeURIComponent(id)}/static`,
     ),
   async uploadStatic(id: string, relPath: string, file: File): Promise<void> {
     const buf = await file.arrayBuffer();
     const enc = relPath.split('/').map(encodeURIComponent).join('/');
     await sendRaw(
       'PUT',
-      `/v1/admin/packs/${encodeURIComponent(id)}/static/${enc}`,
+      `/v1/authoring/packs/${encodeURIComponent(id)}/static/${enc}`,
       buf,
       file.type || 'application/octet-stream',
     );
   },
   deleteStatic(id: string, relPath: string): Promise<void> {
     const enc = relPath.split('/').map(encodeURIComponent).join('/');
-    return send('DELETE', `/v1/admin/packs/${encodeURIComponent(id)}/static/${enc}`);
+    return send('DELETE', `/v1/authoring/packs/${encodeURIComponent(id)}/static/${enc}`);
   },
   staticUrl(id: string, relPath: string): string {
     const enc = relPath.split('/').map(encodeURIComponent).join('/');
@@ -277,11 +277,11 @@ export const api = {
   // ── Modrinth search-to-add ──
   modrinthSearch: (q: string, mc?: string, type?: string) =>
     getJson<ModrinthHit[]>(
-      `/v1/admin/modrinth/search?q=${encodeURIComponent(q)}${mc ? `&mc=${encodeURIComponent(mc)}` : ''}${type ? `&type=${encodeURIComponent(type)}` : ''}`,
+      `/v1/modrinth/search?q=${encodeURIComponent(q)}${mc ? `&mc=${encodeURIComponent(mc)}` : ''}${type ? `&type=${encodeURIComponent(type)}` : ''}`,
     ),
   modrinthVersions: (id: string, mc?: string) =>
     getJson<ModrinthVersion[]>(
-      `/v1/admin/modrinth/versions?id=${encodeURIComponent(id)}${mc ? `&mc=${encodeURIComponent(mc)}` : ''}`,
+      `/v1/modrinth/versions?id=${encodeURIComponent(id)}${mc ? `&mc=${encodeURIComponent(mc)}` : ''}`,
     ),
   // Same per-project lookup the launcher's ModIconResolver does; cached.
   modrinthIcon: (projectId: string) => resolveModrinthIcon(projectId),
@@ -293,35 +293,35 @@ export const api = {
     if (loader) p.set('loader', loader);
     if (mc) p.set('mc', mc);
     const qs = p.toString();
-    return getJson<ModSummary[]>(`/v1/admin/registry/mods${qs ? `?${qs}` : ''}`);
+    return getJson<ModSummary[]>(`/v1/registry/mods${qs ? `?${qs}` : ''}`);
   },
   registryModVersions: (modId: number) =>
-    getJson<VersionRow[]>(`/v1/admin/registry/mod-versions/${modId}`),
+    getJson<VersionRow[]>(`/v1/registry/mod-versions/${modId}`),
   // a mod's files grouped by release (version node) for the management view
   modReleases: (modId: number) =>
-    getJson<ReleaseRow[]>(`/v1/admin/registry/mod-releases/${modId}`),
+    getJson<ReleaseRow[]>(`/v1/registry/mod-releases/${modId}`),
   // jars on disk with no identity yet -- the "needs identity" bucket
-  unassigned: () => getJson<UnassignedJar[]>('/v1/admin/registry/unassigned'),
+  unassigned: () => getJson<UnassignedJar[]>('/v1/registry/unassigned'),
   // set a cached jar's mod + release + facets (authored, survives re-harvest)
   authorFileIdentity: (sha1: string, body: IdentityInput) =>
-    send('PUT', `/v1/admin/registry/files/${sha1}/identity`, body),
+    send('PUT', `/v1/registry/files/${sha1}/identity`, body),
   renameMod: (modId: number, body: { name?: string; slug?: string }) =>
-    send('PUT', `/v1/admin/registry/mod-meta/${modId}`, body),
+    send('PUT', `/v1/registry/mod-meta/${modId}`, body),
   editRelease: (releaseId: number, body: { version_number?: string; channel?: string }) =>
-    send('PUT', `/v1/admin/registry/releases/${releaseId}`, body),
-  registryBuilds: () => getJson<BuildSummary[]>('/v1/admin/registry/builds'),
+    send('PUT', `/v1/registry/releases/${releaseId}`, body),
+  registryBuilds: () => getJson<BuildSummary[]>('/v1/registry/builds'),
   registryBuildMods: (packId: string, packVersion: string) =>
     getJson<BuildModRow[]>(
-      `/v1/admin/registry/builds/${encodeURIComponent(packId)}/${encodeURIComponent(packVersion)}`,
+      `/v1/registry/builds/${encodeURIComponent(packId)}/${encodeURIComponent(packVersion)}`,
     ),
   registryBuildAssets: (packId: string, packVersion: string) =>
     getJson<DeclaredAsset[]>(
-      `/v1/admin/registry/builds/${encodeURIComponent(packId)}/${encodeURIComponent(packVersion)}/assets`,
+      `/v1/registry/builds/${encodeURIComponent(packId)}/${encodeURIComponent(packVersion)}/assets`,
     ),
 
-  listUsers: () => getJson<UserRow[]>('/v1/admin/users'),
+  listUsers: () => getJson<UserRow[]>('/v1/users'),
   setUserRole: (uid: number, role: string) =>
-    send('POST', `/v1/admin/users/${uid}/role`, { role }),
+    send('POST', `/v1/users/${uid}/role`, { role }),
 
   async me(): Promise<{ uid: number; login: string; role: string } | null> {
     const r = await fetch('/v1/me', { credentials: 'include' });

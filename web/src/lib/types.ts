@@ -75,7 +75,7 @@ export interface ModrinthVersion {
   loaders: string[];
 }
 
-// GET /v1/admin/jobs/:id -- `result` is present only for a finished dry-run.
+// GET /v1/jobs/:id -- `result` is present only for a finished dry-run.
 export interface JobResult {
   job_id: string;
   kind: string;

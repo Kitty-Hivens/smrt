@@ -1,6 +1,7 @@
-//! HTTP layer (controllers): the public `/v1` read API, the `/v1/admin`
-//! write + authoring API, and the shared response error. `router` assembles
-//! the full application router from the two halves.
+//! HTTP layer (controllers): the public `/v1` read API, the gated `/v1` write +
+//! authoring API (`/v1/registry`, `/v1/authoring`, `/v1/users`, ...), and the
+//! shared response error. `router` assembles the full application router from
+//! the halves.
 
 pub mod admin;
 pub mod auth;

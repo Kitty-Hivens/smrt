@@ -107,7 +107,7 @@ enum Cmd {
 
     /// PUT a local directory tree into the mirror's pack static area
     /// via the admin API. Walks every regular file under [dir] and
-    /// publishes each at `/v1/admin/packs/<pack_id>/static/<rel_path>`
+    /// publishes each at `/v1/authoring/packs/<pack_id>/static/<rel_path>`
     /// (relative to dir). Reads the admin token from [token_file]
     /// (default `/tmp/smrt-token`).
     UploadStatic {
@@ -624,7 +624,7 @@ fn static_upload_url(base: &str, pack_id: &str, rel_path: &str) -> String {
         .map(|seg| utf8_percent_encode(seg, SET).to_string())
         .collect::<Vec<_>>()
         .join("/");
-    format!("{base}/v1/admin/packs/{pack_enc}/static/{rel_enc}")
+    format!("{base}/v1/authoring/packs/{pack_enc}/static/{rel_enc}")
 }
 
 /// Bridge sync callback world into async reqwest. The upload walk is

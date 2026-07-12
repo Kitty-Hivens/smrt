@@ -1,6 +1,7 @@
-//! Admin registry endpoints: trigger a harvest and read the mod-identity index
-//! (which packs use a mod, all versions, orphans, loader eligibility). Auth-
-//! gated like the rest of `/v1/admin` -- these expose pack composition.
+//! Registry endpoints (`/v1/registry/*`): trigger a harvest and read the
+//! mod-identity index (which packs use a mod, all versions, orphans, loader
+//! eligibility). Auth-gated like the rest of the write API -- these expose pack
+//! composition.
 //!
 //! Phase 1 runs the harvest synchronously and returns the report; a single
 //! operator tolerates the few-second wait. Streaming it as a job is a Phase 2
@@ -25,55 +26,43 @@ use serde::{Deserialize, Serialize};
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route("/v1/admin/registry/harvest", post(post_harvest))
-        .route("/v1/admin/registry/stats", get(get_stats))
-        .route("/v1/admin/registry/orphans", get(get_orphans))
-        .route("/v1/admin/registry/eligible", get(get_eligible))
+        .route("/v1/registry/harvest", post(post_harvest))
+        .route("/v1/registry/stats", get(get_stats))
+        .route("/v1/registry/orphans", get(get_orphans))
+        .route("/v1/registry/eligible", get(get_eligible))
         // registry browser: mods (faceted list), versions by surrogate id, builds
-        .route("/v1/admin/registry/mods", get(get_mods))
+        .route("/v1/registry/mods", get(get_mods))
+        .route("/v1/registry/mod-versions/:mod_id", get(get_versions_by_id))
+        .route("/v1/registry/mod-releases/:mod_id", get(get_releases_by_id))
+        .route("/v1/registry/builds", get(get_builds))
         .route(
-            "/v1/admin/registry/mod-versions/:mod_id",
-            get(get_versions_by_id),
-        )
-        .route(
-            "/v1/admin/registry/mod-releases/:mod_id",
-            get(get_releases_by_id),
-        )
-        .route("/v1/admin/registry/builds", get(get_builds))
-        .route(
-            "/v1/admin/registry/builds/:pack_id/:pack_version",
+            "/v1/registry/builds/:pack_id/:pack_version",
             get(get_build_mods),
         )
         .route(
-            "/v1/admin/registry/builds/:pack_id/:pack_version/assets",
+            "/v1/registry/builds/:pack_id/:pack_version/assets",
             get(get_build_assets),
         )
         .route(
-            "/v1/admin/registry/mods/:alias_source/:external_key",
+            "/v1/registry/mods/:alias_source/:external_key",
             get(get_mod_versions),
         )
         .route(
-            "/v1/admin/registry/mods/:alias_source/:external_key/uses",
+            "/v1/registry/mods/:alias_source/:external_key/uses",
             get(get_mod_uses),
         )
         // authored moderation (Phase 2)
         .route(
-            "/v1/admin/registry/packs/:pack_id/provenance",
+            "/v1/registry/packs/:pack_id/provenance",
             put(put_provenance),
         )
-        .route("/v1/admin/registry/conflicts", post(post_conflict))
-        .route("/v1/admin/registry/backup", post(post_backup))
+        .route("/v1/registry/conflicts", post(post_conflict))
+        .route("/v1/registry/backup", post(post_backup))
         // authored identity door: jars needing identity, and setting it
-        .route("/v1/admin/registry/unassigned", get(get_unassigned))
-        .route(
-            "/v1/admin/registry/files/:sha1/identity",
-            put(put_file_identity),
-        )
-        .route("/v1/admin/registry/mod-meta/:mod_id", put(put_mod_rename))
-        .route(
-            "/v1/admin/registry/releases/:release_id",
-            put(put_release_edit),
-        )
+        .route("/v1/registry/unassigned", get(get_unassigned))
+        .route("/v1/registry/files/:sha1/identity", put(put_file_identity))
+        .route("/v1/registry/mod-meta/:mod_id", put(put_mod_rename))
+        .route("/v1/registry/releases/:release_id", put(put_release_edit))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
         .with_state(state)
 }

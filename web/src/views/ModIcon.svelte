@@ -31,7 +31,7 @@
   // <img> onerror falls back to the letter avatar when the jar carries none (404)
   const cacheIcon = $derived(
     source.type === 'smrt_cache' && 'sha1' in source && source.sha1
-      ? `/v1/admin/cache/icon/${source.sha1}`
+      ? `/v1/cache/icon/${source.sha1}`
       : null,
   );
   const src = $derived(broken ? null : (explicit ?? modrinth ?? cacheIcon));
