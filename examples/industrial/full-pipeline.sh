@@ -41,7 +41,8 @@ env overrides:
   DISPLAY_NAME      human pack name                     (default: Industrial)
   TAGLINE           short pack tagline                  (default: "SC Industrial via Hivens Mirror")
   MC_VERSION        Minecraft version                   (default: 1.12.2)
-  LOADER_VERSION    Forge version                       (default: 14.23.5.2922)
+  LOADER_NAME       loader (forge | cleanroom | ...)     (default: forge)
+  LOADER_VERSION    loader version                       (default: 14.23.5.2922)
   JAVA_MAJOR        Java major version                  (default: 8)
   CLIENT_DIR        SC client install for upload-static (default: ~/.local/share/nexira/clients/Industrial)
   MIRROR_BASE       mirror URL base                     (default: https://smrt.hivens.dev)
@@ -62,6 +63,7 @@ PACK_ID="${PACK_ID:-Industrial}"
 DISPLAY_NAME="${DISPLAY_NAME:-Industrial}"
 TAGLINE="${TAGLINE:-SmartyCraft Industrial via Hivens Mirror}"
 MC_VERSION="${MC_VERSION:-1.12.2}"
+LOADER_NAME="${LOADER_NAME:-forge}"
 LOADER_VERSION="${LOADER_VERSION:-14.23.5.2922}"
 JAVA_MAJOR="${JAVA_MAJOR:-8}"
 CLIENT_DIR="${CLIENT_DIR:-$HOME/.local/share/nexira/clients/$PACK_ID}"
@@ -104,7 +106,7 @@ if [[ -z "${SKIP_BOOTSTRAP:-}" ]]; then
         --display-name     "$DISPLAY_NAME" \
         --tagline          "$TAGLINE" \
         --minecraft-version "$MC_VERSION" \
-        --loader-name      forge \
+        --loader-name      "$LOADER_NAME" \
         --loader-version   "$LOADER_VERSION" \
         --java-major       "$JAVA_MAJOR" \
         --storage          "$STORAGE"
