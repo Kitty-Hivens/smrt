@@ -9,7 +9,6 @@ pub mod jobs;
 pub mod panel;
 pub mod public;
 pub mod registry;
-pub mod session;
 
 pub use error::ApiError;
 

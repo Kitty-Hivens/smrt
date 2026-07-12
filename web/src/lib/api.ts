@@ -318,9 +318,9 @@ export const api = {
       `/v1/admin/registry/builds/${encodeURIComponent(packId)}/${encodeURIComponent(packVersion)}/assets`,
     ),
 
-  async session(): Promise<boolean> {
-    const r = await fetch('/admin/api/session', { credentials: 'include' });
-    return r.ok;
+  async me(): Promise<{ uid: number; login: string; role: string } | null> {
+    const r = await fetch('/v1/me', { credentials: 'include' });
+    return r.ok ? r.json() : null;
   },
   async login(token: string): Promise<boolean> {
     const r = await fetch('/admin/api/login', {

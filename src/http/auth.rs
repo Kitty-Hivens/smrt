@@ -1,25 +1,27 @@
-//! Panel auth. Two ways in:
-//!   - GitHub OAuth (the daily path): sign in with GitHub; if the account's uid
-//!     is on the admin allowlist, a server-side session opens and the browser
-//!     holds only an opaque session id.
-//!   - the admin token (break-glass): the CLI sends it as `Authorization:
-//!     Bearer`, or it is typed into the panel's fallback form. It opens an admin
-//!     session too.
+//! Panel auth over the persistent accounts store. Two ways in:
+//!   - GitHub OAuth (the daily path): sign in with GitHub; the callback upserts a
+//!     `users` row (role from the operator allowlist) and opens a server-side
+//!     session. Any GitHub account can identify; the admin role is what unlocks
+//!     the operator panel.
+//!   - the admin token (break-glass, kept temporarily): the CLI sends it as
+//!     `Authorization: Bearer`, or it is typed into the panel's fallback form. It
+//!     opens a session for the reserved break-glass user.
 //!
-//! `require_auth` accepts a valid session cookie or a bearer token and attaches
-//! the resolved [`Identity`] to the request. SameSite is the CSRF defence: the
-//! session cookie is Strict; the short-lived OAuth `state` cookie is Lax so it
-//! survives GitHub's cross-site redirect back to the callback.
+//! `require_auth` guards the admin API: it resolves the caller's [`Identity`]
+//! from the session cookie or a bearer token and requires the admin role.
+//! `/v1/me` reports the current identity for any authenticated user. SameSite is
+//! the CSRF defence: the session cookie is Strict; the short-lived OAuth `state`
+//! cookie is Lax so it survives GitHub's cross-site redirect back.
 
 use super::ApiError;
-use super::session::{Identity, Role, random_token};
+use crate::accounts::{Identity, Role, random_token};
 use crate::state::AppState;
 use axum::extract::{Query, Request, State};
-use axum::http::{StatusCode, header};
-use axum::middleware::{Next, from_fn_with_state};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
-use axum::{Extension, Json, Router};
+use axum::{Json, Router};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Deserialize;
 use serde_json::json;
@@ -33,16 +35,12 @@ const GH_TOKEN: &str = "https://github.com/login/oauth/access_token";
 const GH_USER: &str = "https://api.github.com/user";
 
 pub fn router(state: AppState) -> Router {
-    let guard = from_fn_with_state(state.clone(), require_auth);
     Router::new()
         .route("/admin/api/login", post(login))
         .route("/admin/api/auth/github/login", get(github_login))
         .route("/admin/api/auth/github/callback", get(github_callback))
-        .route(
-            "/admin/api/session",
-            get(session).route_layer(guard.clone()),
-        )
-        .route("/admin/api/logout", post(logout).route_layer(guard))
+        .route("/admin/api/logout", post(logout))
+        .route("/v1/me", get(me))
         .with_state(state)
 }
 
@@ -60,12 +58,18 @@ async fn login(State(state): State<AppState>, Json(req): Json<LoginReq>) -> Resp
     if !constant_time_eq(expected.as_bytes(), req.token.as_bytes()) {
         return ApiError::Unauthorized.into_response();
     }
-    let id = state.sessions.create(break_glass());
+    let acc = state.accounts.clone();
+    let sid = match tokio::task::spawn_blocking(move || acc.sign_in_break_glass()).await {
+        Ok(Ok(sid)) => sid,
+        _ => {
+            return ApiError::Internal(anyhow::anyhow!("open break-glass session")).into_response();
+        }
+    };
     (
         StatusCode::OK,
         [(
             header::SET_COOKIE,
-            session_cookie(&id, state.config.cookie_secure, false),
+            session_cookie(&sid, state.config.cookie_secure, false),
         )],
         Json(json!({ "authenticated": true, "login": "break-glass", "role": "admin" })),
     )
@@ -106,11 +110,7 @@ async fn github_callback(
     req: Request,
 ) -> Response {
     let secure = state.config.cookie_secure;
-    let cookie_state = req
-        .headers()
-        .get(header::COOKIE)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| cookie_value(h, STATE_COOKIE));
+    let cookie_state = cookie_value(req.headers(), STATE_COOKIE);
 
     // The state param must be present and match the cookie the redirect set --
     // the CSRF check on the callback.
@@ -127,21 +127,23 @@ async fn github_callback(
         return redirect_clearing_state("/admin/?auth=unconfigured", secure);
     };
 
-    let identity = match exchange_and_fetch(
-        cid,
-        secret,
-        &code,
-        &callback_uri(&state),
-        &state.config.admin_github_uids,
-    )
-    .await
-    {
-        Ok(Some(id)) => id,
-        Ok(None) => return redirect_clearing_state("/admin/?auth=denied", secure),
+    // Exchange the code and read the GitHub account. Every valid account gets an
+    // identity; the allowlist only sets whether that identity is an admin.
+    let (uid, login) = match exchange_and_fetch(cid, secret, &code, &callback_uri(&state)).await {
+        Ok(user) => user,
         Err(_) => return redirect_clearing_state("/admin/?auth=failed", secure),
     };
+    let is_admin = state.config.admin_github_uids.contains(&uid);
 
-    let sid = state.sessions.create(identity);
+    let acc = state.accounts.clone();
+    let sid =
+        match tokio::task::spawn_blocking(move || acc.sign_in_github(uid as i64, &login, is_admin))
+            .await
+        {
+            Ok(Ok(sid)) => sid,
+            _ => return redirect_clearing_state("/admin/?auth=failed", secure),
+        };
+
     let mut resp = Redirect::to("/admin/").into_response();
     resp.headers_mut().append(
         header::SET_COOKIE,
@@ -154,16 +156,14 @@ async fn github_callback(
     resp
 }
 
-/// Exchange the OAuth code for an access token, read the GitHub user, and map
-/// them to an [`Identity`] iff their uid is on the admin allowlist. `Ok(None)`
-/// means a valid GitHub account that is not an authorized operator.
+/// Exchange the OAuth code for an access token and read the GitHub user, as
+/// `(uid, login)`. The caller decides admin-ness against the allowlist.
 async fn exchange_and_fetch(
     client_id: &str,
     client_secret: &str,
     code: &str,
     redirect_uri: &str,
-    admin_uids: &[u64],
-) -> anyhow::Result<Option<Identity>> {
+) -> anyhow::Result<(u64, String)> {
     let http = reqwest::Client::builder().user_agent("smrt").build()?;
 
     #[derive(Deserialize)]
@@ -202,32 +202,28 @@ async fn exchange_and_fetch(
         .json()
         .await?;
 
-    Ok(admin_uids.contains(&user.id).then_some(Identity {
-        uid: user.id,
-        login: user.login,
-        role: Role::Admin,
-    }))
+    Ok((user.id, user.login))
 }
 
-// -- session + logout -------------------------------------------------------
+// -- identity + logout ------------------------------------------------------
 
-async fn session(Extension(id): Extension<Identity>) -> Json<serde_json::Value> {
-    Json(json!({
-        "authenticated": true,
-        "uid": id.uid,
-        "login": id.login,
-        "role": id.role.as_str(),
-    }))
+async fn me(State(state): State<AppState>, req: Request) -> Response {
+    match resolve_identity(&state, req.headers()).await {
+        Some(id) => Json(json!({
+            "authenticated": true,
+            "uid": id.uid,
+            "login": id.login,
+            "role": id.role.as_str(),
+        }))
+        .into_response(),
+        None => ApiError::Unauthorized.into_response(),
+    }
 }
 
 async fn logout(State(state): State<AppState>, req: Request) -> Response {
-    if let Some(sid) = req
-        .headers()
-        .get(header::COOKIE)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| cookie_value(h, COOKIE_NAME))
-    {
-        state.sessions.remove(&sid);
+    if let Some(sid) = cookie_value(req.headers(), COOKIE_NAME) {
+        let acc = state.accounts.clone();
+        let _ = tokio::task::spawn_blocking(move || acc.delete_session(&sid)).await;
     }
     (
         StatusCode::NO_CONTENT,
@@ -241,16 +237,29 @@ async fn logout(State(state): State<AppState>, req: Request) -> Response {
 
 // -- middleware -------------------------------------------------------------
 
-/// Accept a bearer admin token (break-glass) or a valid session cookie, and
-/// attach the resolved [`Identity`] to the request for downstream handlers. A
-/// present-but-wrong bearer falls through to the cookie rather than rejecting.
+/// Guard the operator API: resolve the caller's identity and require the admin
+/// role. A member is authenticated but has no operator surface yet, so they get
+/// 403, not 401. The resolved identity is attached for downstream handlers.
 pub async fn require_auth(
     State(state): State<AppState>,
     mut req: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
-    let bearer = req
-        .headers()
+    let Some(identity) = resolve_identity(&state, req.headers()).await else {
+        return Err(ApiError::Unauthorized);
+    };
+    if identity.role != Role::Admin {
+        return Err(ApiError::Forbidden);
+    }
+    req.extensions_mut().insert(identity);
+    Ok(next.run(req).await)
+}
+
+/// Resolve who is calling: a valid bearer admin token (break-glass) yields the
+/// break-glass admin identity; otherwise the session cookie is looked up in the
+/// accounts store. `None` means not authenticated.
+async fn resolve_identity(state: &AppState, headers: &HeaderMap) -> Option<Identity> {
+    let bearer = headers
         .get(header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
@@ -258,21 +267,16 @@ pub async fn require_auth(
     if let (Some(tok), Some(expected)) = (&bearer, state.config.admin_token.as_deref())
         && constant_time_eq(expected.as_bytes(), tok.as_bytes())
     {
-        req.extensions_mut().insert(break_glass());
-        return Ok(next.run(req).await);
+        return Some(break_glass());
     }
 
-    let sid = req
-        .headers()
-        .get(header::COOKIE)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| cookie_value(h, COOKIE_NAME));
-    if let Some(identity) = sid.and_then(|id| state.sessions.get(&id)) {
-        req.extensions_mut().insert(identity);
-        return Ok(next.run(req).await);
-    }
-
-    Err(ApiError::Unauthorized)
+    let sid = cookie_value(headers, COOKIE_NAME)?;
+    let acc = state.accounts.clone();
+    tokio::task::spawn_blocking(move || acc.session_identity(&sid))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten()
 }
 
 // -- helpers ----------------------------------------------------------------
@@ -345,9 +349,11 @@ fn build_cookie(
     c
 }
 
-fn cookie_value(cookie_header: &str, name: &str) -> Option<String> {
+fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     let prefix = format!("{name}=");
-    cookie_header
+    headers
+        .get(header::COOKIE)
+        .and_then(|h| h.to_str().ok())?
         .split(';')
         .map(str::trim)
         .find_map(|kv| kv.strip_prefix(&prefix).map(str::to_string))
@@ -379,15 +385,13 @@ mod tests {
 
     #[test]
     fn cookie_value_extracts_named_cookie() {
-        assert_eq!(
-            cookie_value("foo=1; smrt_session=tok123; bar=2", COOKIE_NAME).as_deref(),
-            Some("tok123")
+        let mut h = HeaderMap::new();
+        h.insert(
+            header::COOKIE,
+            "foo=1; smrt_session=tok123; bar=2".parse().unwrap(),
         );
-        assert_eq!(
-            cookie_value("smrt_oauth_state=xyz", STATE_COOKIE).as_deref(),
-            Some("xyz")
-        );
-        assert_eq!(cookie_value("other=x", COOKIE_NAME), None);
+        assert_eq!(cookie_value(&h, COOKIE_NAME).as_deref(), Some("tok123"));
+        assert_eq!(cookie_value(&h, STATE_COOKIE), None);
     }
 
     #[test]

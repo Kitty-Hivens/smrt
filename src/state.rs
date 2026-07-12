@@ -1,6 +1,6 @@
+use crate::accounts::Accounts;
 use crate::authoring::{HarvestScheduler, Modrinth};
 use crate::config::Config;
-use crate::http::session::SessionStore;
 use crate::jobs::JobRegistry;
 use crate::registry::Registry;
 use crate::storage::Storage;
@@ -19,8 +19,8 @@ pub struct AppState {
     /// Coalescing background harvester. Construction only wires the deps; call
     /// `harvest.clone().spawn()` once after the runtime is up to start it.
     pub harvest: Arc<HarvestScheduler>,
-    /// Server-side panel sessions (opaque cookie id -> GitHub identity + role).
-    pub sessions: Arc<SessionStore>,
+    /// Persistent accounts + sessions (GitHub identities, server-side sessions).
+    pub accounts: Arc<Accounts>,
 }
 
 impl AppState {
@@ -30,6 +30,7 @@ impl AppState {
         std::fs::create_dir_all(&config.storage_dir).ok();
         let storage = Arc::new(Storage::new(config.storage_dir.clone()));
         let registry = Arc::new(Registry::open(config.storage_dir.join("registry.db"))?);
+        let accounts = Arc::new(Accounts::open(config.storage_dir.join("accounts.db"))?);
         let modrinth = Arc::new(Modrinth::new()?);
         let harvest = HarvestScheduler::new(storage.clone(), modrinth.clone(), registry.clone());
         Ok(Self {
@@ -39,7 +40,7 @@ impl AppState {
             harvest,
             config: Arc::new(config),
             jobs: Arc::new(JobRegistry::default()),
-            sessions: Arc::new(SessionStore::default()),
+            accounts,
         })
     }
 }

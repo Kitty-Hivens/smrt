@@ -13,6 +13,7 @@ export const ru: Dict = {
   'shell.refresh': 'Обновить',
   'shell.health': 'v{version} / схема {schema}',
   'shell.locale': 'Язык',
+  'member.notOperator': 'Вошёл как {login}. Панель только для операторов.',
 
   'login.subtitle': 'Панель управления зеркалом. Войди через GitHub.',
   'login.submit': 'Войти',

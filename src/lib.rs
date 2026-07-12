@@ -9,6 +9,7 @@
 //!
 //! Plus `config` (env) and `state` (shared `AppState`).
 
+pub mod accounts;
 pub mod authoring;
 pub mod config;
 pub mod domain;
