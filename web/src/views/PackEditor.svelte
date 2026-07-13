@@ -838,7 +838,8 @@
   .hd {
     display: flex;
     align-items: center;
-    gap: var(--space-4);
+    flex-wrap: wrap;
+    gap: var(--space-3) var(--space-4);
     margin-bottom: var(--space-4);
   }
   .ttl {
