@@ -259,6 +259,7 @@ impl Storage {
         to: &str,
         loader: Option<LoaderSpec>,
         owner: i64,
+        fork_of: Option<String>,
     ) -> Result<PackConfig, ApiError> {
         if !is_safe_id(to) {
             return Err(ApiError::BadRequest("invalid target pack id".into()));
@@ -279,12 +280,16 @@ impl Storage {
 
         let mut cfg = self.load_pack_config(from).await?;
         cfg.pack_id = to.to_string();
-        // a duplicate is a fresh, unpublished variant owned by whoever cloned it;
-        // reset the ownership/publication fields rather than inheriting them.
+        // the clone is a fresh draft owned by whoever made it; its tier follows
+        // the target namespace, and fork_of is set only when this is a fork.
         cfg.owner = owner;
-        cfg.tier = PackTier::Official;
+        cfg.tier = if to.starts_with("u/") {
+            PackTier::Community
+        } else {
+            PackTier::Official
+        };
         cfg.visibility = Visibility::Draft;
-        cfg.fork_of = None;
+        cfg.fork_of = fork_of;
         if let Some(loader) = loader {
             cfg.loader = loader;
         }
@@ -932,7 +937,7 @@ mod tests {
             version: "0.2.3".into(),
         };
         let new_cfg = s
-            .duplicate_pack("Industrial", "Industrial-cleanroom", Some(cleanroom), 7)
+            .duplicate_pack("Industrial", "Industrial-cleanroom", Some(cleanroom), 7, None)
             .await
             .unwrap();
 
@@ -967,16 +972,16 @@ mod tests {
         s.save_pack_config("Taken", &sample_config()).await.unwrap();
 
         assert!(matches!(
-            s.duplicate_pack("Industrial", "Taken", None, 1).await,
+            s.duplicate_pack("Industrial", "Taken", None, 1, None).await,
             Err(ApiError::Conflict(_))
         ));
         assert!(matches!(
-            s.duplicate_pack("Industrial", "Industrial", None, 1).await,
+            s.duplicate_pack("Industrial", "Industrial", None, 1, None).await,
             Err(ApiError::BadRequest(_))
         ));
         // unknown source -> NotFound (from the underlying config load)
         assert!(matches!(
-            s.duplicate_pack("Nope", "Fresh", None, 1).await,
+            s.duplicate_pack("Nope", "Fresh", None, 1, None).await,
             Err(ApiError::NotFound)
         ));
     }

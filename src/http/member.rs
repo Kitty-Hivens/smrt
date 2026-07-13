@@ -4,7 +4,7 @@
 
 use super::ApiError;
 use crate::accounts::{Identity, UploadRow};
-use crate::domain::PackSummary;
+use crate::domain::{PackConfig, PackSummary, Visibility};
 use crate::state::AppState;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
@@ -22,6 +22,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/me/authoring", get(my_authoring))
         .route("/v1/me/packs/:pack_id/uploads", post(upload_jar))
         .route("/v1/me/uploads", get(my_uploads))
+        .route("/v1/me/forks", post(fork_pack))
         .layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT))
         .layer(from_fn_with_state(
             state.clone(),
@@ -113,6 +114,37 @@ async fn upload_jar(
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("read upload task: {e}")))??
         .ok_or(ApiError::NotFound)?;
     Ok((StatusCode::CREATED, Json(row)))
+}
+
+#[derive(Deserialize)]
+struct ForkReq {
+    source: String,
+    name: String,
+}
+
+/// Fork a pack into the caller's namespace: copy its config + static under
+/// `u/<uid>/<name>` as a community draft with `fork_of` set to the source. The
+/// caller may fork any published pack, or one they already own (their draft).
+async fn fork_pack(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Json(req): Json<ForkReq>,
+) -> Result<(StatusCode, Json<PackConfig>), ApiError> {
+    let published = state
+        .storage
+        .load_pack_summary(&req.source)
+        .await
+        .map(|s| s.visibility == Visibility::Published)
+        .unwrap_or(false);
+    if !published && !super::auth::may_author(&identity, &req.source) {
+        return Err(ApiError::Forbidden);
+    }
+    let target = format!("u/{}/{}", identity.uid, req.name);
+    let cfg = state
+        .storage
+        .duplicate_pack(&req.source, &target, None, identity.uid, Some(req.source.clone()))
+        .await?;
+    Ok((StatusCode::CREATED, Json(cfg)))
 }
 
 /// The caller's own uploads and their moderation status.

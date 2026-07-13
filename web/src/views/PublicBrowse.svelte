@@ -1,9 +1,13 @@
 <script lang="ts">
-  import { api } from '../lib/api';
+  import { api, ApiError } from '../lib/api';
+  import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
   import { renderMarkdown } from '../lib/markdown';
   import ModIcon from './ModIcon.svelte';
   import type { CommunityPack, PackManifest, PackSummary } from '../lib/types';
+
+  // A signed-in member can fork any pack they can browse into their namespace.
+  let { me }: { me: { uid: number; login: string } | null } = $props();
 
   // Guest-facing, read-only. Official packs are the launcher contract (/v1/packs);
   // community packs (/v1/community) are site-only, browseable but not in the
@@ -62,6 +66,23 @@
   function modName(m: PackManifest['mods'][number]): string {
     return m.display?.name ?? m.filename.replace(/\.jar$/, '');
   }
+
+  async function fork(p: PackSummary) {
+    if (!me) return;
+    const name = (
+      await dialogs.prompt(t('browse.forkPrompt'), {
+        title: t('browse.fork'),
+        initial: p.pack_id.split('/').pop() ?? p.pack_id,
+      })
+    )?.trim();
+    if (!name) return;
+    try {
+      await api.fork(p.pack_id, name);
+      await dialogs.confirm(t('browse.forked', { name }), { title: t('browse.fork') });
+    } catch (e) {
+      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+    }
+  }
 </script>
 
 <div class="view">
@@ -102,6 +123,9 @@
             {#if mLoading}
               <div class="muted s">{t('common.loading')}</div>
             {:else if manifest}
+              {#if me}
+                <button class="forkbtn" onclick={() => fork(p)}>{t('browse.fork')}</button>
+              {/if}
               {#if p.description_md}
                 <!-- renderMarkdown sanitizes; safe to inject -->
                 <div class="desc">{@html renderMarkdown(p.description_md)}</div>
@@ -178,6 +202,11 @@
   .pby {
     font-size: 11px;
     margin-top: 2px;
+  }
+  .forkbtn {
+    align-self: flex-start;
+    padding: 5px 14px;
+    font-size: 12px;
   }
   .pack {
     border-bottom: 1px solid var(--seam);

@@ -736,7 +736,7 @@ async fn duplicate_pack(
     let owner = super::auth::pack_namespace_uid(&req.target_id).unwrap_or(identity.uid);
     let cfg = state
         .storage
-        .duplicate_pack(&pack_id, &req.target_id, req.loader, owner)
+        .duplicate_pack(&pack_id, &req.target_id, req.loader, owner, None)
         .await?;
     Ok((StatusCode::CREATED, Json(cfg)))
 }

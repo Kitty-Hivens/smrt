@@ -43,7 +43,7 @@
     {:else if me?.role === 'admin' && route.section !== 'browse'}
       <Browse {me} />
     {:else}
-      <PublicBrowse />
+      <PublicBrowse me={me ?? null} />
     {/if}
   </AppShell>
 {/if}

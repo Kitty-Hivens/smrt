@@ -128,6 +128,8 @@ export const api = {
   health: () => getJson<Health>('/v1/health'),
   packs: () => getJson<PackListing>('/v1/packs'),
   community: () => getJson<CommunityPack[]>('/v1/community'),
+  // fork a pack into the caller's namespace (community draft with fork_of set)
+  fork: (source: string, name: string) => send('POST', '/v1/me/forks', { source, name }),
   servers: () => getJson<ServerListing>('/v1/servers'),
   cacheInventory: () => getJson<CacheInventory>('/v1/cache/inventory'),
   // admin-only: same jars, enriched with which pack/filename uses each sha1
