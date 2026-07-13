@@ -266,6 +266,40 @@ pub fn set_mod_version_modrinth(
     Ok(())
 }
 
+/// Record the package prefixes a mod's jar defines, for the reference-derivation
+/// index. Purely derived (harvest DELETEs the whole `mod_package` table first and
+/// rebuilds), so there is no precious guard; `INSERT OR IGNORE` folds a prefix a
+/// mod's several jars share.
+pub fn set_mod_packages(conn: &Connection, mod_id: i64, prefixes: &[&str]) -> Result<()> {
+    for p in prefixes {
+        conn.execute(
+            "INSERT OR IGNORE INTO mod_package (mod_id, prefix) VALUES (?1, ?2)",
+            params![mod_id, p],
+        )?;
+    }
+    Ok(())
+}
+
+/// Set a jar's derived side (by sha1). `COALESCE` so an undecided re-derivation
+/// never erases a known side; skipped for precious (`curator`/`authored`) rows.
+/// No-op when the derivation yielded nothing.
+pub fn set_mod_version_side(
+    conn: &Connection,
+    sha1: &str,
+    side: Option<&str>,
+    now: &str,
+) -> Result<()> {
+    let Some(side) = side else {
+        return Ok(());
+    };
+    conn.execute(
+        "UPDATE mod_version SET side = COALESCE(?2, side), updated_at = ?3
+         WHERE sha1 = ?1 AND source NOT IN ('curator', 'authored')",
+        params![sha1, side, now],
+    )?;
+    Ok(())
+}
+
 pub fn mod_version_id_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<i64>> {
     Ok(conn
         .query_row(

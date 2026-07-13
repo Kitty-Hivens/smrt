@@ -294,6 +294,9 @@ async fn run_registry_harvest(storage: &Path) -> Result<()> {
         versions = report.mod_versions,
         relations = report.relations,
         builds = report.builds,
+        inferred_requires = report.inferred_requires,
+        inferred_optional = report.inferred_optional,
+        sides = report.sides_derived,
         "harvest complete"
     );
     println!("{}", serde_json::to_string_pretty(&report)?);

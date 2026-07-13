@@ -8,6 +8,7 @@
 //! harvested yet (their target is a project_id, a different selector namespace
 //! than the modid relations here) -- that lands with the Phase 4 resolver.
 
+use super::bytecode;
 use super::curator::{JarFacts, McModInfo, clean_mc_version, jar_facts, read_mcmod_info};
 use super::modrinth::Modrinth;
 use crate::registry::model::{RelKind, Source};
@@ -41,6 +42,14 @@ pub struct JarSeed {
     // Release channel (release/beta/dev/unknown): from Modrinth version_type when
     // known, else unknown -- a jar carries no reliable channel of its own.
     pub channel: Option<String>,
+    // Bytecode-derived facts (empty for a jar with no local bytes, e.g. a
+    // Modrinth-only mod). owned_packages seed the package->owner index; the ref
+    // sets become inferred requires/optional_dep edges once that index is built.
+    pub owned_packages: Vec<String>,
+    pub hard_refs: Vec<String>,
+    pub optional_refs: Vec<String>,
+    // Derived runtime side (both/client/server), or None when undecided.
+    pub side: Option<String>,
 }
 
 pub struct BuildModSeed {
@@ -77,6 +86,12 @@ pub struct HarvestReport {
     pub relations: i64,
     pub packs: usize,
     pub builds: i64,
+    /// Bytecode-derived hard-dependency edges written this harvest.
+    pub inferred_requires: i64,
+    /// Bytecode-derived optional-dependency edges written this harvest.
+    pub inferred_optional: i64,
+    /// Jars whose client/server side was derived from the bytecode.
+    pub sides_derived: i64,
 }
 
 // mcmod.info dependency lists routinely name the platform, not a real mod.
@@ -114,6 +129,23 @@ fn ae(e: crate::http::ApiError) -> anyhow::Error {
     anyhow::anyhow!("{e}")
 }
 
+/// Resolve a referenced package prefix to the modid of its owning mod, for an
+/// inferred edge from `from_mod_id`. `None` when the prefix has no single owner,
+/// its owner is the referencing mod itself, or the owner carries no modid.
+fn resolve_edge_target(
+    conn: &Connection,
+    prefix: &str,
+    from_mod_id: i64,
+) -> Result<Option<String>> {
+    let Some(owner) = queries::owner_mod_for_prefix(conn, prefix)? else {
+        return Ok(None);
+    };
+    if owner == from_mod_id {
+        return Ok(None);
+    }
+    queries::modid_for_mod(conn, owner)
+}
+
 /// Reconcile a scan into the registry, in one transaction. Pure (no I/O beyond
 /// the connection); idempotent; never clobbers authored rows.
 pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<HarvestReport> {
@@ -123,6 +155,20 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         .iter()
         .filter_map(|j| j.modid.as_deref().map(|m| (j.sha1.as_str(), m)))
         .collect();
+
+    // The bytecode-derived layer is purely rebuildable: wipe the package index
+    // and the inferred edges up front, then re-derive from this scan. jar-meta
+    // and authored/curator relations are a different source and untouched.
+    conn.execute("DELETE FROM mod_package", [])?;
+    conn.execute(
+        "DELETE FROM relation WHERE source = 'inferred' AND kind IN ('requires', 'optional_dep')",
+        [],
+    )?;
+
+    let mut sides_derived = 0i64;
+    // (from_mod_id, jar) for jars carrying references, resolved to edges in a
+    // second pass once every jar's packages are in the index.
+    let mut derivations: Vec<(i64, &JarSeed)> = Vec::new();
 
     let mut no_identity = 0usize;
     for jar in &scan.jars {
@@ -180,6 +226,61 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                 Source::JarMeta,
                 now,
             )?;
+        }
+
+        // bytecode-derived facts: this jar's owned packages (into the index) and
+        // its side; its references are resolved to edges after the loop.
+        let owned: Vec<&str> = jar.owned_packages.iter().map(String::as_str).collect();
+        upsert::set_mod_packages(conn, mod_id, &owned)?;
+        upsert::set_mod_version_side(conn, &jar.sha1, jar.side.as_deref(), now)?;
+        if jar.side.is_some() {
+            sides_derived += 1;
+        }
+        if !jar.hard_refs.is_empty() || !jar.optional_refs.is_empty() {
+            derivations.push((mod_id, jar));
+        }
+    }
+
+    // Second pass: resolve each referenced package prefix to its owning mod and
+    // record an inferred edge. A prefix with no single owner (unknown or shaded)
+    // is skipped; a hard edge to a target suppresses a competing optional one.
+    let mut inferred_requires = 0i64;
+    let mut inferred_optional = 0i64;
+    for (from_mod_id, jar) in &derivations {
+        let mut hard_targets: HashSet<String> = HashSet::new();
+        for prefix in &jar.hard_refs {
+            if let Some(target) = resolve_edge_target(conn, prefix, *from_mod_id)?
+                && hard_targets.insert(target.clone())
+            {
+                upsert::upsert_relation(
+                    conn,
+                    *from_mod_id,
+                    &target,
+                    None,
+                    RelKind::Requires,
+                    Source::Inferred,
+                    now,
+                )?;
+                inferred_requires += 1;
+            }
+        }
+        let mut opt_targets: HashSet<String> = HashSet::new();
+        for prefix in &jar.optional_refs {
+            if let Some(target) = resolve_edge_target(conn, prefix, *from_mod_id)?
+                && !hard_targets.contains(&target)
+                && opt_targets.insert(target.clone())
+            {
+                upsert::upsert_relation(
+                    conn,
+                    *from_mod_id,
+                    &target,
+                    None,
+                    RelKind::OptionalDep,
+                    Source::Inferred,
+                    now,
+                )?;
+                inferred_optional += 1;
+            }
         }
     }
 
@@ -255,6 +356,9 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         relations: s.relations,
         packs: scan.packs.len(),
         builds: s.builds,
+        inferred_requires,
+        inferred_optional,
+        sides_derived,
     })
 }
 
@@ -268,10 +372,12 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
         .collect();
     let mut all_shas: HashSet<String> = inventory.iter().map(|e| e.sha1.clone()).collect();
 
-    // read mcmod.info + derive jar facts (loader marker, content signature) from
-    // every cached jar (Modrinth-only mods have no local jar to read)
+    // read mcmod.info + derive jar facts (loader marker, content signature) +
+    // scan bytecode (owned packages, references, side) from every cached jar
+    // (Modrinth-only mods have no local jar to read)
     let mut mcmod_by_sha: HashMap<String, McModInfo> = HashMap::new();
     let mut facts_by_sha: HashMap<String, JarFacts> = HashMap::new();
+    let mut bytecode_by_sha: HashMap<String, bytecode::JarBytecode> = HashMap::new();
     for e in &inventory {
         let Ok(path) = storage.cache_jar_path(&e.sha1[..2], &e.sha1) else {
             continue;
@@ -280,6 +386,7 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
             continue;
         };
         facts_by_sha.insert(e.sha1.clone(), jar_facts(&bytes));
+        bytecode_by_sha.insert(e.sha1.clone(), bytecode::scan_jar(&bytes));
         if let Ok(Some(info)) = read_mcmod_info(&bytes)
             && !info.modid.is_empty()
         {
@@ -394,6 +501,7 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
             let info = mcmod_by_sha.get(&sha);
             let mrv = modrinth_by_sha.get(&sha);
             let facts = facts_by_sha.get(&sha);
+            let bc = bytecode_by_sha.get(&sha);
             let project = mrv.and_then(|v| projects.get(&v.project_id));
             // name: jar-meta name wins (local), else Modrinth title
             let name = info
@@ -447,6 +555,16 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
                 slug,
                 modrinth_version_id: mrv.map(|v| v.id.clone()),
                 channel: mrv.and_then(|v| channel_from_version_type(&v.version_type)),
+                owned_packages: bc
+                    .map(|b| b.owned.iter().cloned().collect())
+                    .unwrap_or_default(),
+                hard_refs: bc
+                    .map(|b| b.hard_refs.iter().cloned().collect())
+                    .unwrap_or_default(),
+                optional_refs: bc
+                    .map(|b| b.optional_refs.iter().cloned().collect())
+                    .unwrap_or_default(),
+                side: bc.and_then(|b| b.side).map(|s| s.as_str().to_string()),
                 sha1: sha,
             }
         })
@@ -492,6 +610,10 @@ mod tests {
                     author: Some("squeek502".into()),
                     slug: Some("appleskin".into()),
                     modrinth_version_id: Some("mrv_apple".into()),
+                    owned_packages: vec![],
+                    hard_refs: vec![],
+                    optional_refs: vec![],
+                    side: None,
                 },
                 JarSeed {
                     sha1: "sha_b".into(),
@@ -508,6 +630,10 @@ mod tests {
                     author: None,
                     slug: None,
                     modrinth_version_id: None,
+                    owned_packages: vec![],
+                    hard_refs: vec![],
+                    optional_refs: vec![],
+                    side: None,
                 },
                 JarSeed {
                     sha1: "sha_noid".into(),
@@ -524,6 +650,10 @@ mod tests {
                     author: None,
                     slug: None,
                     modrinth_version_id: None,
+                    owned_packages: vec![],
+                    hard_refs: vec![],
+                    optional_refs: vec![],
+                    side: None,
                 },
             ],
             packs: vec![PackSeed {
@@ -671,7 +801,177 @@ mod tests {
             author: None,
             slug: None,
             modrinth_version_id: None,
+            owned_packages: vec![],
+            hard_refs: vec![],
+            optional_refs: vec![],
+            side: None,
         }
+    }
+
+    /// A jar seed carrying bytecode-derived facts, for the derivation tests.
+    fn dseed(
+        sha: &str,
+        modid: &str,
+        owned: &[&str],
+        hard: &[&str],
+        opt: &[&str],
+        side: Option<&str>,
+    ) -> JarSeed {
+        let strs = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        JarSeed {
+            sha1: sha.into(),
+            size_bytes: 1,
+            channel: None,
+            modid: Some(modid.into()),
+            version: Some("1".into()),
+            project_id: None,
+            loaders: vec!["forge".into()],
+            mc_versions: vec![],
+            requires: vec![],
+            filename: Some(format!("{sha}.jar")),
+            name: None,
+            author: None,
+            slug: None,
+            modrinth_version_id: None,
+            owned_packages: strs(owned),
+            hard_refs: strs(hard),
+            optional_refs: strs(opt),
+            side: side.map(String::from),
+        }
+    }
+
+    // The core of #40: owned packages populate the index, references resolve to
+    // inferred requires/optional_dep edges, a jar's own reference makes no
+    // self-edge, and the derived side lands on the artifact.
+    #[test]
+    fn write_scan_derives_inferred_edges_and_side() {
+        let r = Registry::open_in_memory().unwrap();
+        let scan = ScanData {
+            jars: vec![
+                dseed(
+                    "sha_ae2",
+                    "appliedenergistics2",
+                    &["appeng/api", "appeng/core"],
+                    &["appeng/api"], // own package -> must NOT self-edge
+                    &[],
+                    Some("both"),
+                ),
+                dseed(
+                    "sha_stuff",
+                    "ae2stuff",
+                    &["ae2stuff/block"],
+                    &["appeng/api"],
+                    &[],
+                    None,
+                ),
+                dseed("sha_jei", "jei", &["mezz/jei"], &[], &[], None),
+                dseed(
+                    "sha_jeibees",
+                    "jeibees",
+                    &["jeibees/core"],
+                    &[],
+                    &["mezz/jei"],
+                    None,
+                ),
+            ],
+            packs: vec![],
+        };
+
+        let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        assert_eq!(
+            rep.inferred_requires, 1,
+            "ae2stuff -> AE2 (AE2's self-ref skipped)"
+        );
+        assert_eq!(rep.inferred_optional, 1, "jeibees -> JEI (optional)");
+        assert_eq!(rep.sides_derived, 1);
+
+        r.with_conn(|c| {
+            let stuff = queries::mod_id_for_alias(c, "modid", "ae2stuff")?.unwrap();
+            let (target, kind, source): (String, String, String) = c.query_row(
+                "SELECT target_modid, kind, source FROM relation WHERE from_mod_id = ?1",
+                [stuff],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            assert_eq!(
+                (target.as_str(), kind.as_str(), source.as_str()),
+                ("appliedenergistics2", "requires", "inferred")
+            );
+
+            let jeibees = queries::mod_id_for_alias(c, "modid", "jeibees")?.unwrap();
+            let (t2, k2): (String, String) = c.query_row(
+                "SELECT target_modid, kind FROM relation WHERE from_mod_id = ?1",
+                [jeibees],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            assert_eq!((t2.as_str(), k2.as_str()), ("jei", "optional_dep"));
+
+            let ae2 = queries::mod_id_for_alias(c, "modid", "appliedenergistics2")?.unwrap();
+            let self_edges: i64 = c.query_row(
+                "SELECT count(*) FROM relation WHERE from_mod_id = ?1",
+                [ae2],
+                |r| r.get(0),
+            )?;
+            assert_eq!(
+                self_edges, 0,
+                "no self-dependency from an own-package reference"
+            );
+
+            let side: Option<String> = c.query_row(
+                "SELECT side FROM mod_version WHERE sha1 = 'sha_ae2'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(side.as_deref(), Some("both"));
+            assert_eq!(queries::owner_mod_for_prefix(c, "appeng/api")?, Some(ae2));
+            Ok(())
+        })
+        .unwrap();
+
+        // idempotent: inferred edges are wiped and rebuilt, never duplicated
+        let rep2 = r.with_txn(|c| write_scan(c, &scan, "T1")).unwrap();
+        assert_eq!(rep2.inferred_requires, 1);
+        assert_eq!(rep2.inferred_optional, 1);
+        r.with_conn(|c| {
+            let total: i64 = c.query_row(
+                "SELECT count(*) FROM relation WHERE source = 'inferred'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(total, 2, "no duplicate inferred edges after re-harvest");
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // A prefix owned by two mods is an ambiguous shaded library: it resolves to no
+    // single owner, so it yields no edge.
+    #[test]
+    fn write_scan_skips_ambiguous_shaded_prefix() {
+        let r = Registry::open_in_memory().unwrap();
+        let scan = ScanData {
+            jars: vec![
+                dseed(
+                    "sha_a",
+                    "moda",
+                    &["org/shaded", "moda/core"],
+                    &[],
+                    &[],
+                    None,
+                ),
+                dseed(
+                    "sha_b",
+                    "modb",
+                    &["org/shaded", "modb/core"],
+                    &[],
+                    &[],
+                    None,
+                ),
+                dseed("sha_c", "modc", &["modc/core"], &["org/shaded"], &[], None),
+            ],
+            packs: vec![],
+        };
+        let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        assert_eq!(rep.inferred_requires, 0, "ambiguous prefix -> no edge");
     }
 
     // #1: two distinct jars of one mod with no version metadata both become

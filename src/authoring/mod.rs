@@ -9,6 +9,8 @@ mod sources;
 
 pub mod bootstrap;
 pub mod build;
+pub mod bytecode;
+pub mod classfile;
 pub mod curator;
 pub mod harvest;
 pub mod harvest_sched;

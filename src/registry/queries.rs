@@ -80,6 +80,30 @@ pub fn mod_id_for_alias(
         .optional()?)
 }
 
+/// A mod's primary `modid` alias, used to fill a `relation.target_modid`
+/// selector when the derivation knows the target only by its surrogate id.
+pub fn modid_for_mod(conn: &Connection, mod_id: i64) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT external_key FROM mod_alias WHERE mod_id = ?1 AND source = 'modid' LIMIT 1",
+            params![mod_id],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
+/// The single mod that owns a package prefix, or `None` when no mod or more than
+/// one owns it. A multiply-owned prefix is an ambiguous shaded library, so it is
+/// deliberately not resolved to an edge.
+pub fn owner_mod_for_prefix(conn: &Connection, prefix: &str) -> Result<Option<i64>> {
+    let mut stmt =
+        conn.prepare("SELECT DISTINCT mod_id FROM mod_package WHERE prefix = ?1 LIMIT 2")?;
+    let ids = stmt
+        .query_map(params![prefix], |r| r.get::<_, i64>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(if ids.len() == 1 { Some(ids[0]) } else { None })
+}
+
 /// Q1 -- which pack builds ship the mod identified by `(alias_source, key)`.
 pub fn packs_using_mod(
     conn: &Connection,

@@ -80,6 +80,9 @@ impl HarvestScheduler {
                         mods = rep.mods,
                         versions = rep.mod_versions,
                         builds = rep.builds,
+                        inferred_requires = rep.inferred_requires,
+                        inferred_optional = rep.inferred_optional,
+                        sides = rep.sides_derived,
                         "auto-harvest complete"
                     ),
                     Ok(Err(e)) => tracing::warn!(error = %e, "auto-harvest failed"),

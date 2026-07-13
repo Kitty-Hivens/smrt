@@ -45,6 +45,10 @@ const MIGRATIONS: &[(u32, Migration)] = &[
         Migration::Sql(include_str!("schema/0008_mod_content_sig.sql")),
     ),
     (9, Migration::Code(drop_pack_provenance)),
+    (
+        10,
+        Migration::Sql(include_str!("schema/0010_derived_graph.sql")),
+    ),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its
@@ -263,13 +267,13 @@ mod tests {
             .query_row(
                 "SELECT count(*) FROM sqlite_master WHERE type = 'table'
                  AND name IN ('mods','mod_alias','mod_version','mod_version_target','mod_release',
-                              'pack','pack_build','pack_build_mod','relation','loader',
+                              'mod_package','pack','pack_build','pack_build_mod','relation','loader',
                               'loader_parent','registry_meta')",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(tables, 12);
+        assert_eq!(tables, 13);
 
         let loaders: i64 = conn
             .query_row("SELECT count(*) FROM loader", [], |r| r.get(0))
