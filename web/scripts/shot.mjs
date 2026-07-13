@@ -7,12 +7,25 @@
 // `smrt_session` cookie value (DevTools > Application > Cookies -- it is
 // HttpOnly, so document.cookie will not show it), and pass it as SESSION.
 //
-// Env: CHROME (browser path), BASE (default localhost:9000), SESSION (the
-//      smrt_session cookie value; required for authenticated views), OUT (dir),
-//      WIDTHS (comma-separated px for the responsive sweep; see BP_WIDTHS).
+// Env: FIREFOX or CHROME (browser binary path -- one is required), BASE (default
+//      localhost:9000), SESSION (the smrt_session cookie value; required for the
+//      authenticated views), OUT (dir), WIDTHS (comma-separated px for the
+//      responsive sweep; see BP_WIDTHS).
 import puppeteer from 'puppeteer-core';
 
-const EXE = process.env.CHROME;
+// Firefox is driven over WebDriver BiDi in its own throwaway profile, so it
+// neither touches nor needs you to close a Firefox you already have open.
+const FIREFOX = process.env.FIREFOX;
+const CHROME = process.env.CHROME;
+const useFirefox = !!FIREFOX;
+const EXE = FIREFOX ?? CHROME;
+if (!EXE) {
+  console.error('set FIREFOX=/usr/bin/firefox (or CHROME=/path/to/chromium)');
+  process.exit(1);
+}
+// Firefox over BiDi is most reliable at a 1x device pixel ratio; Chrome renders 2x.
+const DSF = useFirefox ? 1 : 2;
+
 const BASE = process.env.BASE ?? 'http://127.0.0.1:9000';
 const SESSION = process.env.SESSION ?? '';
 const OUT = process.env.OUT ?? '/tmp';
@@ -27,9 +40,11 @@ const BP_WIDTHS = (process.env.WIDTHS ?? '320,375,560,768,1024,1440')
 
 const browser = await puppeteer.launch({
   executablePath: EXE,
+  browser: useFirefox ? 'firefox' : 'chrome',
   headless: true,
-  args: ['--no-sandbox', '--disable-gpu', '--hide-scrollbars'],
-  defaultViewport: { width: 1180, height: 760, deviceScaleFactor: 2 },
+  // Chrome-only flags; Firefox gets a fresh profile and needs none of them.
+  args: useFirefox ? [] : ['--no-sandbox', '--disable-gpu', '--hide-scrollbars'],
+  defaultViewport: { width: 1180, height: 760, deviceScaleFactor: DSF },
 });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -61,12 +76,14 @@ async function sweep(page, name, height = 900) {
 }
 
 // Inject the copied session cookie so the SPA (which authenticates purely by the
-// `smrt_session` cookie via credentials:'include') comes up signed in.
-async function injectSession(value) {
+// `smrt_session` cookie via credentials:'include') comes up signed in. Firefox's
+// BiDi backend wants an explicit `domain` (it will not derive one from `url` the
+// way Chrome's CDP does), so pass the host directly.
+async function injectSession(page, value) {
   const cookie = {
     name: 'smrt_session',
     value,
-    url: BASE,
+    domain: new URL(BASE).hostname,
     path: '/',
     httpOnly: true,
     secure: BASE.startsWith('https'),
@@ -95,7 +112,7 @@ try {
     );
     console.log('Cookies), and re-run with SESSION=<value> for the authenticated views.');
   } else {
-    await injectSession(SESSION);
+    await injectSession(page, SESSION);
     await page.goto(`${BASE}/admin`, { waitUntil: 'networkidle0' });
     try {
       await page.waitForSelector('.rail .item', { timeout: 8000 });
@@ -106,7 +123,7 @@ try {
     }
     await sleep(600);
     // back to the crisp default viewport for the single-shot captures
-    await page.setViewport({ width: 1180, height: 760, deviceScaleFactor: 2 });
+    await page.setViewport({ width: 1180, height: 760, deviceScaleFactor: DSF });
     await page.screenshot({ path: `${OUT}/smrt-overview.png` });
 
     // rail labels are localized; index them so the file names stay ASCII
