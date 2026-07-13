@@ -58,6 +58,8 @@ export const en = {
   'packs.tier.community': 'community',
   'packs.publish': 'Publish',
   'packs.unpublish': 'Unpublish',
+  'packs.deleteTitle': 'Delete pack',
+  'packs.deleteMsg': 'Delete pack "{id}" and all its files? This cannot be undone.',
   'packs.empty': 'No packs yet. Create one or bootstrap from an SC archive.',
 
   'overview.packs': 'Packs',

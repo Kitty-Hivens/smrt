@@ -57,6 +57,8 @@ export const ru: Dict = {
   'packs.tier.community': 'сообщество',
   'packs.publish': 'Опубликовать',
   'packs.unpublish': 'Снять',
+  'packs.deleteTitle': 'Удалить пак',
+  'packs.deleteMsg': 'Удалить пак «{id}» со всеми файлами? Отменить нельзя.',
   'packs.empty': 'Паков пока нет. Создай или загрузи из SC-архива.',
 
   'overview.packs': 'Паки',

@@ -331,6 +331,7 @@ export const api = {
     send('POST', `/v1/users/${uid}/role`, { role }),
   setVisibility: (id: string, visibility: Visibility) =>
     send('PUT', `/v1/authoring/packs/${encodeURIComponent(id)}/visibility`, { visibility }),
+  deletePack: (id: string) => send('DELETE', `/v1/authoring/packs/${encodeURIComponent(id)}`),
 
   async me(): Promise<{ uid: number; login: string; role: string } | null> {
     const r = await fetch('/v1/me', { credentials: 'include' });

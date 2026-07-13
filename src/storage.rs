@@ -229,6 +229,19 @@ impl Storage {
         Ok(())
     }
 
+    /// Delete a pack and everything under it -- config, summary, manifests, and
+    /// static assets. `NotFound` if the pack does not exist. The shared mod cache
+    /// is content-addressed and left untouched; other packs keep their jars.
+    pub async fn delete_pack(&self, pack_id: &str) -> Result<(), ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        let dir = self.root.join("packs").join(pack_id);
+        fs::remove_dir_all(&dir)
+            .await
+            .map_err(|_| ApiError::NotFound)
+    }
+
     /// Clone an existing pack's authoring inputs under a new id: copy its
     /// `authoring/config.json` with `pack_id` rewritten (and the loader
     /// optionally overridden, for a loader-variant fork), then copy the whole

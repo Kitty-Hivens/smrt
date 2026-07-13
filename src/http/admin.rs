@@ -62,6 +62,7 @@ fn authoring_router(state: AppState) -> Router {
             "/v1/authoring/packs/:pack_id/config",
             get(get_pack_config).put(put_pack_config),
         )
+        .route("/v1/authoring/packs/:pack_id", delete(delete_pack))
         .route(
             "/v1/authoring/packs/:pack_id/visibility",
             put(set_pack_visibility),
@@ -693,6 +694,20 @@ async fn list_all_pack_summaries(
 #[derive(serde::Deserialize)]
 struct VisibilityReq {
     visibility: Visibility,
+}
+
+/// Delete a pack and everything under it. Ownership-gated like the rest of
+/// authoring: a member deletes only their own community packs.
+async fn delete_pack(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    state.storage.delete_pack(&pack_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Publish / unpublish (or unlist) a pack. Takes effect on the public listing

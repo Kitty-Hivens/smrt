@@ -96,6 +96,21 @@
     published: 'packs.vis.published',
   } as const;
 
+  async function delPack(id: string) {
+    const ok = await dialogs.confirm(t('packs.deleteMsg', { id }), {
+      title: t('packs.deleteTitle'),
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.deletePack(id);
+      if (packEdit === id) packEdit = null;
+      await loadAll();
+    } catch (e) {
+      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+    }
+  }
+
   const authoringSet = $derived(new Set(authoring));
   const allPackIds = $derived(
     [...new Set([...packs.map((p) => p.pack_id), ...authoring])].sort(),
@@ -302,6 +317,12 @@
                           togglePublish(p);
                         }}>{p.visibility === 'published' ? t('packs.unpublish') : t('packs.publish')}</button>
                     {/if}
+                    <button
+                      class="danger"
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        delPack(id);
+                      }}>{t('common.delete')}</button>
                   </td>
                 </tr>
               {/each}
