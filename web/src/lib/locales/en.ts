@@ -344,6 +344,9 @@ export const en = {
   'mypacks.newPrompt': 'Pack name (letters, digits, - _ .)',
   'mypacks.empty': "You haven't created any packs yet.",
   'mypacks.uploads': 'My uploads',
+  'terms.title': 'Rules of use',
+  'terms.body':
+    'By creating or forking community content you agree to the rules: only upload mods you may redistribute, do not self-host mods available on Modrinth, and keep content lawful. Uploaded jars are moderated. Accept to continue.',
   'users.empty': 'No one has signed in yet.',
   'users.lastLogin': 'last seen',
   'users.never': 'never',

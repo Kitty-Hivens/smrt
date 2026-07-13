@@ -2,6 +2,7 @@
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { terms } from '../lib/terms.svelte';
   import { renderMarkdown } from '../lib/markdown';
   import ModIcon from './ModIcon.svelte';
   import type { CommunityPack, PackManifest, PackSummary } from '../lib/types';
@@ -69,6 +70,7 @@
 
   async function fork(p: PackSummary) {
     if (!me) return;
+    if (!(await terms.ensure())) return;
     const name = (
       await dialogs.prompt(t('browse.forkPrompt'), {
         title: t('browse.fork'),

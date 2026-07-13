@@ -361,10 +361,16 @@ export const api = {
     return (await r.json()) as UploadRow;
   },
 
-  async me(): Promise<{ uid: number; login: string; role: string } | null> {
+  async me(): Promise<{
+    uid: number;
+    login: string;
+    role: string;
+    accepted_terms: boolean;
+  } | null> {
     const r = await fetch('/v1/me', { credentials: 'include' });
     return r.ok ? r.json() : null;
   },
+  acceptTerms: () => send('POST', '/v1/me/accept-terms'),
   // The admin token no longer authenticates a human. A valid one comes back 410
   // so the panel can say it's deprecated; anything else is a plain rejection.
   async login(token: string): Promise<'deprecated' | 'rejected'> {

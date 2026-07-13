@@ -23,6 +23,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/me/packs/:pack_id/uploads", post(upload_jar))
         .route("/v1/me/uploads", get(my_uploads))
         .route("/v1/me/forks", post(fork_pack))
+        .route("/v1/me/accept-terms", post(accept_terms))
         .layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT))
         .layer(from_fn_with_state(
             state.clone(),
@@ -130,6 +131,7 @@ async fn fork_pack(
     Extension(identity): Extension<Identity>,
     Json(req): Json<ForkReq>,
 ) -> Result<(StatusCode, Json<PackConfig>), ApiError> {
+    super::auth::require_terms(&state, identity.uid).await?;
     let published = state
         .storage
         .load_pack_summary(&req.source)
@@ -145,6 +147,19 @@ async fn fork_pack(
         .duplicate_pack(&req.source, &target, None, identity.uid, Some(req.source.clone()))
         .await?;
     Ok((StatusCode::CREATED, Json(cfg)))
+}
+
+/// Record that the caller has accepted the rules of use.
+async fn accept_terms(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+) -> Result<StatusCode, ApiError> {
+    let uid = identity.uid;
+    let acc = state.accounts.clone();
+    tokio::task::spawn_blocking(move || acc.accept_terms(uid))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("accept task: {e}")))??;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// The caller's own uploads and their moderation status.

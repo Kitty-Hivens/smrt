@@ -2,6 +2,7 @@
   import { api, setUnauthorizedHandler } from './lib/api';
   import { t } from './lib/i18n.svelte';
   import { route } from './lib/route.svelte';
+  import { terms } from './lib/terms.svelte';
   import Login from './views/Login.svelte';
   import AppShell from './views/AppShell.svelte';
   import Browse from './views/Browse.svelte';
@@ -10,13 +11,16 @@
   import MyPacks from './views/MyPacks.svelte';
   import DialogHost from './views/DialogHost.svelte';
 
-  type Me = { uid: number; login: string; role: string };
+  type Me = { uid: number; login: string; role: string; accepted_terms: boolean };
   // undefined = still checking; null = a guest (not signed in); object = identity
   let me = $state<Me | null | undefined>(undefined);
   let showLogin = $state(false);
 
   $effect(() => {
-    api.me().then((m) => (me = m));
+    api.me().then((m) => {
+      me = m;
+      if (m) terms.init(m.accepted_terms);
+    });
   });
 
   // A 401 on an authed call (expired session) drops back to the guest view.

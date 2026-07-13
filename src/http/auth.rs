@@ -198,16 +198,24 @@ async fn exchange_and_fetch(
 // -- identity + logout ------------------------------------------------------
 
 async fn me(State(state): State<AppState>, req: Request) -> Response {
-    match resolve_identity(&state, req.headers()).await {
-        Some(id) => Json(json!({
-            "authenticated": true,
-            "uid": id.uid,
-            "login": id.login,
-            "role": id.role.as_str(),
-        }))
-        .into_response(),
-        None => ApiError::Unauthorized.into_response(),
-    }
+    let Some(id) = resolve_identity(&state, req.headers()).await else {
+        return ApiError::Unauthorized.into_response();
+    };
+    let acc = state.accounts.clone();
+    let uid = id.uid;
+    let accepted_terms = tokio::task::spawn_blocking(move || acc.terms_accepted(uid))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or(false);
+    Json(json!({
+        "authenticated": true,
+        "uid": id.uid,
+        "login": id.login,
+        "role": id.role.as_str(),
+        "accepted_terms": accepted_terms,
+    }))
+    .into_response()
 }
 
 async fn logout(State(state): State<AppState>, req: Request) -> Response {
@@ -278,6 +286,19 @@ pub(crate) fn may_author(identity: &Identity, pack_id: &str) -> bool {
         Some(uid) => identity.owns_or_admin(uid),
         None => identity.role >= Role::Admin,
     }
+}
+
+/// Gate member content creation on rules-of-use acceptance: `Forbidden` until the
+/// user has accepted. The panel accepts on their behalf via `/v1/me/accept-terms`.
+pub(crate) async fn require_terms(state: &AppState, uid: i64) -> Result<(), ApiError> {
+    let acc = state.accounts.clone();
+    let ok = tokio::task::spawn_blocking(move || acc.terms_accepted(uid))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("terms task: {e}")))??;
+    if !ok {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(())
 }
 
 /// Resolve who is calling: a valid bearer admin token (break-glass) yields the

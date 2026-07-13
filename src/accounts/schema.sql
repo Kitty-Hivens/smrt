@@ -51,3 +51,11 @@ CREATE TABLE IF NOT EXISTS mod_uploads (
 );
 CREATE INDEX IF NOT EXISTS idx_uploads_status ON mod_uploads(status);
 CREATE INDEX IF NOT EXISTS idx_uploads_uploader ON mod_uploads(uploader);
+
+-- Rules-of-use acceptance, keyed by github uid. A member must accept before
+-- authoring or forking community content. A separate table (not a users column)
+-- so the idempotent CREATE-IF-NOT-EXISTS schema needs no ALTER migration.
+CREATE TABLE IF NOT EXISTS terms_acceptance (
+    github_uid  INTEGER PRIMARY KEY,
+    accepted_at INTEGER NOT NULL
+);

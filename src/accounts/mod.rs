@@ -339,6 +339,33 @@ impl Accounts {
         }
         Ok(())
     }
+
+    // ── rules-of-use acceptance ─────────────────────────────────────────────
+
+    /// Record that a user has accepted the rules of use. Idempotent. Blocking.
+    pub fn accept_terms(&self, uid: i64) -> Result<()> {
+        let now = unix_now();
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard.execute(
+            "INSERT OR REPLACE INTO terms_acceptance (github_uid, accepted_at) VALUES (?1, ?2)",
+            params![uid, now],
+        )?;
+        Ok(())
+    }
+
+    /// Whether a user has accepted the rules of use. Blocking.
+    pub fn terms_accepted(&self, uid: i64) -> Result<bool> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let accepted = guard
+            .query_row(
+                "SELECT 1 FROM terms_acceptance WHERE github_uid = ?1",
+                params![uid],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false);
+        Ok(accepted)
+    }
 }
 
 fn upload_from_row(r: &rusqlite::Row) -> rusqlite::Result<UploadRow> {

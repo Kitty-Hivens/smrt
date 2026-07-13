@@ -660,6 +660,7 @@ async fn put_pack_config(
         }
         Err(_) => match super::auth::pack_namespace_uid(&pack_id) {
             Some(uid) => {
+                super::auth::require_terms(&state, identity.uid).await?;
                 cfg.owner = uid;
                 cfg.tier = PackTier::Community;
                 cfg.visibility = Visibility::Draft;

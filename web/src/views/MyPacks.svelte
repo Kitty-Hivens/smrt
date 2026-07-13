@@ -2,6 +2,7 @@
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { terms } from '../lib/terms.svelte';
   import type { PackSummary, UploadRow } from '../lib/types';
   import PackEditor from './PackEditor.svelte';
 
@@ -48,6 +49,7 @@
   } as const;
 
   async function create() {
+    if (!(await terms.ensure())) return;
     const name = (
       await dialogs.prompt(t('mypacks.newPrompt'), { title: t('mypacks.new') })
     )?.trim();
