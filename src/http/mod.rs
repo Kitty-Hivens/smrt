@@ -39,6 +39,38 @@ mod tests {
     // Assembling the full router merges every sub-router into one matchit tree;
     // an overlapping route would panic here, which is exactly the startup crash
     // we want a test to catch rather than a deploy.
+    // Community pack ids carry slashes (u/<uid>/<pack>); they ride in a
+    // single `:pack_id` segment percent-encoded, so this pins that axum decodes
+    // %2F back into the slashed id the handler sees. If this ever regresses, the
+    // whole community-authoring URL scheme breaks.
+    #[tokio::test]
+    async fn path_param_decodes_percent_encoded_slashes() {
+        use axum::body::Body;
+        use axum::extract::Path;
+        use axum::http::Request;
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        async fn echo(Path(id): Path<String>) -> String {
+            id
+        }
+        let app = Router::new().route("/p/:id", get(echo));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/p/u%2F42%2FMyPack")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"u/42/MyPack");
+    }
+
     #[test]
     fn full_router_assembles_without_route_conflicts() {
         let dir = tempfile::tempdir().unwrap();

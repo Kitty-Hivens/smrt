@@ -47,6 +47,7 @@
     mods: 'nav.mods',
     users: 'nav.users',
     profile: 'nav.profile',
+    mypacks: 'nav.mypacks',
   };
 </script>
 

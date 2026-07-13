@@ -132,6 +132,9 @@ export const api = {
   authoringPacks: () => getJson<AuthoringPacksListing>('/v1/authoring/packs'),
   // operator view: every pack summary incl. drafts/community that /v1/packs hides
   adminSummaries: () => getJson<PackSummary[]>('/v1/authoring/summaries'),
+  // member view: the caller's own packs (built summaries + unbuilt draft ids)
+  mePacks: () => getJson<PackSummary[]>('/v1/me/packs'),
+  meAuthoring: () => getJson<string[]>('/v1/me/authoring'),
 
   // ── admin writes ──
   saveServer: (e: ServerEntry) => send('POST', '/v1/servers', e),

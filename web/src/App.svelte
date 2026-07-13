@@ -7,6 +7,7 @@
   import Browse from './views/Browse.svelte';
   import PublicBrowse from './views/PublicBrowse.svelte';
   import Profile from './views/Profile.svelte';
+  import MyPacks from './views/MyPacks.svelte';
   import DialogHost from './views/DialogHost.svelte';
 
   type Me = { uid: number; login: string; role: string };
@@ -37,6 +38,8 @@
   <AppShell me={me ?? null} onSignIn={() => (showLogin = true)} onLogout={logout}>
     {#if route.section === 'profile' && me}
       <Profile {me} />
+    {:else if route.section === 'mypacks' && me}
+      <MyPacks {me} />
     {:else if me?.role === 'admin' && route.section !== 'browse'}
       <Browse />
     {:else}

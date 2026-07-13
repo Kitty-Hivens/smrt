@@ -14,6 +14,7 @@ use axum::{Extension, Json, Router};
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/me/packs", get(my_packs))
+        .route("/v1/me/authoring", get(my_authoring))
         .layer(from_fn_with_state(
             state.clone(),
             super::auth::require_session,
@@ -33,6 +34,23 @@ async fn my_packs(
         .await?
         .into_iter()
         .filter(|p| identity.owns_or_admin(p.owner))
+        .collect();
+    Ok(Json(mine))
+}
+
+/// The caller's own authoring pack ids, including unbuilt drafts that have no
+/// summary yet. The "my packs" list unions this with the built summaries so a
+/// freshly-created draft is reachable before its first build.
+async fn my_authoring(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+) -> Result<Json<Vec<String>>, ApiError> {
+    let mine = state
+        .storage
+        .list_authoring_packs()
+        .await?
+        .into_iter()
+        .filter(|id| super::auth::may_author(&identity, id))
         .collect();
     Ok(Json(mine))
 }
