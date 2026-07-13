@@ -27,7 +27,7 @@ if (!EXE) {
 // Firefox over BiDi is most reliable at a 1x device pixel ratio; Chrome renders 2x.
 const DSF = useFirefox ? 1 : 2;
 
-const BASE = process.env.BASE ?? 'http://127.0.0.1:9000';
+const BASE = (process.env.BASE ?? 'http://127.0.0.1:9000').replace(/\/+$/, '');
 const SESSION = process.env.SESSION ?? '';
 const OUT = process.env.OUT ?? '/tmp';
 // page.screenshot() writes but does not create the directory -- ensure it exists.
@@ -96,6 +96,21 @@ async function injectSession(page, value) {
   else await page.setCookie(cookie);
 }
 
+// Ask the API who we are from the page's own origin (so the cookie rides along).
+// Returns { ok, detail } -- ok true only for an authenticated identity.
+async function whoAmI(page) {
+  return page.evaluate(async (base) => {
+    try {
+      const r = await fetch(`${base}/v1/me`, { credentials: 'include' });
+      if (!r.ok) return { ok: false, detail: String(r.status) };
+      const j = await r.json();
+      return { ok: !!j.authenticated, detail: `${j.login} / ${j.role}` };
+    } catch (e) {
+      return { ok: false, detail: `fetch failed: ${e}` };
+    }
+  }, BASE);
+}
+
 try {
   const page = await browser.newPage();
 
@@ -115,15 +130,33 @@ try {
     );
     console.log('Cookies), and re-run with SESSION=<value> for the authenticated views.');
   } else {
+    // We are on the origin (login page loaded). Put the session in the cookie
+    // jar, then confirm against the API. If the jar entry is not honoured (some
+    // driver/browser combos are finicky about it), fall back to document.cookie
+    // on the origin -- the server only checks the cookie's value, so a plain,
+    // non-HttpOnly cookie authenticates just as well.
     await injectSession(page, SESSION);
-    await page.goto(`${BASE}/admin`, { waitUntil: 'networkidle0' });
-    try {
-      await page.waitForSelector('.rail .item', { timeout: 8000 });
-    } catch {
-      throw new Error(
-        'session cookie did not authenticate -- is SESSION current? sessions expire after 24h',
-      );
+    let auth = await whoAmI(page);
+    if (!auth.ok) {
+      await page.evaluate((v) => {
+        const secure = location.protocol === 'https:' ? '; Secure' : '';
+        document.cookie = `smrt_session=${v}; path=/; SameSite=Strict${secure}`;
+      }, SESSION);
+      auth = await whoAmI(page);
     }
+    if (!auth.ok) {
+      await page.screenshot({ path: `${OUT}/bp-auth-failed.png` }).catch(() => {});
+      console.error('\n-- not signed in --');
+      console.error(`  /v1/me -> ${auth.detail}`);
+      console.error('  401 => the SESSION value is stale or mistyped; copy a fresh smrt_session.');
+      console.error('  also check BASE is the exact origin you copied the cookie from.');
+      console.error(`  wrote ${OUT}/bp-auth-failed.png (what rendered instead of the panel).`);
+      throw new Error('authentication failed; see diagnosis above');
+    }
+    console.log('signed in as', auth.detail);
+
+    await page.goto(`${BASE}/admin`, { waitUntil: 'networkidle0' });
+    await page.waitForSelector('.rail .item', { timeout: 12000 });
     await sleep(600);
     // back to the crisp default viewport for the single-shot captures
     await page.setViewport({ width: 1180, height: 760, deviceScaleFactor: DSF });
