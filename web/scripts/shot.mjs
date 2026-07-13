@@ -155,45 +155,24 @@ try {
     }
     console.log('signed in as', auth.detail);
 
-    await page.goto(`${BASE}/admin`, { waitUntil: 'networkidle0' });
+    // Land on the app root: the SPA authenticates by cookie, so any served path
+    // renders the shell (OAuth itself lands on "/"), and "/admin" is not its own
+    // page -- the route lives in a store, not the URL. Drive it in English so
+    // the rail labels are deterministic.
+    await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
     await page.waitForSelector('.rail .item', { timeout: 12000 });
-    await sleep(600);
-    // back to the crisp default viewport for the single-shot captures
-    await page.setViewport({ width: 1180, height: 760, deviceScaleFactor: DSF });
-    await page.screenshot({ path: `${OUT}/smrt-overview.png` });
-
-    // rail labels are localized; index them so the file names stay ASCII
-    const rail = ['packs', 'servers', 'featured', 'cache'];
-    for (let i = 0; i < rail.length; i++) {
-      const items = await page.$$('.rail .item');
-      if (items[i + 1]) {
-        await items[i + 1].click();
-        await sleep(350);
-        await page.screenshot({ path: `${OUT}/smrt-${rail[i]}.png` });
-      }
-    }
-
-    // pack editor: the calmer checkboxes + workspace
-    const pItems = await page.$$('.rail .item');
-    if (pItems[1]) {
-      await pItems[1].click();
-      await sleep(350);
-    }
-    const rowBtn = await page.$('tr.clickable');
-    if (rowBtn) {
-      await rowBtn.click();
-      await sleep(500);
-      await page.screenshot({ path: `${OUT}/smrt-pack-config.png` });
-    }
-
-    // English chrome on the shell
     await clickByText(page, '.loc', 'EN');
-    const items = await page.$$('.rail .item');
-    if (items[0]) {
-      await items[0].click();
-      await sleep(350);
-    }
-    await page.screenshot({ path: `${OUT}/smrt-overview-en.png` });
+    await sleep(300);
+
+    // Navigate by rail label (English), not by a brittle index.
+    const go = (label) => clickByText(page, '.item', label);
+
+    // single-viewport reference shots
+    await page.setViewport({ width: 1180, height: 760, deviceScaleFactor: DSF });
+    await go('Overview');
+    await page.screenshot({ path: `${OUT}/smrt-overview.png` });
+    await go('Packs');
+    await page.screenshot({ path: `${OUT}/smrt-packs.png` });
 
     // ── responsive breakpoint sweeps ───────────────────────────────────────
     // Navigate at desktop width (the rail collapses to a drawer on phones and is
@@ -203,24 +182,12 @@ try {
 
     // overview: rail (sidebar -> strip -> drawer) and the stat readout grid
     await desktop();
-    {
-      const nav = await page.$$('.rail .item');
-      if (nav[0]) {
-        await nav[0].click();
-        await sleep(300);
-      }
-    }
+    await go('Overview');
     await sweep(page, 'overview');
 
     // packs: the wide operator table inside its .tablewrap scroll box
     await desktop();
-    {
-      const nav = await page.$$('.rail .item');
-      if (nav[1]) {
-        await nav[1].click();
-        await sleep(300);
-      }
-    }
+    await go('Packs');
     await sweep(page, 'packs');
 
     // drawer open on a phone: the burger toggles the off-canvas rail over a scrim
@@ -237,36 +204,31 @@ try {
       }
     }
 
-    // pack editor config: the 8-column mod row and the 3-column basics grid reflow
+    // pack editor config: the 8-column mod row and the 3-column basics grid
+    // reflow. Open the first pack row; skipped if there are no packs yet.
     await desktop();
-    {
-      const nav = await page.$$('.rail .item');
-      if (nav[1]) {
-        await nav[1].click();
-        await sleep(300);
-      }
-      const row = await page.$('tr.clickable');
-      if (row) {
-        await row.click();
-        await sleep(600);
-      }
-    }
-    await sweep(page, 'pack-config');
+    await go('Packs');
+    const packRow = await page.$('tr.clickable');
+    if (packRow) {
+      await packRow.click();
+      await sleep(700);
+      await page.screenshot({ path: `${OUT}/smrt-pack-config.png` });
+      await sweep(page, 'pack-config');
 
-    // mirror picker modal: the filter row wraps on phones. Best-effort -- opens
-    // from the mods section, skipped if that button is absent in this locale/pack.
-    await desktop();
-    if (
-      (await clickByText(page, '.sm', 'From mirror')) ||
-      (await clickByText(page, '.sm', 'С зеркала'))
-    ) {
-      try {
-        await page.waitForSelector('.picker', { timeout: 4000 });
-        await sleep(300);
-        await sweep(page, 'mirror-picker');
-      } catch {
-        // picker did not open -- skip the modal sweep
+      // mirror picker modal: its filter row wraps on phones. Opens from the mods
+      // section of the editor we are already in; best-effort.
+      await desktop();
+      if (await clickByText(page, '.sm', 'From mirror')) {
+        try {
+          await page.waitForSelector('.picker', { timeout: 4000 });
+          await sleep(300);
+          await sweep(page, 'mirror-picker');
+        } catch {
+          // picker did not open -- skip the modal sweep
+        }
       }
+    } else {
+      console.log('no packs found -- skipped pack-config and picker sweeps.');
     }
   }
 
