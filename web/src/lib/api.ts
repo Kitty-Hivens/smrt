@@ -23,6 +23,7 @@ import type {
   ServerEntry,
   ServerListing,
   UnassignedJar,
+  UploadRow,
   UserRow,
   ValidateReport,
   VersionRow,
@@ -334,6 +335,29 @@ export const api = {
   setVisibility: (id: string, visibility: Visibility) =>
     send('PUT', `/v1/authoring/packs/${encodeURIComponent(id)}/visibility`, { visibility }),
   deletePack: (id: string) => send('DELETE', `/v1/authoring/packs/${encodeURIComponent(id)}`),
+
+  // ── upload moderation ──
+  // operator queue
+  pendingUploads: () => getJson<UploadRow[]>('/v1/uploads'),
+  approveUpload: (uploadId: number) => send('POST', `/v1/uploads/${uploadId}/approve`),
+  rejectUpload: (uploadId: number, note: string) =>
+    send('POST', `/v1/uploads/${uploadId}/reject`, { note }),
+  // member: upload a self-hosted jar for a community pack, and see own uploads
+  myUploads: () => getJson<UploadRow[]>('/v1/me/uploads'),
+  async uploadJar(packId: string, file: File): Promise<UploadRow> {
+    const buf = await file.arrayBuffer();
+    const r = await fetch(
+      `/v1/me/packs/${encodeURIComponent(packId)}/uploads?filename=${encodeURIComponent(file.name)}`,
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/java-archive' },
+        body: buf,
+      },
+    );
+    if (!r.ok) throw await toError(r);
+    return (await r.json()) as UploadRow;
+  },
 
   async me(): Promise<{ uid: number; login: string; role: string } | null> {
     const r = await fetch('/v1/me', { credentials: 'include' });

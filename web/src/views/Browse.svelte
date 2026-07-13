@@ -9,6 +9,7 @@
   import PackEditor from './PackEditor.svelte';
   import ModManager from './ModManager.svelte';
   import UsersView from './UsersView.svelte';
+  import Moderation from './Moderation.svelte';
 
   let { me }: { me: { login: string } } = $props();
 
@@ -388,6 +389,8 @@
       <ModManager />
     {:else if route.section === 'users'}
       <UsersView />
+    {:else if route.section === 'moderation'}
+      <Moderation />
     {/if}
   </div>
 </div>

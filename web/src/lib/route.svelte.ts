@@ -9,6 +9,7 @@ export type Section =
   | 'servers'
   | 'mods'
   | 'users'
+  | 'moderation'
   | 'profile'
   | 'mypacks';
 // The operator's tabs. `mypacks` is member-only (admins author via `packs`), so
@@ -20,6 +21,7 @@ export const SECTIONS: Section[] = [
   'servers',
   'mods',
   'users',
+  'moderation',
   'profile',
 ];
 // Guest sees only the public catalog; a signed-in member also gets their own

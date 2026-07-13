@@ -46,6 +46,7 @@
     servers: 'nav.servers',
     mods: 'nav.mods',
     users: 'nav.users',
+    moderation: 'nav.moderation',
     profile: 'nav.profile',
     mypacks: 'nav.mypacks',
   };

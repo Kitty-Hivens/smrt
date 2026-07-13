@@ -49,6 +49,23 @@
     }
   }
 
+  // Upload a self-hosted jar for this community pack -- it enters the moderation
+  // queue; once approved it is in the shared cache to add via "from mirror".
+  async function onUploadJar(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    try {
+      await api.uploadJar(packId, file);
+      await dialogs.confirm(t('pe.uploadQueued', { name: file.name }), {
+        title: t('pe.uploadJar'),
+      });
+    } catch (x) {
+      err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+    }
+  }
+
   type Tab = 'config' | 'branding' | 'build';
   let tab = $state<Tab>('config');
   let previewOpen = $state(false);
@@ -612,6 +629,12 @@
             <button class="sm" onclick={() => (pick = { src: 'cache', row: null })}>{t('pe.fromMirror')}</button>
             <button class="sm" onclick={() => (pick = { src: 'modrinth', row: null })}>{t('pe.fromModrinth')}</button>
             <button class="sm" onclick={() => (pick = { src: 'github', row: null })}>{t('pe.fromGithub')}</button>
+            {#if packId.startsWith('u/')}
+              <label class="sm valbtn">
+                {t('pe.uploadJar')}
+                <input type="file" accept=".jar" onchange={onUploadJar} hidden />
+              </label>
+            {/if}
             <label class="sm valbtn">
               {validating ? t('pe.validating') : t('pe.validate')}
               <input type="file" accept=".zip" onchange={onValidate} disabled={validating} hidden />

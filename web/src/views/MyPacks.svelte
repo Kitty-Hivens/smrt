@@ -2,7 +2,7 @@
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
-  import type { PackSummary } from '../lib/types';
+  import type { PackSummary, UploadRow } from '../lib/types';
   import PackEditor from './PackEditor.svelte';
 
   // A member's own packs: create a community pack and author it. The pack id is
@@ -13,6 +13,7 @@
 
   let summaries = $state<PackSummary[]>([]);
   let authoring = $state<string[]>([]);
+  let uploads = $state<UploadRow[]>([]);
   let packEdit = $state<string | null>(null);
   let err = $state('');
   let loading = $state(true);
@@ -21,9 +22,10 @@
     loading = true;
     err = '';
     try {
-      const [s, a] = await Promise.all([api.mePacks(), api.meAuthoring()]);
+      const [s, a, u] = await Promise.all([api.mePacks(), api.meAuthoring(), api.myUploads()]);
       summaries = s;
       authoring = a;
+      uploads = u;
     } catch (e) {
       err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
     } finally {
@@ -124,6 +126,20 @@
         <div class="empty muted">{t('mypacks.empty')}</div>
       {/if}
     </div>
+
+    {#if uploads.length}
+      <div class="panel uploads">
+        <div class="uptitle mono">{t('mypacks.uploads')}</div>
+        {#each uploads as u (u.id)}
+          <div class="uprow">
+            <span class="upname mono">{u.filename}</span>
+            <span class="grow"></span>
+            {#if u.note}<span class="upnote faint">{u.note}</span>{/if}
+            <span class="upst st-{u.status}">{u.status}</span>
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -213,5 +229,50 @@
   .empty {
     padding: var(--space-4);
     font-size: 12px;
+  }
+  .uploads {
+    overflow: hidden;
+  }
+  .uptitle {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+    padding: var(--space-3);
+    border-bottom: 1px solid var(--seam);
+  }
+  .uprow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--seam);
+    font-size: 12px;
+  }
+  .uprow:last-child {
+    border-bottom: none;
+  }
+  .upname {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .upnote {
+    font-size: 11px;
+  }
+  .upst {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+  }
+  .st-approved {
+    color: var(--ok);
+  }
+  .st-rejected {
+    color: var(--danger);
+  }
+  .st-pending {
+    color: var(--fg-faint);
   }
 </style>
