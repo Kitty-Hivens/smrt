@@ -937,7 +937,13 @@ mod tests {
             version: "0.2.3".into(),
         };
         let new_cfg = s
-            .duplicate_pack("Industrial", "Industrial-cleanroom", Some(cleanroom), 7, None)
+            .duplicate_pack(
+                "Industrial",
+                "Industrial-cleanroom",
+                Some(cleanroom),
+                7,
+                None,
+            )
             .await
             .unwrap();
 
@@ -976,7 +982,8 @@ mod tests {
             Err(ApiError::Conflict(_))
         ));
         assert!(matches!(
-            s.duplicate_pack("Industrial", "Industrial", None, 1, None).await,
+            s.duplicate_pack("Industrial", "Industrial", None, 1, None)
+                .await,
             Err(ApiError::BadRequest(_))
         ));
         // unknown source -> NotFound (from the underlying config load)

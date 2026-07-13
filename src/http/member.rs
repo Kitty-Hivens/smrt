@@ -144,7 +144,13 @@ async fn fork_pack(
     let target = format!("u/{}/{}", identity.uid, req.name);
     let cfg = state
         .storage
-        .duplicate_pack(&req.source, &target, None, identity.uid, Some(req.source.clone()))
+        .duplicate_pack(
+            &req.source,
+            &target,
+            None,
+            identity.uid,
+            Some(req.source.clone()),
+        )
         .await?;
     Ok((StatusCode::CREATED, Json(cfg)))
 }

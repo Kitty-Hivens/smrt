@@ -86,8 +86,7 @@ async fn list_community(
     let users = tokio::task::spawn_blocking(move || acc.list_users())
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("community users task: {e}")))??;
-    let logins: HashMap<i64, String> =
-        users.into_iter().map(|u| (u.github_uid, u.login)).collect();
+    let logins: HashMap<i64, String> = users.into_iter().map(|u| (u.github_uid, u.login)).collect();
 
     let out = summaries
         .into_iter()
