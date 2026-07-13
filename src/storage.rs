@@ -32,22 +32,14 @@ impl Storage {
     pub async fn list_pack_summaries(&self) -> Result<Vec<PackSummary>, ApiError> {
         let packs_dir = self.root.join("packs");
         let mut out = Vec::new();
-        let mut entries = match fs::read_dir(&packs_dir).await {
-            Ok(e) => e,
-            // Empty / missing storage root is not an error -- just no packs yet.
-            Err(_) => return Ok(out),
-        };
-        while let Some(entry) = entries.next_entry().await.map_err(io_err)? {
-            if !entry.file_type().await.map_err(io_err)?.is_dir() {
-                continue;
-            }
-            let summary_path = entry.path().join("summary.json");
-            if let Ok(bytes) = fs::read(&summary_path).await {
-                match serde_json::from_slice::<PackSummary>(&bytes) {
-                    Ok(s) => out.push(s),
-                    Err(e) => {
-                        tracing::warn!(path = %summary_path.display(), error = %e, "skipping invalid summary");
-                    }
+        // official packs: packs/<id>/summary.json
+        read_summaries_in(&packs_dir, &mut out).await?;
+        // community packs live a level deeper: packs/u/<uid>/<pack>/summary.json
+        let u_dir = packs_dir.join("u");
+        if let Ok(mut uids) = fs::read_dir(&u_dir).await {
+            while let Some(uid) = uids.next_entry().await.map_err(io_err)? {
+                if uid.file_type().await.map_err(io_err)?.is_dir() {
+                    read_summaries_in(&uid.path(), &mut out).await?;
                 }
             }
         }
@@ -299,17 +291,16 @@ impl Storage {
     pub async fn list_authoring_packs(&self) -> Result<Vec<String>, ApiError> {
         let packs_dir = self.root.join("packs");
         let mut out = Vec::new();
-        let mut entries = match fs::read_dir(&packs_dir).await {
-            Ok(e) => e,
-            Err(_) => return Ok(out),
-        };
-        while let Some(entry) = entries.next_entry().await.map_err(io_err)? {
-            if !entry.file_type().await.map_err(io_err)?.is_dir() {
-                continue;
-            }
-            let cfg = entry.path().join("authoring").join("config.json");
-            if fs::metadata(&cfg).await.is_ok() {
-                out.push(entry.file_name().to_string_lossy().to_string());
+        // official ids sit at the top level; community ids are the full
+        // `u/<uid>/<pack>` key, reconstructed from the nesting.
+        read_authoring_ids_in(&packs_dir, "", &mut out).await?;
+        let u_dir = packs_dir.join("u");
+        if let Ok(mut uids) = fs::read_dir(&u_dir).await {
+            while let Some(uid) = uids.next_entry().await.map_err(io_err)? {
+                if uid.file_type().await.map_err(io_err)?.is_dir() {
+                    let prefix = format!("u/{}/", uid.file_name().to_string_lossy());
+                    read_authoring_ids_in(&uid.path(), &prefix, &mut out).await?;
+                }
             }
         }
         out.sort();
@@ -649,6 +640,55 @@ fn json_err(e: serde_json::Error) -> ApiError {
     ApiError::Internal(anyhow::anyhow!("JSON parse error: {e}"))
 }
 
+/// Read `summary.json` from each immediate child directory of `dir`, pushing the
+/// parsed summaries. Missing dir -> no-op; an unreadable / invalid summary is
+/// skipped with a warning. Shared by the official and community listing passes.
+async fn read_summaries_in(dir: &Path, out: &mut Vec<PackSummary>) -> Result<(), ApiError> {
+    let mut entries = match fs::read_dir(dir).await {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    while let Some(entry) = entries.next_entry().await.map_err(io_err)? {
+        if !entry.file_type().await.map_err(io_err)?.is_dir() {
+            continue;
+        }
+        let summary_path = entry.path().join("summary.json");
+        if let Ok(bytes) = fs::read(&summary_path).await {
+            match serde_json::from_slice::<PackSummary>(&bytes) {
+                Ok(s) => out.push(s),
+                Err(e) => {
+                    tracing::warn!(path = %summary_path.display(), error = %e, "skipping invalid summary");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Push the id of each immediate child directory of `dir` that carries an
+/// `authoring/config.json`, prefixed -- so community ids come back as the full
+/// `u/<uid>/<pack>` key, official ids bare.
+async fn read_authoring_ids_in(
+    dir: &Path,
+    prefix: &str,
+    out: &mut Vec<String>,
+) -> Result<(), ApiError> {
+    let mut entries = match fs::read_dir(dir).await {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    while let Some(entry) = entries.next_entry().await.map_err(io_err)? {
+        if !entry.file_type().await.map_err(io_err)?.is_dir() {
+            continue;
+        }
+        let cfg = entry.path().join("authoring").join("config.json");
+        if fs::metadata(&cfg).await.is_ok() {
+            out.push(format!("{prefix}{}", entry.file_name().to_string_lossy()));
+        }
+    }
+    Ok(())
+}
+
 fn is_hex(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_hexdigit())
 }
@@ -678,7 +718,25 @@ pub(crate) fn cache_jar_path_in(root: &Path, sha1: &str) -> Option<PathBuf> {
 // Pack ID / server ID safety: no path traversal, no leading dots, basic alnum +
 // dashes + dots only. Stops `..`, absolute paths, and silly characters before
 // they reach the filesystem layer.
+/// A pack id is either a flat official id (`<seg>`) or a namespaced community id
+/// (`u/<uid>/<pack>`, uid all-digits). Both leaf segments are conservative and
+/// cannot traverse (no leading dot, no slash); the literal `u` is reserved as the
+/// community namespace so an official pack can never collide with `packs/u/`.
 pub(crate) fn is_safe_id(s: &str) -> bool {
+    match s.strip_prefix("u/") {
+        Some(rest) => match rest.split_once('/') {
+            Some((uid, pack)) => {
+                !uid.is_empty() && uid.bytes().all(|b| b.is_ascii_digit()) && is_flat_id(pack)
+            }
+            None => false,
+        },
+        None => s != "u" && is_flat_id(s),
+    }
+}
+
+/// One conservative path segment: non-empty, <=64, no leading dot (so no `..`),
+/// alphanumeric plus `-_.`.
+fn is_flat_id(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 64
         && !s.starts_with('.')
@@ -873,5 +931,55 @@ mod tests {
             s.duplicate_pack("Nope", "Fresh", None, 1).await,
             Err(ApiError::NotFound)
         ));
+    }
+
+    #[test]
+    fn is_safe_id_accepts_official_and_community_and_blocks_traversal() {
+        assert!(is_safe_id("Industrial"));
+        assert!(is_safe_id("pack_1-2.3"));
+        assert!(is_safe_id("u/211033194/CoolPack"));
+        // reserved namespace + malformed community keys
+        assert!(!is_safe_id("u"));
+        assert!(!is_safe_id("u/211033194")); // no pack segment
+        assert!(!is_safe_id("u/abc/CoolPack")); // non-digit uid
+        assert!(!is_safe_id("u//CoolPack")); // empty uid
+        // no traversal in either form
+        assert!(!is_safe_id(".."));
+        assert!(!is_safe_id("u/1/.."));
+        assert!(!is_safe_id("a/b"));
+        assert!(!is_safe_id(""));
+    }
+
+    fn sample_summary(pack_id: &str) -> PackSummary {
+        let json = format!(
+            r#"{{"pack_id":"{pack_id}","display_name":"X","tagline":"",
+                 "minecraft_version":"1.12.2","latest_pack_version":"1","tags":[]}}"#
+        );
+        serde_json::from_str(&json).unwrap()
+    }
+
+    #[tokio::test]
+    async fn list_pack_summaries_includes_community_packs() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        s.save_pack_summary(&sample_summary("Industrial"))
+            .await
+            .unwrap();
+        s.save_pack_summary(&sample_summary("u/42/CoolPack"))
+            .await
+            .unwrap();
+
+        let ids: Vec<String> = s
+            .list_pack_summaries()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|p| p.pack_id)
+            .collect();
+        assert!(ids.contains(&"Industrial".to_string()), "official listed");
+        assert!(
+            ids.contains(&"u/42/CoolPack".to_string()),
+            "community listed"
+        );
     }
 }
