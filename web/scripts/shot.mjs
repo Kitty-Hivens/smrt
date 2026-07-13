@@ -12,6 +12,7 @@
 //      authenticated views), OUT (dir), WIDTHS (comma-separated px for the
 //      responsive sweep; see BP_WIDTHS).
 import puppeteer from 'puppeteer-core';
+import { mkdirSync } from 'node:fs';
 
 // Firefox is driven over WebDriver BiDi in its own throwaway profile, so it
 // neither touches nor needs you to close a Firefox you already have open.
@@ -29,6 +30,8 @@ const DSF = useFirefox ? 1 : 2;
 const BASE = process.env.BASE ?? 'http://127.0.0.1:9000';
 const SESSION = process.env.SESSION ?? '';
 const OUT = process.env.OUT ?? '/tmp';
+// page.screenshot() writes but does not create the directory -- ensure it exists.
+mkdirSync(OUT, { recursive: true });
 
 // Viewport widths for the responsive breakpoint sweep. Defaults straddle both
 // layout breaks: 320/375/560 -> phone drawer, 768 -> tablet strip, 1024/1440
