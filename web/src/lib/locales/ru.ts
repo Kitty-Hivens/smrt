@@ -50,6 +50,13 @@ export const ru: Dict = {
   'packs.unbuilt': '(не собран)',
   'packs.flag.featured': 'рекомендуемый',
   'packs.flag.authoring': 'редактируемый',
+  'packs.col.state': 'Статус',
+  'packs.vis.draft': 'черновик',
+  'packs.vis.unlisted': 'скрытый',
+  'packs.vis.published': 'опубликован',
+  'packs.tier.community': 'сообщество',
+  'packs.publish': 'Опубликовать',
+  'packs.unpublish': 'Снять',
   'packs.empty': 'Паков пока нет. Создай или загрузи из SC-архива.',
 
   'overview.packs': 'Паки',

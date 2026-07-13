@@ -154,5 +154,9 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
         mods: declared_mods,
         assets: declared_assets,
         pack_meta: Default::default(),
+        owner: crate::domain::pack::default_owner(),
+        tier: crate::domain::pack::default_tier(),
+        visibility: crate::domain::pack::default_visibility(),
+        fork_of: None,
     })
 }

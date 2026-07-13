@@ -51,6 +51,13 @@ export const en = {
   'packs.unbuilt': '(unbuilt)',
   'packs.flag.featured': 'featured',
   'packs.flag.authoring': 'editable',
+  'packs.col.state': 'State',
+  'packs.vis.draft': 'draft',
+  'packs.vis.unlisted': 'unlisted',
+  'packs.vis.published': 'published',
+  'packs.tier.community': 'community',
+  'packs.publish': 'Publish',
+  'packs.unpublish': 'Unpublish',
   'packs.empty': 'No packs yet. Create one or bootstrap from an SC archive.',
 
   'overview.packs': 'Packs',

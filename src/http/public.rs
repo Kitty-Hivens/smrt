@@ -50,7 +50,15 @@ async fn health() -> Json<Health> {
 // ── /v1/packs ──────────────────────────────────────────────────────────────
 
 async fn list_packs(State(state): State<AppState>) -> Result<Json<PackListing>, ApiError> {
-    let packs = state.storage.list_pack_summaries().await?;
+    // The launcher's catalog is official + published only; drafts, unlisted, and
+    // community packs are reached through other surfaces, never this listing.
+    let packs = state
+        .storage
+        .list_pack_summaries()
+        .await?
+        .into_iter()
+        .filter(|p| p.tier == PackTier::Official && p.visibility == Visibility::Published)
+        .collect();
     Ok(Json(PackListing {
         schema_version: SCHEMA_VERSION,
         generated_at: now_rfc3339(),

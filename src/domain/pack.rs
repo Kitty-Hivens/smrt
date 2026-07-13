@@ -7,6 +7,48 @@ use super::manifest::{Display, LoaderSpec};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+// ── Ownership ──────────────────────────────────────────────────────────────
+
+/// The mirror operator's GitHub uid. Packs authored before ownership existed
+/// backfill their `owner` to it, and operator-authored packs default to it.
+const OPERATOR_UID: i64 = 211033194;
+
+/// Curation tier. `official` = the mirror's own packs (the launcher's catalog,
+/// no personal byline); `community` = a member's pack. The launcher reads
+/// official only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum PackTier {
+    Official,
+    Community,
+}
+
+/// Publication state. Only `published` packs reach the public listing; `draft`
+/// is work-in-progress, `unlisted` is reachable by direct id but off the catalog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum Visibility {
+    Draft,
+    Unlisted,
+    Published,
+}
+
+/// Backfill defaults, chosen so an existing config/summary with none of these
+/// fields reads as an owned, official, published pack (which is what every pack
+/// predating ownership is). `pub(crate)` so authoring code that mints a fresh
+/// operator pack reuses the same defaults instead of re-hardcoding them.
+pub(crate) fn default_owner() -> i64 {
+    OPERATOR_UID
+}
+pub(crate) fn default_tier() -> PackTier {
+    PackTier::Official
+}
+pub(crate) fn default_visibility() -> Visibility {
+    Visibility::Published
+}
+
 // ── Pack summary / listing ─────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -39,6 +81,19 @@ pub struct PackSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub description_md: Option<String>,
+    /// GitHub uid of the pack owner. Official packs are owned by the operator;
+    /// community packs by their member. Server-controlled -- set at authoring.
+    #[serde(default = "default_owner")]
+    #[ts(type = "number")]
+    pub owner: i64,
+    #[serde(default = "default_tier")]
+    pub tier: PackTier,
+    #[serde(default = "default_visibility")]
+    pub visibility: Visibility,
+    /// Source pack id when this pack is a fork; absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fork_of: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -99,6 +154,20 @@ pub struct PackConfig {
     pub assets: Vec<DeclaredAsset>,
     #[serde(default)]
     pub pack_meta: PackMeta,
+    /// GitHub uid of the pack owner. Official packs are owned by the operator;
+    /// community packs by their member. Server-controlled -- never taken from a
+    /// client config edit (see `put_pack_config`).
+    #[serde(default = "default_owner")]
+    #[ts(type = "number")]
+    pub owner: i64,
+    #[serde(default = "default_tier")]
+    pub tier: PackTier,
+    #[serde(default = "default_visibility")]
+    pub visibility: Visibility,
+    /// Source pack id when this pack is a fork; absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fork_of: Option<String>,
 }
 
 /// Pack-card metadata (icon / banner / gallery / long description) merged into
@@ -230,5 +299,11 @@ mod tests {
         assert!(s.banner_url.is_none());
         assert!(s.gallery_urls.is_empty());
         assert!(s.description_md.is_none());
+        // the ownership fields backfill via serde defaults, so a summary predating
+        // them reads as an owned, official, published pack -- no migration needed
+        assert_eq!(s.owner, OPERATOR_UID);
+        assert_eq!(s.tier, PackTier::Official);
+        assert_eq!(s.visibility, Visibility::Published);
+        assert!(s.fork_of.is_none());
     }
 }

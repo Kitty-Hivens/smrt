@@ -517,7 +517,7 @@ fn default_display() -> Display {
 mod tests {
     use super::*;
     use crate::domain::LoaderSpec;
-    use crate::domain::{DeclaredMod, PackConfig, SourceDecl};
+    use crate::domain::{DeclaredMod, PackConfig, PackTier, SourceDecl, Visibility};
     use std::io::Write;
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
@@ -539,6 +539,10 @@ mod tests {
             mods: Vec::new(),
             assets: Vec::new(),
             pack_meta: Default::default(),
+            owner: 211033194,
+            tier: PackTier::Official,
+            visibility: Visibility::Published,
+            fork_of: None,
         }
     }
 

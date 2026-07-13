@@ -321,7 +321,7 @@ async fn run_bootstrap(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{DeclaredMod, LoaderSpec, PackConfig, SourceDecl};
+    use crate::domain::{DeclaredMod, LoaderSpec, PackConfig, PackTier, SourceDecl, Visibility};
     use sha1::{Digest, Sha1};
     use std::time::Duration;
 
@@ -355,6 +355,10 @@ mod tests {
             }],
             assets: vec![],
             pack_meta: Default::default(),
+            owner: 211033194,
+            tier: PackTier::Official,
+            visibility: Visibility::Published,
+            fork_of: None,
         }
     }
 

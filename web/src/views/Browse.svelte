@@ -34,7 +34,7 @@
     err = '';
     try {
       const [p, s, md, u, a, rm, ci] = await Promise.all([
-        api.packs(),
+        api.adminSummaries(),
         api.servers(),
         api.registryMods(),
         api.unassigned(),
@@ -42,7 +42,7 @@
         api.removed(),
         api.cacheInventory(),
       ]);
-      packs = p.packs;
+      packs = p;
       servers = s.servers;
       mods = md;
       unassigned = u;
@@ -76,6 +76,25 @@
       err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
     }
   }
+
+  // publish/unpublish a built pack: flips visibility between draft and published.
+  // Takes effect on the public listing immediately (the mirror patches summary.json).
+  async function togglePublish(p: PackSummary) {
+    const next = p.visibility === 'published' ? 'draft' : 'published';
+    try {
+      await api.setVisibility(p.pack_id, next);
+      await loadAll();
+    } catch (e) {
+      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+    }
+  }
+
+  // typed lookup so t() gets a literal MsgKey, not a dynamic string
+  const visKey = {
+    draft: 'packs.vis.draft',
+    unlisted: 'packs.vis.unlisted',
+    published: 'packs.vis.published',
+  } as const;
 
   const authoringSet = $derived(new Set(authoring));
   const allPackIds = $derived(
@@ -234,8 +253,10 @@
                 <th>{t('packs.col.pack')}</th>
                 <th>{t('packs.col.mc')}</th>
                 <th>{t('packs.col.latest')}</th>
+                <th>{t('packs.col.state')}</th>
                 <th>{t('packs.col.tags')}</th>
                 <th>{t('packs.col.flags')}</th>
+                <th style="width:90px"></th>
               </tr>
             </thead>
             <tbody>
@@ -247,6 +268,7 @@
                   tabindex="0"
                   onclick={() => (packEdit = id)}
                   onkeydown={(e) => {
+                    if (e.target !== e.currentTarget) return;
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
                       packEdit = id;
@@ -261,15 +283,30 @@
                   </td>
                   <td class="mono">{p?.minecraft_version ?? '-'}</td>
                   <td class="mono">{p?.latest_pack_version ?? t('packs.unbuilt')}</td>
+                  <td>
+                    {#if p}
+                      <span class="tag vis-{p.visibility}">{t(visKey[p.visibility])}</span>
+                      {#if p.tier === 'community'}<span class="tag">{t('packs.tier.community')}</span>{/if}
+                    {/if}
+                  </td>
                   <td>{#each p?.tags ?? [] as tg}<span class="tag">{tg}</span> {/each}</td>
                   <td>
                     {#if p?.featured}<span class="tag" style="color:var(--accent)">{t('packs.flag.featured')}</span>{/if}
                     {#if authoringSet.has(id)}<span class="tag" style="color:var(--ok)">{t('packs.flag.authoring')}</span>{/if}
                   </td>
+                  <td class="actions">
+                    {#if p}
+                      <button
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          togglePublish(p);
+                        }}>{p.visibility === 'published' ? t('packs.unpublish') : t('packs.publish')}</button>
+                    {/if}
+                  </td>
                 </tr>
               {/each}
               {#if allPackIds.length === 0 && !loading}
-                <tr><td colspan="5" class="muted">{t('packs.empty')}</td></tr>
+                <tr><td colspan="7" class="muted">{t('packs.empty')}</td></tr>
               {/if}
             </tbody>
           </table>
@@ -579,6 +616,15 @@
     padding: 4px 10px;
     font-size: 12px;
     margin-right: 6px;
+  }
+  .vis-published {
+    color: var(--ok);
+  }
+  .vis-draft {
+    color: var(--fg-faint);
+  }
+  .vis-unlisted {
+    color: var(--accent);
   }
   button.danger:hover {
     border-color: var(--danger);

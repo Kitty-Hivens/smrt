@@ -31,6 +31,10 @@ pub fn reconstruct_config(manifest: &PackManifest, summary: &PackSummary) -> Pac
             gallery_urls: summary.gallery_urls.clone(),
             description_md: summary.description_md.clone(),
         },
+        owner: summary.owner,
+        tier: summary.tier,
+        visibility: summary.visibility,
+        fork_of: summary.fork_of.clone(),
     }
 }
 
@@ -96,7 +100,7 @@ fn rel_from_static_url(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Display, JavaSpec, LoaderSpec, MinecraftSpec};
+    use crate::domain::{Display, JavaSpec, LoaderSpec, MinecraftSpec, PackTier, Visibility};
 
     fn manifest() -> PackManifest {
         PackManifest {
@@ -168,6 +172,10 @@ mod tests {
             banner_url: None,
             gallery_urls: vec!["https://m/g1.png".into()],
             description_md: Some("# Industrial".into()),
+            owner: 211033194,
+            tier: PackTier::Official,
+            visibility: Visibility::Published,
+            fork_of: None,
         }
     }
 

@@ -24,6 +24,8 @@ export type { CacheUse } from './bindings/CacheUse';
 // authoring config
 export type { PackConfig } from './bindings/PackConfig';
 export type { PackMeta } from './bindings/PackMeta';
+export type { PackTier } from './bindings/PackTier';
+export type { Visibility } from './bindings/Visibility';
 export type { DeclaredMod } from './bindings/DeclaredMod';
 export type { DeclaredAsset } from './bindings/DeclaredAsset';
 export type { SourceDecl } from './bindings/SourceDecl';

@@ -17,6 +17,7 @@ import type {
   PackConfig,
   PackListing,
   PackManifest,
+  PackSummary,
   ReleaseRow,
   ServerEntry,
   ServerListing,
@@ -24,6 +25,7 @@ import type {
   UserRow,
   ValidateReport,
   VersionRow,
+  Visibility,
 } from './types';
 
 // The authored identity an operator sets for one cached jar: which mod, which
@@ -128,6 +130,8 @@ export const api = {
   // admin-only: same jars, enriched with which pack/filename uses each sha1
   cacheUsage: () => getJson<CacheUsageListing>('/v1/cache/usage'),
   authoringPacks: () => getJson<AuthoringPacksListing>('/v1/authoring/packs'),
+  // operator view: every pack summary incl. drafts/community that /v1/packs hides
+  adminSummaries: () => getJson<PackSummary[]>('/v1/authoring/summaries'),
 
   // ── admin writes ──
   saveServer: (e: ServerEntry) => send('POST', '/v1/servers', e),
@@ -322,6 +326,8 @@ export const api = {
   listUsers: () => getJson<UserRow[]>('/v1/users'),
   setUserRole: (uid: number, role: string) =>
     send('POST', `/v1/users/${uid}/role`, { role }),
+  setVisibility: (id: string, visibility: Visibility) =>
+    send('PUT', `/v1/authoring/packs/${encodeURIComponent(id)}/visibility`, { visibility }),
 
   async me(): Promise<{ uid: number; login: string; role: string } | null> {
     const r = await fetch('/v1/me', { credentials: 'include' });

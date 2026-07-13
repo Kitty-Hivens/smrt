@@ -132,6 +132,11 @@
       mods: [],
       assets: [],
       pack_meta: { icon_url: null, banner_url: null, gallery_urls: [], description_md: null },
+      // ownership + publication are server-authoritative; these are placeholders
+      // the backend overwrites on create (owner = the creator) / preserves on edit.
+      owner: 0,
+      tier: 'official',
+      visibility: 'published',
     };
     tagsStr = '';
     cardGalleryStr = '';

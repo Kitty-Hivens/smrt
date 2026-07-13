@@ -132,6 +132,10 @@ pub fn make_pack_summary(cfg: &PackConfig, pack_version: &str) -> PackSummary {
         banner_url: cfg.pack_meta.banner_url.clone(),
         gallery_urls: cfg.pack_meta.gallery_urls.clone(),
         description_md: cfg.pack_meta.description_md.clone(),
+        owner: cfg.owner,
+        tier: cfg.tier,
+        visibility: cfg.visibility,
+        fork_of: cfg.fork_of.clone(),
     }
 }
 

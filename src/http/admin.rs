@@ -1,5 +1,5 @@
 use super::ApiError;
-use crate::accounts::UserRow;
+use crate::accounts::{Identity, UserRow};
 use crate::authoring::{ValidateReport, jar_icon, modrinth, reconstruct_config, validate};
 use crate::domain::*;
 use crate::state::AppState;
@@ -9,7 +9,7 @@ use axum::http::{StatusCode, header};
 use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 
@@ -34,9 +34,14 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/authoring/packs/:pack_id/static", get(list_pack_static))
         .route("/v1/authoring/packs", get(list_authoring_packs))
+        .route("/v1/authoring/summaries", get(list_all_pack_summaries))
         .route(
             "/v1/authoring/packs/:pack_id/config",
             get(get_pack_config).put(put_pack_config),
+        )
+        .route(
+            "/v1/authoring/packs/:pack_id/visibility",
+            put(set_pack_visibility),
         )
         .route(
             "/v1/authoring/packs/:pack_id/config/revert",
@@ -527,8 +532,9 @@ async fn get_pack_config(
 
 async fn put_pack_config(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
-    Json(cfg): Json<PackConfig>,
+    Json(mut cfg): Json<PackConfig>,
 ) -> Result<(StatusCode, Json<PackConfig>), ApiError> {
     // The path id is authoritative; reject a body that disagrees so a
     // mis-targeted PUT can't write one pack's config under another's id.
@@ -537,6 +543,24 @@ async fn put_pack_config(
             "body pack_id {:?} does not match path {:?}",
             cfg.pack_id, pack_id
         )));
+    }
+    // owner / tier / visibility / fork_of are server-controlled and never trusted
+    // from the client. On an edit, carry them from the stored config so a member
+    // can't reassign ownership, self-promote to official, or publish; on create,
+    // the caller owns the pack and it starts as an official published pack.
+    match state.storage.load_pack_config(&pack_id).await {
+        Ok(existing) => {
+            cfg.owner = existing.owner;
+            cfg.tier = existing.tier;
+            cfg.visibility = existing.visibility;
+            cfg.fork_of = existing.fork_of;
+        }
+        Err(_) => {
+            cfg.owner = identity.uid;
+            cfg.tier = PackTier::Official;
+            cfg.visibility = Visibility::Published;
+            cfg.fork_of = None;
+        }
     }
     state.storage.save_pack_config(&pack_id, &cfg).await?;
     Ok((StatusCode::CREATED, Json(cfg)))
@@ -582,14 +606,42 @@ struct DuplicatePackReq {
 // single-admin primitive; ownership-aware forks (#36) layer on top of it.
 async fn duplicate_pack(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
     Json(req): Json<DuplicatePackReq>,
 ) -> Result<(StatusCode, Json<PackConfig>), ApiError> {
     let cfg = state
         .storage
-        .duplicate_pack(&pack_id, &req.target_id, req.loader)
+        .duplicate_pack(&pack_id, &req.target_id, req.loader, identity.uid)
         .await?;
     Ok((StatusCode::CREATED, Json(cfg)))
+}
+
+/// Every pack summary, unfiltered -- the operator's view, including drafts,
+/// unlisted, and community packs that the public `/v1/packs` listing hides.
+async fn list_all_pack_summaries(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<PackSummary>>, ApiError> {
+    Ok(Json(state.storage.list_pack_summaries().await?))
+}
+
+#[derive(serde::Deserialize)]
+struct VisibilityReq {
+    visibility: Visibility,
+}
+
+/// Publish / unpublish (or unlist) a pack. Takes effect on the public listing
+/// immediately (see `Storage::set_pack_visibility`).
+async fn set_pack_visibility(
+    State(state): State<AppState>,
+    Path(pack_id): Path<String>,
+    Json(req): Json<VisibilityReq>,
+) -> Result<StatusCode, ApiError> {
+    state
+        .storage
+        .set_pack_visibility(&pack_id, req.visibility)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
