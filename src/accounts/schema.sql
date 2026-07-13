@@ -31,3 +31,23 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 -- carries the row; delete it so its sessions cascade away and nothing is left
 -- pinned to the reserved uid. A no-op on fresh DBs, which never seed it.
 DELETE FROM users WHERE github_uid = 0;
+
+-- Member jar uploads awaiting moderation. A self-hosted jar never lands in the
+-- shared cache directly: it stages here as `pending`, an operator approves it
+-- (jar promoted to the cache) or rejects it. `note` carries the auto-gate reason
+-- or the moderator's. See the upload-moderation policy.
+CREATE TABLE IF NOT EXISTS mod_uploads (
+    id         INTEGER PRIMARY KEY,
+    uploader   INTEGER NOT NULL,
+    pack_id    TEXT NOT NULL,
+    filename   TEXT NOT NULL,
+    sha1       TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'pending'
+               CHECK (status IN ('pending', 'approved', 'rejected')),
+    note       TEXT,
+    created_at INTEGER NOT NULL,
+    decided_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_uploads_status ON mod_uploads(status);
+CREATE INDEX IF NOT EXISTS idx_uploads_uploader ON mod_uploads(uploader);

@@ -550,6 +550,41 @@ impl Storage {
         Ok(())
     }
 
+    /// Stage a member upload pending moderation, content-addressed by sha1 under
+    /// `uploads/`. Not the shared cache -- an operator promotes it on approval.
+    pub async fn stage_upload(&self, sha1: &str, bytes: &[u8]) -> Result<(), ApiError> {
+        if !is_hex(sha1) || sha1.len() != 40 {
+            return Err(ApiError::BadRequest("invalid sha1".into()));
+        }
+        let actual = sha1_hex(bytes);
+        if actual != sha1 {
+            return Err(ApiError::BadRequest(format!(
+                "sha1 mismatch: {sha1} vs {actual}"
+            )));
+        }
+        atomic_write(&self.staged_upload_path(sha1), bytes).await
+    }
+
+    /// Promote a staged upload into the shared cache (moderation approved), then
+    /// remove the staging copy. `NotFound` if nothing is staged.
+    pub async fn promote_upload(&self, sha1: &str) -> Result<(), ApiError> {
+        let staged = self.staged_upload_path(sha1);
+        let bytes = fs::read(&staged).await.map_err(|_| ApiError::NotFound)?;
+        self.save_cache_jar(sha1, &bytes).await?;
+        let _ = fs::remove_file(&staged).await;
+        Ok(())
+    }
+
+    /// Drop a staged upload (moderation rejected). Idempotent.
+    pub async fn discard_upload(&self, sha1: &str) -> Result<(), ApiError> {
+        let _ = fs::remove_file(self.staged_upload_path(sha1)).await;
+        Ok(())
+    }
+
+    fn staged_upload_path(&self, sha1: &str) -> PathBuf {
+        self.root.join("uploads").join(format!("{sha1}.jar"))
+    }
+
     pub async fn save_featured(&self, featured: &Featured) -> Result<(), ApiError> {
         let path = self.root.join("featured.json");
         let bytes = serde_json::to_vec_pretty(featured)
@@ -631,7 +666,7 @@ async fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ApiError> {
     result
 }
 
-fn sha1_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha1_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha1::new();
     hasher.update(bytes);
     let digest = hasher.finalize();

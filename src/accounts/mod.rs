@@ -80,6 +80,27 @@ pub struct UserRow {
     pub last_login_at: i64,
 }
 
+/// A member jar upload in the moderation queue.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct UploadRow {
+    #[ts(type = "number")]
+    pub id: i64,
+    #[ts(type = "number")]
+    pub uploader: i64,
+    pub pack_id: String,
+    pub filename: String,
+    pub sha1: String,
+    #[ts(type = "number")]
+    pub size_bytes: i64,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub note: Option<String>,
+    #[ts(type = "number")]
+    pub created_at: i64,
+}
+
 pub struct Accounts {
     conn: Mutex<Connection>,
 }
@@ -238,6 +259,100 @@ impl Accounts {
         }
         Ok(())
     }
+
+    // ── moderation queue (member jar uploads) ───────────────────────────────
+
+    /// Enqueue a pending member upload; returns its id. Blocking.
+    pub fn enqueue_upload(
+        &self,
+        uploader: i64,
+        pack_id: &str,
+        filename: &str,
+        sha1: &str,
+        size_bytes: i64,
+    ) -> Result<i64> {
+        let now = unix_now();
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard.execute(
+            "INSERT INTO mod_uploads
+               (uploader, pack_id, filename, sha1, size_bytes, status, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
+            params![uploader, pack_id, filename, sha1, size_bytes, now],
+        )?;
+        Ok(guard.last_insert_rowid())
+    }
+
+    /// Pending uploads, oldest first -- the operator's moderation queue. Blocking.
+    pub fn list_pending_uploads(&self) -> Result<Vec<UploadRow>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let mut stmt = guard.prepare(
+            "SELECT id, uploader, pack_id, filename, sha1, size_bytes, status, note, created_at
+             FROM mod_uploads WHERE status = 'pending' ORDER BY created_at ASC",
+        )?;
+        let rows = stmt
+            .query_map([], upload_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// A member's own uploads (any status), newest first. Blocking.
+    pub fn list_user_uploads(&self, uploader: i64) -> Result<Vec<UploadRow>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let mut stmt = guard.prepare(
+            "SELECT id, uploader, pack_id, filename, sha1, size_bytes, status, note, created_at
+             FROM mod_uploads WHERE uploader = ?1 ORDER BY created_at DESC",
+        )?;
+        let rows = stmt
+            .query_map(params![uploader], upload_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// One upload by id. Blocking.
+    pub fn get_upload(&self, id: i64) -> Result<Option<UploadRow>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard
+            .query_row(
+                "SELECT id, uploader, pack_id, filename, sha1, size_bytes, status, note, created_at
+                 FROM mod_uploads WHERE id = ?1",
+                params![id],
+                upload_from_row,
+            )
+            .optional()
+            .context("read upload")
+    }
+
+    /// Decide a pending upload: `approved` or `rejected`, with an optional note.
+    /// Blocking.
+    pub fn set_upload_status(&self, id: i64, status: &str, note: Option<&str>) -> Result<()> {
+        if status != "approved" && status != "rejected" {
+            anyhow::bail!("invalid upload status '{status}'");
+        }
+        let now = unix_now();
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let n = guard.execute(
+            "UPDATE mod_uploads SET status = ?2, note = ?3, decided_at = ?4 WHERE id = ?1",
+            params![id, status, note, now],
+        )?;
+        if n == 0 {
+            anyhow::bail!("no upload with id {id}");
+        }
+        Ok(())
+    }
+}
+
+fn upload_from_row(r: &rusqlite::Row) -> rusqlite::Result<UploadRow> {
+    Ok(UploadRow {
+        id: r.get(0)?,
+        uploader: r.get(1)?,
+        pack_id: r.get(2)?,
+        filename: r.get(3)?,
+        sha1: r.get(4)?,
+        size_bytes: r.get(5)?,
+        status: r.get(6)?,
+        note: r.get(7)?,
+        created_at: r.get(8)?,
+    })
 }
 
 fn insert_session(conn: &Connection, user_id: i64, now: i64) -> Result<String> {

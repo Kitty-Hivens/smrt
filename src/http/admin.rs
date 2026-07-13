@@ -1,5 +1,5 @@
 use super::ApiError;
-use crate::accounts::{Identity, UserRow};
+use crate::accounts::{Identity, UploadRow, UserRow};
 use crate::authoring::{ValidateReport, jar_icon, modrinth, reconstruct_config, validate};
 use crate::domain::*;
 use crate::state::AppState;
@@ -42,6 +42,9 @@ fn operator_router(state: AppState) -> Router {
         .route("/v1/cache/github", post(ingest_github))
         .route("/v1/users", get(list_users))
         .route("/v1/users/:uid/role", post(set_user_role))
+        .route("/v1/uploads", get(list_uploads))
+        .route("/v1/uploads/:id/approve", post(approve_upload))
+        .route("/v1/uploads/:id/reject", post(reject_upload))
         .layer(DefaultBodyLimit::max(ADMIN_BODY_LIMIT))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
         .with_state(state)
@@ -116,6 +119,61 @@ async fn set_user_role(
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("role task: {e}")))?
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Pending member uploads awaiting moderation, oldest first.
+async fn list_uploads(State(state): State<AppState>) -> Result<Json<Vec<UploadRow>>, ApiError> {
+    let acc = state.accounts.clone();
+    let rows = tokio::task::spawn_blocking(move || acc.list_pending_uploads())
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("uploads task: {e}")))??;
+    Ok(Json(rows))
+}
+
+/// Approve a staged upload: promote its jar into the shared cache and mark it
+/// approved. The registry is poked so the new artifact is harvested.
+async fn approve_upload(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let acc = state.accounts.clone();
+    let upload = tokio::task::spawn_blocking(move || acc.get_upload(id))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("upload task: {e}")))??
+        .ok_or(ApiError::NotFound)?;
+    state.storage.promote_upload(&upload.sha1).await?;
+    let acc = state.accounts.clone();
+    tokio::task::spawn_blocking(move || acc.set_upload_status(id, "approved", None))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("status task: {e}")))??;
+    state.harvest.poke();
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(serde::Deserialize)]
+struct RejectBody {
+    note: Option<String>,
+}
+
+/// Reject a staged upload: drop its staged jar and mark it rejected, with an
+/// optional moderator note the uploader sees.
+async fn reject_upload(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(body): Json<RejectBody>,
+) -> Result<StatusCode, ApiError> {
+    let acc = state.accounts.clone();
+    let upload = tokio::task::spawn_blocking(move || acc.get_upload(id))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("upload task: {e}")))??
+        .ok_or(ApiError::NotFound)?;
+    state.storage.discard_upload(&upload.sha1).await?;
+    let acc = state.accounts.clone();
+    let note = body.note;
+    tokio::task::spawn_blocking(move || acc.set_upload_status(id, "rejected", note.as_deref()))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("status task: {e}")))??;
     Ok(StatusCode::NO_CONTENT)
 }
 
