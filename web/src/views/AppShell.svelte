@@ -416,7 +416,9 @@
      between them. Nothing is dropped. */
   @media (min-width: 561px) and (max-width: 768px) {
     .shell {
-      grid-template-columns: 1fr;
+      /* minmax(0,...) not 1fr: 1fr's auto minimum lets the horizontal rail's
+         min-content (the full nav) blow the single column past the viewport */
+      grid-template-columns: minmax(0, 1fr);
       grid-template-rows: auto minmax(0, 1fr);
     }
     .rail {
@@ -477,7 +479,7 @@
      scrim, toggled by the topbar burger. The full vertical rail is preserved. */
   @media (max-width: 560px) {
     .shell {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
       grid-template-rows: minmax(0, 1fr);
     }
     .rail {
