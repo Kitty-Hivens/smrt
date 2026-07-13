@@ -7,6 +7,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use std::collections::HashMap;
 use tokio_util::io::ReaderStream;
 
 pub fn router(state: AppState) -> Router {
@@ -32,6 +33,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/featured", get(get_featured))
         .route("/v1/cache/:prefix/:filename", get(get_cache_jar))
         .route("/v1/cache/inventory", get(get_cache_inventory))
+        .route("/v1/community", get(list_community))
         .route("/v1/users/:uid/avatar", get(get_user_avatar))
         .with_state(state)
 }
@@ -64,6 +66,43 @@ async fn list_packs(State(state): State<AppState>) -> Result<Json<PackListing>, 
         generated_at: now_rfc3339(),
         packs,
     }))
+}
+
+/// Published community packs for the site's Community view -- browseable here but
+/// never part of the launcher's official `/v1/packs` catalog. Each carries the
+/// owner's login (resolved from the uid) for the byline.
+async fn list_community(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<CommunityPack>>, ApiError> {
+    let summaries: Vec<PackSummary> = state
+        .storage
+        .list_pack_summaries()
+        .await?
+        .into_iter()
+        .filter(|p| p.tier == PackTier::Community && p.visibility == Visibility::Published)
+        .collect();
+
+    let acc = state.accounts.clone();
+    let users = tokio::task::spawn_blocking(move || acc.list_users())
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("community users task: {e}")))??;
+    let logins: HashMap<i64, String> =
+        users.into_iter().map(|u| (u.github_uid, u.login)).collect();
+
+    let out = summaries
+        .into_iter()
+        .map(|s| {
+            let owner_login = logins
+                .get(&s.owner)
+                .cloned()
+                .unwrap_or_else(|| format!("uid {}", s.owner));
+            CommunityPack {
+                summary: s,
+                owner_login,
+            }
+        })
+        .collect();
+    Ok(Json(out))
 }
 
 async fn get_pack_summary(

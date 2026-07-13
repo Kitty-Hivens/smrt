@@ -104,6 +104,17 @@ pub struct PackListing {
     pub packs: Vec<PackSummary>,
 }
 
+/// A published community pack for the public Community listing: the pack summary
+/// plus the owner's GitHub login (resolved from the uid) for the `by <user>`
+/// byline. Community packs are browseable on the site but never in the launcher's
+/// official `/v1/packs` catalog.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct CommunityPack {
+    pub summary: PackSummary,
+    pub owner_login: String,
+}
+
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "bindings/")]
 pub struct ManifestVersionsListing {

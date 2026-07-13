@@ -6,6 +6,7 @@ import type {
   BuildModRow,
   BuildSummary,
   CacheInventory,
+  CommunityPack,
   DeclaredAsset,
   CacheUsageListing,
   Health,
@@ -125,6 +126,7 @@ async function resolveModrinthIcon(projectId: string): Promise<string | null> {
 export const api = {
   health: () => getJson<Health>('/v1/health'),
   packs: () => getJson<PackListing>('/v1/packs'),
+  community: () => getJson<CommunityPack[]>('/v1/community'),
   servers: () => getJson<ServerListing>('/v1/servers'),
   cacheInventory: () => getJson<CacheInventory>('/v1/cache/inventory'),
   // admin-only: same jars, enriched with which pack/filename uses each sha1

@@ -10,6 +10,7 @@ export type { DryRun };
 export type { Health } from './bindings/Health';
 export type { PackSummary } from './bindings/PackSummary';
 export type { PackListing } from './bindings/PackListing';
+export type { CommunityPack } from './bindings/CommunityPack';
 export type { ManifestVersionsListing } from './bindings/ManifestVersionsListing';
 export type { AuthoringPacksListing } from './bindings/AuthoringPacksListing';
 export type { ServerEntry } from './bindings/ServerEntry';

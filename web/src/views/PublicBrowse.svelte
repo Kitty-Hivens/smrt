@@ -3,11 +3,15 @@
   import { t } from '../lib/i18n.svelte';
   import { renderMarkdown } from '../lib/markdown';
   import ModIcon from './ModIcon.svelte';
-  import type { PackManifest, PackSummary } from '../lib/types';
+  import type { CommunityPack, PackManifest, PackSummary } from '../lib/types';
 
-  // Guest-facing, read-only. Everything here is the public launcher contract:
-  // /v1/packs and /v1/packs/:id/manifest -- no gated calls, no authoring.
+  // Guest-facing, read-only. Official packs are the launcher contract (/v1/packs);
+  // community packs (/v1/community) are site-only, browseable but not in the
+  // launcher's catalog. Detail reads /v1/packs/:id/manifest for both.
+  type Tab = 'official' | 'community';
+  let tab = $state<Tab>('official');
   let packs = $state<PackSummary[]>([]);
+  let community = $state<CommunityPack[]>([]);
   let loading = $state(true);
   let err = $state('');
 
@@ -19,7 +23,9 @@
     loading = true;
     err = '';
     try {
-      packs = (await api.packs()).packs;
+      const [p, c] = await Promise.all([api.packs(), api.community()]);
+      packs = p.packs;
+      community = c;
     } catch (e) {
       err = String(e);
     } finally {
@@ -27,6 +33,13 @@
     }
   }
   load();
+
+  // unified rows: official packs have no byline, community packs show `by <user>`
+  const items = $derived<{ summary: PackSummary; owner: string | null }[]>(
+    tab === 'official'
+      ? packs.map((p) => ({ summary: p, owner: null }))
+      : community.map((c) => ({ summary: c.summary, owner: c.owner_login })),
+  );
 
   async function open(p: PackSummary) {
     if (openId === p.pack_id) {
@@ -54,8 +67,15 @@
 <div class="view">
   {#if err}<div class="err mono">{err}</div>{/if}
 
+  <div class="tabs" role="tablist">
+    <button class="tb" class:active={tab === 'official'} onclick={() => (tab = 'official')}
+      >{t('browse.official')}</button>
+    <button class="tb" class:active={tab === 'community'} onclick={() => (tab = 'community')}
+      >{t('browse.community')}</button>
+  </div>
+
   <div class="panel plist">
-    {#each packs as p (p.pack_id)}
+    {#each items as { summary: p, owner } (p.pack_id)}
       <div class="pack" class:open={openId === p.pack_id}>
         <button class="prow" onclick={() => open(p)}>
           <span class="chev" aria-hidden="true">&#9656;</span>
@@ -68,6 +88,7 @@
             <div class="pname">
               {p.display_name}{#if p.featured}<span class="feat mono">{t('packs.flag.featured')}</span>{/if}
             </div>
+            {#if owner}<div class="pby faint mono">{t('browse.by', { user: owner })}</div>{/if}
             {#if p.tagline}<div class="ptag muted">{p.tagline}</div>{/if}
           </div>
           <div class="pmeta">
@@ -106,8 +127,10 @@
         {/if}
       </div>
     {/each}
-    {#if packs.length === 0 && !loading}
-      <div class="empty muted">{t('browse.empty')}</div>
+    {#if items.length === 0 && !loading}
+      <div class="empty muted">
+        {tab === 'community' ? t('browse.emptyCommunity') : t('browse.empty')}
+      </div>
     {/if}
   </div>
 </div>
@@ -126,8 +149,35 @@
     padding: var(--space-3) var(--space-4);
     font-size: 12px;
   }
+  .tabs {
+    display: inline-flex;
+    gap: 2px;
+    border: 1px solid var(--seam);
+    border-radius: var(--radius-sm);
+    padding: 2px;
+    align-self: flex-start;
+  }
+  .tb {
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--fg-dim);
+    font-size: 12px;
+    padding: 5px 14px;
+  }
+  .tb:hover {
+    color: var(--fg);
+  }
+  .tb.active {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+  }
   .plist {
     overflow: hidden;
+  }
+  .pby {
+    font-size: 11px;
+    margin-top: 2px;
   }
   .pack {
     border-bottom: 1px solid var(--seam);
