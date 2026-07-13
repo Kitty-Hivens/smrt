@@ -128,10 +128,6 @@
     padding: 5px 12px;
     font-size: 12px;
   }
-  .danger:hover {
-    border-color: var(--danger);
-    color: var(--danger);
-  }
   .empty {
     padding: var(--space-4);
     font-size: 12px;

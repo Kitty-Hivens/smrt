@@ -274,8 +274,4 @@
     padding: 3px 9px;
     font-size: 11px;
   }
-  button.danger:hover {
-    border-color: var(--danger);
-    color: var(--danger);
-  }
 </style>

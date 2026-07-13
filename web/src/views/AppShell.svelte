@@ -231,7 +231,7 @@
     bottom: 8px;
     width: 3px;
     border-radius: 3px;
-    background: var(--red);
+    background: var(--fg);
   }
   .spacer {
     flex: 1;

@@ -49,9 +49,10 @@
   --solid: #ffffff;
   --on-solid: #000000;
 
-  /* red still marks the active nav bar and hard alerts */
+  /* red is reserved for hard alerts only (takedown / removed markers); the
+     active nav marker uses white and danger buttons use --danger, so a red bar
+     never doubles as "you are here" */
   --red: #ff3b30;
-  --red-soft: rgba(255, 59, 48, 0.14);
 
   /* extended semantic palette on the dark field -- colour carries state
      (ok/built green, warn/repack amber, danger red, info/verified blue) */
@@ -189,11 +190,11 @@ button.primary:hover {
   opacity: 0.88;
 }
 button.danger {
-  color: var(--red);
+  color: var(--danger);
 }
 button.danger:hover {
-  border-color: color-mix(in srgb, var(--red) 45%, var(--seam-bright));
-  background: var(--red-soft);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--seam-bright));
+  background: var(--danger-soft);
 }
 
 input,
@@ -337,7 +338,12 @@ td {
 tr:last-child td {
   border-bottom: none;
 }
-tr:hover td {
+/* faint zebra so rows stay trackable on long lists; the hover tint is defined
+   after at equal specificity, so hover still wins */
+tbody tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.025);
+}
+tbody tr:hover td {
   background: var(--panel-2);
 }
 

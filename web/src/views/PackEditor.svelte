@@ -732,7 +732,7 @@
                       {/if}
                     </td>
                     <td class="ctr"><input type="checkbox" bind:checked={a.required} /></td>
-                    <td class="ctr"><button class="danger sm" onclick={() => removeAsset(i)}>x</button></td>
+                    <td class="ctr"><button class="danger sm" onclick={() => removeAsset(i)} aria-label={t('common.delete')}>x</button></td>
                   </tr>
                 {/each}
                 {#if (cfg.assets ?? []).length === 0}
@@ -928,10 +928,6 @@
   button.sm.active {
     border-color: var(--accent);
     color: var(--accent-strong);
-  }
-  button.danger:hover {
-    border-color: var(--danger);
-    color: var(--danger);
   }
 
   /* section spacing */

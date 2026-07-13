@@ -636,8 +636,4 @@
   .vis-unlisted {
     color: var(--accent);
   }
-  button.danger:hover {
-    border-color: var(--danger);
-    color: var(--danger);
-  }
 </style>
