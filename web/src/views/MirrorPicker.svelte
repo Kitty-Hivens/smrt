@@ -559,4 +559,24 @@
     font-size: 12px;
     flex-shrink: 0;
   }
+  @media (max-width: 560px) {
+    .picker {
+      padding: var(--space-3);
+    }
+    .ph {
+      flex-wrap: wrap;
+      row-gap: var(--space-2);
+    }
+    .filters {
+      flex-wrap: wrap;
+    }
+    .filters .grow {
+      flex: 1 1 100%;
+    }
+    .filters .sm {
+      width: auto;
+      flex: 1 1 calc(50% - var(--space-2));
+      min-width: 0;
+    }
+  }
 </style>

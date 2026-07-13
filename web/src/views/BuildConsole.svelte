@@ -74,4 +74,15 @@
     font-size: 12px;
     margin-bottom: 10px;
   }
+  @media (max-width: 560px) {
+    .bar {
+      flex-wrap: wrap;
+    }
+    .ver {
+      flex: 1 1 100%;
+    }
+    .ver input {
+      width: 100%;
+    }
+  }
 </style>

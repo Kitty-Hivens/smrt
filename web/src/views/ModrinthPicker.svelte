@@ -275,4 +275,9 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  @media (max-width: 560px) {
+    .picker {
+      padding: var(--space-3);
+    }
+  }
 </style>

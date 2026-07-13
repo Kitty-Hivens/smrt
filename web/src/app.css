@@ -34,7 +34,9 @@
   /* text */
   --fg: #ffffff;
   --fg-dim: #9a9a9e;
-  --fg-faint: #58585c;
+  /* lifted off #58585c: that failed WCAG on the black field (2.97:1). This
+     clears ~4:1 while still reading as the low-emphasis "faint" tier. */
+  --fg-faint: #6e6e73;
 
   /* no colour accent -- "accent" is contrast. Emphasis text/links are white,
      highlighted backgrounds are a faint white tint. */
@@ -69,6 +71,12 @@
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
+
+  /* breakpoints -- reference values for JS and human reference. CSS custom
+     properties do NOT resolve inside @media queries, so the media rules below
+     hardcode the same pixel values. md = tablet / narrow laptop, sm = phone. */
+  --bp-md: 768px;
+  --bp-sm: 560px;
 
   /* radius */
   --radius-sm: 8px;
@@ -315,7 +323,9 @@ th {
   font-size: 10.5px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--fg-faint);
+  /* column headers are the operator's scan anchors: use the dim tier (7.5:1),
+     not faint, so they clear WCAG AA at this small size */
+  color: var(--fg-dim);
   border-bottom: 1px solid var(--seam);
   padding: 11px 14px;
 }
@@ -329,6 +339,13 @@ tr:last-child td {
 }
 tr:hover td {
   background: var(--panel-2);
+}
+
+/* horizontal escape hatch for wide tables on narrow viewports: the table
+   scrolls inside its own box instead of pushing the whole page sideways.
+   Wrap any multi-column table in <div class="tablewrap"> to opt in. */
+.tablewrap {
+  overflow-x: auto;
 }
 
 .scroll {

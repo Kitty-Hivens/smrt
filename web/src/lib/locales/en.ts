@@ -16,6 +16,7 @@ export const en = {
   'shell.refresh': 'Refresh',
   'shell.health': 'v{version} / schema {schema}',
   'shell.locale': 'Language',
+  'shell.menu': 'Menu',
   'member.notOperator': 'Signed in as {login}. This panel is operator-only.',
 
   'login.subtitle': 'Mirror control panel. Sign in with GitHub to continue.',

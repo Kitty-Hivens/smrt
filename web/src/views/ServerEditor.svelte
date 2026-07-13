@@ -177,4 +177,9 @@
     color: var(--fg);
     grid-column: 1 / -1;
   }
+  @media (max-width: 560px) {
+    .grid {
+      grid-template-columns: 1fr;
+    }
+  }
 </style>

@@ -100,4 +100,9 @@
   .foot {
     margin-top: var(--space-4);
   }
+  @media (max-width: 560px) {
+    .picker {
+      padding: var(--space-3);
+    }
+  }
 </style>

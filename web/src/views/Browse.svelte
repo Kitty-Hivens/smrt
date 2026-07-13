@@ -251,6 +251,7 @@
           <button class="primary" onclick={newPack}>{t('packs.new')}</button>
         </div>
         <div class="panel">
+          <div class="tablewrap">
           <table>
             <thead>
               <tr>
@@ -314,6 +315,7 @@
               {/if}
             </tbody>
           </table>
+          </div>
         </div>
       {/if}
     {:else if route.section === 'servers'}
@@ -334,6 +336,7 @@
           <button class="primary" onclick={() => (serverEdit = 'new')}>{t('servers.new')}</button>
         </div>
         <div class="panel">
+          <div class="tablewrap">
           <table>
             <thead>
               <tr>
@@ -383,6 +386,7 @@
               {/if}
             </tbody>
           </table>
+          </div>
         </div>
       {/if}
     {:else if route.section === 'mods'}
@@ -477,7 +481,7 @@
     grid-template-columns: 1fr 1fr;
     gap: var(--space-4);
   }
-  @media (max-width: 760px) {
+  @media (max-width: 768px) {
     .cols {
       grid-template-columns: 1fr;
     }

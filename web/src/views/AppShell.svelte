@@ -22,6 +22,16 @@
 
   const isAdmin = $derived(me?.role === 'admin');
 
+  // Off-canvas rail on phones: the topbar burger toggles it; selecting a
+  // section, pressing Esc, or tapping the scrim closes it.
+  let drawerOpen = $state(false);
+  function closeDrawer() {
+    drawerOpen = false;
+  }
+  function onWindowKeydown(e: KeyboardEvent) {
+    if (drawerOpen && e.key === 'Escape') drawerOpen = false;
+  }
+
   let health = $state<Health | null>(null);
 
   $effect(() => {
@@ -52,8 +62,10 @@
   };
 </script>
 
+<svelte:window onkeydown={onWindowKeydown} />
+
 <div class="shell">
-  <nav class="rail">
+  <nav class="rail" class:open={drawerOpen} id="rail-nav">
     <div class="brand"><span class="mk"></span>smrt<span class="faint">/control</span></div>
 
     <ul class="nav">
@@ -63,7 +75,10 @@
             class="item"
             class:active={route.section === s}
             aria-current={route.section === s ? 'page' : undefined}
-            onclick={() => route.go(s)}
+            onclick={() => {
+              route.go(s);
+              closeDrawer();
+            }}
           >
             {t(navKey[s])}
           </button>
@@ -91,32 +106,45 @@
     </div>
   </nav>
 
+  <div class="scrim" class:show={drawerOpen} onclick={closeDrawer} role="presentation"></div>
+
   <div class="main">
     <header class="topbar">
+      <button
+        class="burger"
+        aria-label={t('shell.menu')}
+        aria-expanded={drawerOpen}
+        aria-controls="rail-nav"
+        onclick={() => (drawerOpen = !drawerOpen)}
+      >
+        <span class="bl" aria-hidden="true"></span>
+      </button>
       <div class="crumb"><span class="faint">smrt /</span> {t(navKey[route.section])}</div>
       <div class="spacer"></div>
-      {#if isAdmin}
-        <button
-          class="refresh"
-          class:busy={reload.busy}
-          onclick={() => reload.request()}
-          disabled={reload.busy}
-        >
-          <span class="rlabel">{t('shell.refresh')}</span>
-          <span class="spin" aria-hidden="true"></span>
-        </button>
-      {/if}
-      <div class="locale" role="group" aria-label={t('shell.locale')}>
-        {#each LOCALES as loc}
+      <div class="tools">
+        {#if isAdmin}
           <button
-            class="loc"
-            class:active={i18n.locale === loc}
-            aria-pressed={i18n.locale === loc}
-            onclick={() => i18n.set(loc)}
+            class="refresh"
+            class:busy={reload.busy}
+            onclick={() => reload.request()}
+            disabled={reload.busy}
           >
-            {loc.toUpperCase()}
+            <span class="rlabel">{t('shell.refresh')}</span>
+            <span class="spin" aria-hidden="true"></span>
           </button>
-        {/each}
+        {/if}
+        <div class="locale" role="group" aria-label={t('shell.locale')}>
+          {#each LOCALES as loc}
+            <button
+              class="loc"
+              class:active={i18n.locale === loc}
+              aria-pressed={i18n.locale === loc}
+              onclick={() => i18n.set(loc)}
+            >
+              {loc.toUpperCase()}
+            </button>
+          {/each}
+        </div>
       </div>
     </header>
 
@@ -257,8 +285,50 @@
   .topbar {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
     padding: var(--space-3) var(--space-5);
     border-bottom: 1px solid var(--seam);
+  }
+  /* hamburger: hidden until the drawer breakpoint (see @media below) */
+  .burger {
+    display: none;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 30px;
+    padding: 0;
+    margin-right: var(--space-3);
+  }
+  .burger .bl,
+  .burger .bl::before,
+  .burger .bl::after {
+    width: 16px;
+    height: 1.5px;
+    background: var(--fg);
+    border-radius: 2px;
+  }
+  .burger .bl {
+    position: relative;
+    display: block;
+  }
+  .burger .bl::before,
+  .burger .bl::after {
+    content: '';
+    position: absolute;
+    left: 0;
+  }
+  .burger .bl::before {
+    top: -5px;
+  }
+  .burger .bl::after {
+    top: 5px;
+  }
+  .tools {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
   }
   .crumb {
     font-family: var(--mono);
@@ -277,7 +347,6 @@
     letter-spacing: 0.06em;
     text-transform: uppercase;
     padding: 6px 12px;
-    margin-right: var(--space-3);
   }
   .refresh .spin {
     display: none;
@@ -335,5 +404,132 @@
     flex: 1;
     overflow: auto;
     padding: var(--space-5);
+  }
+
+  /* scrim base -- inert until the drawer breakpoint */
+  .scrim {
+    display: none;
+  }
+
+  /* strip mode -- tablet / narrow laptop (561-768px): the rail becomes a
+     horizontal top bar. Brand pinned left, foot pinned right, nav scrolls
+     between them. Nothing is dropped. */
+  @media (min-width: 561px) and (max-width: 768px) {
+    .shell {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+    .rail {
+      flex-direction: row;
+      align-items: center;
+      gap: var(--space-3);
+      padding: var(--space-2) var(--space-3);
+      border-right: none;
+      border-bottom: 1px solid var(--seam);
+    }
+    .brand {
+      flex: none;
+      padding: 0 var(--space-2);
+    }
+    .nav {
+      flex-direction: row;
+      flex: 1;
+      min-width: 0;
+      overflow-x: auto;
+      gap: var(--space-1);
+    }
+    .nav li {
+      flex: none;
+    }
+    .item {
+      width: auto;
+      white-space: nowrap;
+    }
+    .item.active::before {
+      top: auto;
+      bottom: 2px;
+      left: 8px;
+      right: 8px;
+      width: auto;
+      height: 3px;
+    }
+    .spacer {
+      display: none;
+    }
+    .foot {
+      flex-direction: row;
+      align-items: center;
+      flex: none;
+      padding: 0;
+      gap: var(--space-2);
+    }
+    .who,
+    .signout,
+    .signin {
+      width: auto;
+    }
+    .whotext {
+      max-width: 140px;
+    }
+  }
+
+  /* drawer mode -- phone (<=560px): the rail slides in from the left over a
+     scrim, toggled by the topbar burger. The full vertical rail is preserved. */
+  @media (max-width: 560px) {
+    .shell {
+      grid-template-columns: 1fr;
+      grid-template-rows: minmax(0, 1fr);
+    }
+    .rail {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 50;
+      width: min(280px, 82vw);
+      background: var(--panel);
+      overflow-y: auto;
+      transform: translateX(-100%);
+      transition: transform 0.22s ease;
+    }
+    .rail.open {
+      transform: translateX(0);
+      box-shadow: var(--shadow-pop);
+    }
+    .burger {
+      display: inline-flex;
+    }
+    .scrim {
+      display: block;
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      background: rgba(0, 0, 0, 0.6);
+      opacity: 0;
+      visibility: hidden;
+      transition:
+        opacity 0.2s ease,
+        visibility 0.2s ease;
+    }
+    .scrim.show {
+      opacity: 1;
+      visibility: visible;
+    }
+    .topbar {
+      padding: var(--space-3) var(--space-4);
+    }
+    .tools {
+      flex-basis: 100%;
+    }
+    .content {
+      padding: var(--space-3);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .rail,
+    .scrim {
+      transition: none;
+    }
   }
 </style>
