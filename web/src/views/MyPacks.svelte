@@ -65,25 +65,13 @@
     }
   }
 
-  async function delPack(id: string) {
-    const ok = await dialogs.confirm(t('packs.deleteMsg', { id: nameOf(id) }), {
-      title: t('packs.deleteTitle'),
-      danger: true,
-    });
-    if (!ok) return;
-    try {
-      await api.deletePack(id);
-      await load();
-    } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
-    }
-  }
 </script>
 
 {#if packEdit !== null}
   {#key packEdit}
     <PackEditor
       packId={packEdit}
+      {me}
       onClose={() => {
         packEdit = null;
         load();
@@ -130,12 +118,6 @@
           {:else}
             <span class="tag">{t('packs.unbuilt')}</span>
           {/if}
-          <button
-            class="del"
-            onclick={(e) => {
-              e.stopPropagation();
-              delPack(id);
-            }}>{t('common.delete')}</button>
         </div>
       {/each}
       {#if allIds.length === 0 && !loading}
@@ -227,15 +209,6 @@
     flex-shrink: 0;
     padding: 4px 10px;
     font-size: 11px;
-  }
-  .del {
-    flex-shrink: 0;
-    padding: 4px 10px;
-    font-size: 11px;
-  }
-  .del:hover {
-    border-color: var(--danger);
-    color: var(--danger);
   }
   .empty {
     padding: var(--space-4);

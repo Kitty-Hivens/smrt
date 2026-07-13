@@ -10,6 +10,8 @@
   import ModManager from './ModManager.svelte';
   import UsersView from './UsersView.svelte';
 
+  let { me }: { me: { login: string } } = $props();
+
   // the active section comes from the shared route store; the shell rail drives it
 
   // server create/edit: 'new' = creating, ServerEntry = editing, null = closed
@@ -95,21 +97,6 @@
     unlisted: 'packs.vis.unlisted',
     published: 'packs.vis.published',
   } as const;
-
-  async function delPack(id: string) {
-    const ok = await dialogs.confirm(t('packs.deleteMsg', { id }), {
-      title: t('packs.deleteTitle'),
-      danger: true,
-    });
-    if (!ok) return;
-    try {
-      await api.deletePack(id);
-      if (packEdit === id) packEdit = null;
-      await loadAll();
-    } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
-    }
-  }
 
   const authoringSet = $derived(new Set(authoring));
   const allPackIds = $derived(
@@ -251,6 +238,7 @@
         {#key packEdit}
           <PackEditor
             packId={packEdit}
+            {me}
             onClose={() => {
               packEdit = null;
               loadAll();
@@ -317,12 +305,6 @@
                           togglePublish(p);
                         }}>{p.visibility === 'published' ? t('packs.unpublish') : t('packs.publish')}</button>
                     {/if}
-                    <button
-                      class="danger"
-                      onclick={(e) => {
-                        e.stopPropagation();
-                        delPack(id);
-                      }}>{t('common.delete')}</button>
                   </td>
                 </tr>
               {/each}

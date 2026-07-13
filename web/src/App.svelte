@@ -41,7 +41,7 @@
     {:else if route.section === 'mypacks' && me}
       <MyPacks {me} />
     {:else if me?.role === 'admin' && route.section !== 'browse'}
-      <Browse />
+      <Browse {me} />
     {:else}
       <PublicBrowse />
     {/if}

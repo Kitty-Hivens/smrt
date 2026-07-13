@@ -23,7 +23,31 @@
   import Field from './ui/Field.svelte';
   import Section from './ui/Section.svelte';
 
-  let { packId, onClose }: { packId: string; onClose: () => void } = $props();
+  let {
+    packId,
+    onClose,
+    me,
+  }: { packId: string; onClose: () => void; me: { login: string } } = $props();
+
+  // GitHub-style danger delete: type "<login>/<pack>" in a modal to confirm.
+  async function deletePack() {
+    const expected = `${me.login}/${packId.split('/').pop()}`;
+    const typed = await dialogs.prompt(t('packs.deleteConfirm', { id: expected }), {
+      title: t('packs.deleteTitle'),
+      placeholder: expected,
+    });
+    if (typed == null) return;
+    if (typed.trim() !== expected) {
+      err = t('packs.deleteMismatch');
+      return;
+    }
+    try {
+      await api.deletePack(packId);
+      onClose();
+    } catch (e) {
+      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+    }
+  }
 
   type Tab = 'config' | 'branding' | 'build';
   let tab = $state<Tab>('config');
@@ -735,6 +759,15 @@
       {/if}
     {:else if tab === 'branding'}
       <BrandingEditor {packId} />
+      {#if cfg}
+        <div class="dzone">
+          <div class="dztitle mono">{t('pe.dangerZone')}</div>
+          <div class="dzrow">
+            <span class="dztext muted">{t('pe.deleteExplain')}</span>
+            <button class="danger" onclick={deletePack}>{t('common.delete')}</button>
+          </div>
+        </div>
+      {/if}
     {:else if tab === 'build'}
       <BuildConsole {packId} />
     {/if}
@@ -1007,5 +1040,31 @@
     max-height: calc(100vh - 96px);
     overflow: auto;
     min-width: 0;
+  }
+  .dzone {
+    margin-top: var(--space-6);
+    border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--seam));
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+  .dztitle {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--danger);
+    padding: var(--space-3) var(--space-4);
+    background: var(--danger-soft);
+    border-bottom: 1px solid color-mix(in srgb, var(--danger) 30%, var(--seam));
+  }
+  .dzrow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-4);
+  }
+  .dztext {
+    flex: 1;
+    font-size: 12px;
   }
 </style>

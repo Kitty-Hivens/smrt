@@ -59,7 +59,8 @@ export const en = {
   'packs.publish': 'Publish',
   'packs.unpublish': 'Unpublish',
   'packs.deleteTitle': 'Delete pack',
-  'packs.deleteMsg': 'Delete pack "{id}" and all its files? This cannot be undone.',
+  'packs.deleteConfirm': 'Type {id} to permanently delete this pack and all its files.',
+  'packs.deleteMismatch': "That didn't match -- nothing was deleted.",
   'packs.empty': 'No packs yet. Create one or bootstrap from an SC archive.',
 
   'overview.packs': 'Packs',
@@ -90,6 +91,8 @@ export const en = {
   'pe.tab.config': 'Config',
   'pe.tab.branding': 'Branding',
   'pe.tab.build': 'Build',
+  'pe.dangerZone': 'Danger zone',
+  'pe.deleteExplain': 'Delete this pack and all its files. This cannot be undone.',
   'pe.saving': 'Saving...',
   'pe.saved': 'Saved',
   'pe.saveError': 'Save failed',

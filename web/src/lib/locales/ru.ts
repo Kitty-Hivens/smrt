@@ -58,7 +58,8 @@ export const ru: Dict = {
   'packs.publish': 'Опубликовать',
   'packs.unpublish': 'Снять',
   'packs.deleteTitle': 'Удалить пак',
-  'packs.deleteMsg': 'Удалить пак «{id}» со всеми файлами? Отменить нельзя.',
+  'packs.deleteConfirm': 'Введи {id}, чтобы навсегда удалить пак со всеми файлами.',
+  'packs.deleteMismatch': 'Не совпало — ничего не удалено.',
   'packs.empty': 'Паков пока нет. Создай или загрузи из SC-архива.',
 
   'overview.packs': 'Паки',
@@ -89,6 +90,8 @@ export const ru: Dict = {
   'pe.tab.config': 'Конфиг',
   'pe.tab.branding': 'Оформление',
   'pe.tab.build': 'Сборка',
+  'pe.dangerZone': 'Опасная зона',
+  'pe.deleteExplain': 'Удалить пак и все его файлы. Отменить нельзя.',
   'pe.saving': 'Сохранение...',
   'pe.saved': 'Сохранено',
   'pe.saveError': 'Ошибка сохранения',
