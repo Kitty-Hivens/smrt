@@ -238,9 +238,25 @@ pub async fn require_auth(
     let Some(identity) = resolve_identity(&state, req.headers()).await else {
         return Err(ApiError::Unauthorized);
     };
-    if identity.role != Role::Admin {
+    if identity.role < Role::Admin {
         return Err(ApiError::Forbidden);
     }
+    req.extensions_mut().insert(identity);
+    Ok(next.run(req).await)
+}
+
+/// Guard a member-accessible endpoint: require any authenticated identity
+/// (member and up) and attach it, without requiring the admin role. Own-resource
+/// authorization (e.g. pack ownership via [`Identity::owns_or_admin`]) is the
+/// handler's job.
+pub async fn require_session(
+    State(state): State<AppState>,
+    mut req: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let Some(identity) = resolve_identity(&state, req.headers()).await else {
+        return Err(ApiError::Unauthorized);
+    };
     req.extensions_mut().insert(identity);
     Ok(next.run(req).await)
 }

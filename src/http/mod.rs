@@ -7,6 +7,7 @@ pub mod admin;
 pub mod auth;
 pub mod error;
 pub mod jobs;
+pub mod member;
 pub mod panel;
 pub mod public;
 pub mod registry;
@@ -22,6 +23,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(public::router(state.clone()))
         .merge(admin::router(state.clone()))
+        .merge(member::router(state.clone()))
         .merge(registry::router(state.clone()))
         .merge(auth::router(state.clone()))
         .merge(jobs::router(state.clone()))

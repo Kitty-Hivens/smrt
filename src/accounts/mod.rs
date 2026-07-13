@@ -20,9 +20,12 @@ const SESSION_TTL: Duration = Duration::from_secs(86_400);
 /// keep uid 0 unassignable so it can't collide with a real GitHub account.
 const BREAK_GLASS_UID: i64 = 0;
 
-/// The panel's authorization tiers. `member` is the default on sign-in; `admin`
-/// comes from the operator allowlist (and, later, DB-side grants).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// The panel's authorization tiers, ordered low -> high: **declaration order is
+/// the rank** (`Member < Admin`), so `role >= Role::Admin` is the admin gate and
+/// the future `Debug` rung -- a role ABOVE admin (#39), not a flag -- slots on
+/// top for free by being declared after `Admin`. `member` is the default on
+/// sign-in; `admin` comes from the operator allowlist.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Role {
     Member,
     Admin,
@@ -52,6 +55,15 @@ pub struct Identity {
     pub uid: i64,
     pub login: String,
     pub role: Role,
+}
+
+impl Identity {
+    /// May this caller manage a resource owned by `owner_uid`? True for the owner
+    /// themselves or for any admin-and-up role. The ownership gate for member-
+    /// authored packs.
+    pub fn owns_or_admin(&self, owner_uid: i64) -> bool {
+        self.uid == owner_uid || self.role >= Role::Admin
+    }
 }
 
 /// A registered user, for the operator's user-management view.
