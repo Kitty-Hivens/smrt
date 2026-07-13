@@ -70,10 +70,18 @@ async function clickByText(page, selector, text) {
 // on resize client-side, so no reload is needed -- capture whatever is on screen
 // (a list, the editor, or an open modal) as it reflows. deviceScaleFactor 1 keeps
 // the sweep's file count cheap; the single-viewport shots stay at 2.
-async function sweep(page, name, height = 900) {
+async function sweep(page, name, opts = {}) {
+  const { height = 900, scrollTo = null } = opts;
   for (const w of BP_WIDTHS) {
     await page.setViewport({ width: w, height, deviceScaleFactor: 1 });
     await sleep(300);
+    if (scrollTo) {
+      // bring a below-the-fold element into view before the shot
+      await page.evaluate((sel) => {
+        document.querySelector(sel)?.scrollIntoView({ block: 'center' });
+      }, scrollTo);
+      await sleep(150);
+    }
     await page.screenshot({ path: `${OUT}/bp-${name}-${w}.png` });
   }
 }
@@ -214,6 +222,8 @@ try {
       await sleep(700);
       await page.screenshot({ path: `${OUT}/smrt-pack-config.png` });
       await sweep(page, 'pack-config');
+      // the mod row sits below the fold; scroll it into view at each width
+      await sweep(page, 'modrow', { scrollTo: '.modrow' });
 
       // mirror picker modal: its filter row wraps on phones. Opens from the mods
       // section of the editor we are already in; best-effort.
