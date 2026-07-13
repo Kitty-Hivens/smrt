@@ -261,6 +261,25 @@ pub async fn require_session(
     Ok(next.run(req).await)
 }
 
+/// The uid a pack id's namespace belongs to: `Some(uid)` for a community id
+/// (`u/<uid>/<pack>`), `None` for an official (flat) id. The owner is encoded in
+/// the id, so ownership needs no store lookup.
+pub(crate) fn pack_namespace_uid(pack_id: &str) -> Option<i64> {
+    pack_id
+        .strip_prefix("u/")
+        .and_then(|r| r.split_once('/'))
+        .and_then(|(uid, _)| uid.parse::<i64>().ok())
+}
+
+/// May this caller author the pack at `pack_id`? A community pack is authored by
+/// its namespace owner or any admin; an official (flat) pack is admin-only.
+pub(crate) fn may_author(identity: &Identity, pack_id: &str) -> bool {
+    match pack_namespace_uid(pack_id) {
+        Some(uid) => identity.owns_or_admin(uid),
+        None => identity.role >= Role::Admin,
+    }
+}
+
 /// Resolve who is calling: a valid bearer admin token (break-glass) yields the
 /// break-glass admin identity; otherwise the session cookie is looked up in the
 /// accounts store. `None` means not authenticated.
@@ -371,6 +390,40 @@ pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn may_author_gates_by_namespace() {
+        let member = Identity {
+            uid: 7,
+            login: "m".into(),
+            role: Role::Member,
+        };
+        let other = Identity {
+            uid: 9,
+            login: "o".into(),
+            role: Role::Member,
+        };
+        let admin = Identity {
+            uid: 1,
+            login: "a".into(),
+            role: Role::Admin,
+        };
+
+        // a member authors only their own community namespace
+        assert!(may_author(&member, "u/7/MyPack"));
+        assert!(!may_author(&member, "u/9/TheirPack"));
+        assert!(!may_author(&other, "u/7/MyPack"));
+        // and never an official (flat) pack
+        assert!(!may_author(&member, "Industrial"));
+        // admin authors anything
+        assert!(may_author(&admin, "u/7/MyPack"));
+        assert!(may_author(&admin, "Industrial"));
+
+        // namespace parsing: only a numeric uid segment is a community namespace
+        assert_eq!(pack_namespace_uid("u/7/MyPack"), Some(7));
+        assert_eq!(pack_namespace_uid("Industrial"), None);
+        assert_eq!(pack_namespace_uid("u/abc/x"), None);
+    }
 
     #[test]
     fn constant_time_eq_matches_and_rejects() {

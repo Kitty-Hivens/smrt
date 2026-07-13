@@ -3,10 +3,12 @@
 //! `crate::jobs`; these handlers are the thin HTTP surface.
 
 use super::ApiError;
+use crate::accounts::Identity;
 use crate::authoring::BootstrapArgs;
 use crate::domain::LoaderSpec;
 use crate::jobs::{DryRun, Status};
 use crate::state::AppState;
+use axum::Extension;
 use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
@@ -20,14 +22,33 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 pub fn router(state: AppState) -> Router {
+    build_router(state.clone()).merge(bootstrap_router(state))
+}
+
+/// Build + job polling: any signed-in member may reach it, but `build_pack`
+/// gates on pack ownership so a member builds only their own community pack.
+/// Job status/events poll by an unguessable job id, so they need only a session.
+fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/v1/authoring/packs/:pack_id/build", post(build_pack))
+        .route("/v1/jobs/:job_id", get(job_status))
+        .route("/v1/jobs/:job_id/events", get(job_events))
+        .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
+        .layer(from_fn_with_state(
+            state.clone(),
+            super::auth::require_session,
+        ))
+        .with_state(state)
+}
+
+/// Bootstrap-from-archive seeds an official pack from an SC export -- operator
+/// content authoring, admin only.
+fn bootstrap_router(state: AppState) -> Router {
+    Router::new()
         .route(
             "/v1/authoring/packs/:pack_id/bootstrap",
             post(bootstrap_pack),
         )
-        .route("/v1/jobs/:job_id", get(job_status))
-        .route("/v1/jobs/:job_id/events", get(job_events))
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
         .with_state(state)
@@ -52,9 +73,13 @@ struct BuildParams {
 
 async fn build_pack(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
     Query(p): Query<BuildParams>,
-) -> Json<JobRef> {
+) -> Result<Json<JobRef>, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
     let pack_version = p.pack_version.filter(|v| !v.trim().is_empty());
     let job = state.jobs.spawn_build(
         pack_id,
@@ -64,11 +89,11 @@ async fn build_pack(
         pack_version,
         Some(state.harvest.clone()),
     );
-    Json(JobRef {
+    Ok(Json(JobRef {
         job_id: job.id.clone(),
         kind: job.kind,
         pack_id: job.pack_id.clone(),
-    })
+    }))
 }
 
 #[derive(Deserialize)]

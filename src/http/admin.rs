@@ -20,6 +20,12 @@ use std::collections::HashMap;
 const ADMIN_BODY_LIMIT: usize = 256 * 1024 * 1024;
 
 pub fn router(state: AppState) -> Router {
+    operator_router(state.clone()).merge(authoring_router(state))
+}
+
+/// Operator-only surface: the official catalog, servers, cache management, and
+/// user administration. Requires the admin role (and up).
+fn operator_router(state: AppState) -> Router {
     Router::new()
         .route("/v1/servers", post(save_server))
         .route("/v1/servers/:server_id", delete(delete_server))
@@ -28,13 +34,30 @@ pub fn router(state: AppState) -> Router {
             put(put_cache_jar).delete(delete_cache_jar),
         )
         .route("/v1/cache/icon/:sha1", get(get_cache_icon))
+        .route("/v1/authoring/packs", get(list_authoring_packs))
+        .route("/v1/authoring/summaries", get(list_all_pack_summaries))
+        .route("/v1/featured", post(save_featured))
+        .route("/v1/cache/removed", get(list_removed))
+        .route("/v1/cache/usage", get(list_cache_usage))
+        .route("/v1/cache/github", post(ingest_github))
+        .route("/v1/users", get(list_users))
+        .route("/v1/users/:uid/role", post(set_user_role))
+        .layer(DefaultBodyLimit::max(ADMIN_BODY_LIMIT))
+        .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
+        .with_state(state)
+}
+
+/// Pack-authoring surface: any signed-in member may reach it, but every
+/// pack-scoped handler gates on `may_author` -- a member touches only their own
+/// community packs, officials stay admin-only. The Modrinth proxy needs just a
+/// session (no pack, no ownership).
+fn authoring_router(state: AppState) -> Router {
+    Router::new()
         .route(
             "/v1/authoring/packs/:pack_id/static/*rel_path",
             put(put_pack_static).delete(delete_pack_static),
         )
         .route("/v1/authoring/packs/:pack_id/static", get(list_pack_static))
-        .route("/v1/authoring/packs", get(list_authoring_packs))
-        .route("/v1/authoring/summaries", get(list_all_pack_summaries))
         .route(
             "/v1/authoring/packs/:pack_id/config",
             get(get_pack_config).put(put_pack_config),
@@ -51,18 +74,15 @@ pub fn router(state: AppState) -> Router {
             "/v1/authoring/packs/:pack_id/duplicate",
             post(duplicate_pack),
         )
-        .route("/v1/featured", post(save_featured))
         .route("/v1/authoring/packs/:pack_id/validate", post(validate_pack))
-        .route("/v1/cache/removed", get(list_removed))
-        .route("/v1/cache/usage", get(list_cache_usage))
-        .route("/v1/cache/github", post(ingest_github))
         .route("/v1/modrinth/search", get(modrinth_search))
         .route("/v1/modrinth/versions", get(modrinth_versions))
         .route("/v1/modrinth/icon", get(modrinth_icon))
-        .route("/v1/users", get(list_users))
-        .route("/v1/users/:uid/role", post(set_user_role))
         .layer(DefaultBodyLimit::max(ADMIN_BODY_LIMIT))
-        .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
+        .layer(from_fn_with_state(
+            state.clone(),
+            super::auth::require_session,
+        ))
         .with_state(state)
 }
 
@@ -186,9 +206,13 @@ async fn get_cache_icon(
 
 async fn put_pack_static(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path((pack_id, rel_path)): Path<(String, String)>,
     body: Bytes,
 ) -> Result<(StatusCode, Json<PutStaticResponse>), ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
     state
         .storage
         .save_pack_static(&pack_id, &rel_path, &body)
@@ -206,8 +230,12 @@ async fn put_pack_static(
 
 async fn delete_pack_static(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path((pack_id, rel_path)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
     state
         .storage
         .delete_pack_static(&pack_id, &rel_path)
@@ -217,8 +245,12 @@ async fn delete_pack_static(
 
 async fn list_pack_static(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
 ) -> Result<Json<StaticListing>, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
     let files = state.storage.list_pack_static(&pack_id).await?;
     Ok(Json(StaticListing {
         schema_version: SCHEMA_VERSION,
@@ -314,9 +346,13 @@ async fn modrinth_icon(
 // filename. spawn_blocking: unzipping a large archive must not stall the runtime.
 async fn validate_pack(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
     body: Bytes,
 ) -> Result<Json<ValidateReport>, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
     let cfg = state.storage.load_pack_config(&pack_id).await?;
     let report = tokio::task::spawn_blocking(move || validate(&cfg, &body))
         .await
@@ -525,8 +561,12 @@ async fn list_authoring_packs(
 
 async fn get_pack_config(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
 ) -> Result<Json<PackConfig>, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
     Ok(Json(state.storage.load_pack_config(&pack_id).await?))
 }
 
@@ -544,10 +584,14 @@ async fn put_pack_config(
             cfg.pack_id, pack_id
         )));
     }
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
     // owner / tier / visibility / fork_of are server-controlled and never trusted
     // from the client. On an edit, carry them from the stored config so a member
-    // can't reassign ownership, self-promote to official, or publish; on create,
-    // the caller owns the pack and it starts as an official published pack.
+    // can't reassign ownership, self-promote to official, or publish. On create,
+    // derive them from the id's namespace: a community id (u/<uid>/...) is a draft
+    // owned by that uid; a flat id is an official published operator pack.
     match state.storage.load_pack_config(&pack_id).await {
         Ok(existing) => {
             cfg.owner = existing.owner;
@@ -555,12 +599,20 @@ async fn put_pack_config(
             cfg.visibility = existing.visibility;
             cfg.fork_of = existing.fork_of;
         }
-        Err(_) => {
-            cfg.owner = identity.uid;
-            cfg.tier = PackTier::Official;
-            cfg.visibility = Visibility::Published;
-            cfg.fork_of = None;
-        }
+        Err(_) => match super::auth::pack_namespace_uid(&pack_id) {
+            Some(uid) => {
+                cfg.owner = uid;
+                cfg.tier = PackTier::Community;
+                cfg.visibility = Visibility::Draft;
+                cfg.fork_of = None;
+            }
+            None => {
+                cfg.owner = identity.uid;
+                cfg.tier = PackTier::Official;
+                cfg.visibility = Visibility::Published;
+                cfg.fork_of = None;
+            }
+        },
     }
     state.storage.save_pack_config(&pack_id, &cfg).await?;
     Ok((StatusCode::CREATED, Json(cfg)))
@@ -577,9 +629,13 @@ struct RevertParams {
 // editor can swap to it without a reload.
 async fn revert_pack_config(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
     Query(p): Query<RevertParams>,
 ) -> Result<Json<PackConfig>, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
     let manifest = state
         .storage
         .load_manifest_version(&pack_id, &p.version)
@@ -610,9 +666,18 @@ async fn duplicate_pack(
     Path(pack_id): Path<String>,
     Json(req): Json<DuplicatePackReq>,
 ) -> Result<(StatusCode, Json<PackConfig>), ApiError> {
+    // must own (or admin) both the source pack and the target namespace
+    if !super::auth::may_author(&identity, &pack_id)
+        || !super::auth::may_author(&identity, &req.target_id)
+    {
+        return Err(ApiError::Forbidden);
+    }
+    // the clone is owned by the target's namespace (a member's own uid), or by
+    // the caller for an official (flat) target
+    let owner = super::auth::pack_namespace_uid(&req.target_id).unwrap_or(identity.uid);
     let cfg = state
         .storage
-        .duplicate_pack(&pack_id, &req.target_id, req.loader, identity.uid)
+        .duplicate_pack(&pack_id, &req.target_id, req.loader, owner)
         .await?;
     Ok((StatusCode::CREATED, Json(cfg)))
 }
@@ -634,9 +699,13 @@ struct VisibilityReq {
 /// immediately (see `Storage::set_pack_visibility`).
 async fn set_pack_visibility(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
     Json(req): Json<VisibilityReq>,
 ) -> Result<StatusCode, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
     state
         .storage
         .set_pack_visibility(&pack_id, req.visibility)
