@@ -52,10 +52,6 @@ pub fn router(state: AppState) -> Router {
             get(get_mod_uses),
         )
         // authored moderation (Phase 2)
-        .route(
-            "/v1/registry/packs/:pack_id/provenance",
-            put(put_provenance),
-        )
         .route("/v1/registry/conflicts", post(post_conflict))
         .route("/v1/registry/backup", post(post_backup))
         // authored identity door: jars needing identity, and setting it
@@ -268,28 +264,6 @@ async fn get_mod_uses(
 }
 
 // ── authored moderation (Phase 2) ────────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct ProvenanceBody {
-    provenance: String,
-}
-
-async fn put_provenance(
-    State(state): State<AppState>,
-    Path(pack_id): Path<String>,
-    Json(body): Json<ProvenanceBody>,
-) -> Result<StatusCode, ApiError> {
-    if body.provenance != "sc" && body.provenance != "hivens" {
-        return Err(ApiError::BadRequest(
-            "provenance must be 'sc' or 'hivens'".into(),
-        ));
-    }
-    run_write(&state, move |reg| {
-        reg.set_provenance(&pack_id, &body.provenance)
-    })
-    .await?;
-    Ok(StatusCode::NO_CONTENT)
-}
 
 #[derive(Deserialize)]
 struct ConflictBody {

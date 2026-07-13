@@ -90,11 +90,8 @@ CREATE INDEX idx_mvt_target ON mod_version_target(target);
 -- string (open taxonomy), advisory against the loader table.
 CREATE TABLE pack (
   id         TEXT PRIMARY KEY,
-  provenance TEXT NOT NULL DEFAULT 'hivens',
-  source     TEXT NOT NULL DEFAULT 'harvested',
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  CHECK (provenance IN ('sc','hivens'))
+  updated_at TEXT NOT NULL
 );
 
 CREATE TABLE pack_build (

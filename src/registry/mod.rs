@@ -112,7 +112,7 @@ mod tests {
                 NOW,
             )?;
             // a pack build shipping appleskin + jei + tweak
-            upsert::upsert_pack(c, "Industrial", "sc", NOW)?;
+            upsert::upsert_pack(c, "Industrial", NOW)?;
             let build = upsert::upsert_pack_build(
                 c,
                 "Industrial",

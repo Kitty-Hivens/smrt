@@ -2,7 +2,7 @@
 //! connection sits behind a `std::sync::Mutex` and every caller runs its closure
 //! inside `tokio::task::spawn_blocking` (same idiom as the unzip/build paths).
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
@@ -68,17 +68,6 @@ impl Registry {
     }
 
     // ── authored moderation API (the precious layer; CLI + admin HTTP) ──────
-
-    /// Set a pack's provenance as an operator decision (`source='authored'`,
-    /// preserved across re-harvests). Blocking; wrap in `spawn_blocking` from
-    /// async callers.
-    pub fn set_provenance(&self, pack_id: &str, provenance: &str) -> Result<()> {
-        if provenance != "sc" && provenance != "hivens" {
-            bail!("provenance must be 'sc' or 'hivens'");
-        }
-        let now = upsert::now_rfc3339();
-        self.with_txn(|c| authored::set_pack_provenance(c, pack_id, provenance, &now))
-    }
 
     /// Add or remove a mutual authored conflict between two mods (by modid).
     /// Both mods must already be in the registry (harvest first).

@@ -165,15 +165,6 @@ enum RegistryCmd {
         #[arg(long, default_value = "/var/lib/smrt")]
         storage: PathBuf,
     },
-    /// Mark a pack's provenance (sc | hivens) as an operator decision.
-    Provenance {
-        #[arg(long, default_value = "/var/lib/smrt")]
-        storage: PathBuf,
-        #[arg(long)]
-        pack: String,
-        #[arg(long = "as", value_parser = ["sc", "hivens"])]
-        provenance: String,
-    },
     /// Add (or --remove) a mutual authored conflict between two mods, by modid.
     Conflict {
         #[arg(long, default_value = "/var/lib/smrt")]
@@ -278,11 +269,6 @@ async fn main() -> Result<()> {
             RegistryCmd::Harvest { storage } => run_registry_harvest(&storage).await,
             RegistryCmd::Stats { storage } => run_registry_stats(&storage),
             RegistryCmd::Orphans { storage } => run_registry_orphans(&storage),
-            RegistryCmd::Provenance {
-                storage,
-                pack,
-                provenance,
-            } => run_registry_provenance(&storage, &pack, &provenance),
             RegistryCmd::Conflict {
                 storage,
                 a,
@@ -333,13 +319,6 @@ fn run_registry_orphans(storage: &Path) -> Result<()> {
         );
     }
     println!("{} orphan(s)", orphans.len());
-    Ok(())
-}
-
-fn run_registry_provenance(storage: &Path, pack: &str, provenance: &str) -> Result<()> {
-    let registry = Registry::open(storage.join("registry.db"))?;
-    registry.set_provenance(pack, provenance)?;
-    info!(pack, provenance, "set pack provenance");
     Ok(())
 }
 

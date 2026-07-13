@@ -14,30 +14,6 @@ fn valid_channel(ch: &str) -> bool {
     CHANNELS.contains(&ch)
 }
 
-/// Mark a pack's provenance as an operator decision. Creates the pack row if it
-/// doesn't exist yet (an unbuilt pack), and stamps `source='authored'` so a
-/// re-harvest's `upsert_pack` won't revert it.
-pub fn set_pack_provenance(
-    conn: &Connection,
-    pack_id: &str,
-    provenance: &str,
-    now: &str,
-) -> Result<()> {
-    if provenance != "sc" && provenance != "hivens" {
-        bail!("provenance must be 'sc' or 'hivens', got {provenance:?}");
-    }
-    conn.execute(
-        "INSERT INTO pack (id, provenance, source, created_at, updated_at)
-         VALUES (?1, ?2, 'authored', ?3, ?3)
-         ON CONFLICT(id) DO UPDATE SET
-           provenance = excluded.provenance,
-           source = 'authored',
-           updated_at = excluded.updated_at",
-        params![pack_id, provenance, now],
-    )?;
-    Ok(())
-}
-
 /// Record an operator-asserted relation. De-duped against an identical authored
 /// row by the unique index; coexists with rows of other sources (precedence
 /// resolves later).
@@ -320,27 +296,18 @@ mod tests {
             upsert::upsert_mod_version(c, a, "1", &["forge"], "sha_a", 1, None, None, "T0")?;
             let b = upsert::upsert_mod_by_alias(c, &[("modid", "bmod")], "T0")?;
             upsert::upsert_mod_version(c, b, "1", &["forge"], "sha_b", 1, None, None, "T0")?;
-            upsert::upsert_pack(c, "P", "hivens", "T0")?;
+            upsert::upsert_pack(c, "P", "T0")?;
             Ok(())
         })
         .unwrap();
 
-        // operator moderation: provenance + a conflict metadata never declared
-        r.set_provenance("P", "sc").unwrap();
+        // operator moderation: an authored conflict never declared upstream
         r.set_conflict("amod", "bmod", false).unwrap();
 
-        // a re-harvest (source='harvested') must not revert either
-        r.with_txn(|c| upsert::upsert_pack(c, "P", "hivens", "T2"))
-            .unwrap();
+        // a re-harvest (source='harvested') must not revert it
+        r.with_txn(|c| upsert::upsert_pack(c, "P", "T2")).unwrap();
 
         r.with_conn(|c| {
-            let (prov, src): (String, String) = c.query_row(
-                "SELECT provenance, source FROM pack WHERE id = 'P'",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )?;
-            assert_eq!(prov, "sc");
-            assert_eq!(src, "authored");
             let conflicts: i64 = c.query_row(
                 "SELECT count(*) FROM relation WHERE kind='conflicts' AND source='authored'",
                 [],

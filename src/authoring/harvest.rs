@@ -52,7 +52,6 @@ pub struct BuildModSeed {
 
 pub struct PackSeed {
     pub pack_id: String,
-    pub provenance: String,
     pub pack_version: String,
     pub mc_version: String,
     pub loader_id: Option<String>,
@@ -185,7 +184,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
     }
 
     for pack in &scan.packs {
-        upsert::upsert_pack(conn, &pack.pack_id, &pack.provenance, now)?;
+        upsert::upsert_pack(conn, &pack.pack_id, now)?;
         let build = upsert::upsert_pack_build(
             conn,
             &pack.pack_id,
@@ -327,7 +326,6 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
         }
         packs.push(PackSeed {
             pack_id: pid,
-            provenance: "hivens".into(), // Phase 1 default; operator sets it in Phase 2
             pack_version: manifest.pack_version.clone(),
             mc_version: manifest.minecraft.version.clone(),
             loader_id: Some(manifest.loader.name.clone()),
@@ -530,7 +528,6 @@ mod tests {
             ],
             packs: vec![PackSeed {
                 pack_id: "Industrial".into(),
-                provenance: "sc".into(),
                 pack_version: "2026.06.06".into(),
                 mc_version: "1.12.2".into(),
                 loader_id: Some("forge".into()),

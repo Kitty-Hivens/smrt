@@ -304,14 +304,12 @@ pub fn upsert_relation(
     Ok(())
 }
 
-pub fn upsert_pack(conn: &Connection, pack_id: &str, provenance: &str, now: &str) -> Result<()> {
+pub fn upsert_pack(conn: &Connection, pack_id: &str, now: &str) -> Result<()> {
     conn.execute(
-        "INSERT INTO pack (id, provenance, source, created_at, updated_at)
-         VALUES (?1, ?2, 'harvested', ?3, ?3)
-         ON CONFLICT(id) DO UPDATE SET
-           provenance = excluded.provenance, updated_at = excluded.updated_at
-         WHERE pack.source NOT IN ('curator', 'authored')",
-        params![pack_id, provenance, now],
+        "INSERT INTO pack (id, created_at, updated_at)
+         VALUES (?1, ?2, ?2)
+         ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at",
+        params![pack_id, now],
     )?;
     Ok(())
 }

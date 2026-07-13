@@ -44,6 +44,7 @@ const MIGRATIONS: &[(u32, Migration)] = &[
         8,
         Migration::Sql(include_str!("schema/0008_mod_content_sig.sql")),
     ),
+    (9, Migration::Code(drop_pack_provenance)),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its
@@ -158,6 +159,57 @@ fn reconcile_target_schema(conn: &mut Connection) -> Result<()> {
         bail!("0004 reconcile left {violations} foreign-key violations");
     }
     Ok(())
+}
+
+/// Migration 9: drop the retired `provenance` (sc/hivens) and `source` columns
+/// from `pack`. Both were write-only -- nothing read them for behaviour -- and
+/// pack authorship now lives on the storage-side pack config (owner/tier), so
+/// the axis is dead. A plain `DROP COLUMN` is blocked by `CHECK(provenance IN
+/// ...)`, and `pack_build` FKs into `pack`, so rebuild with `foreign_keys` off
+/// around the swap (SQLite's documented table-redefinition procedure).
+/// Idempotent: a no-op once `pack` no longer carries `provenance`.
+fn drop_pack_provenance(conn: &mut Connection) -> Result<()> {
+    if !pack_has_provenance_column(conn)? {
+        return Ok(()); // already rebuilt (or a fresh DB from the current 0001)
+    }
+
+    conn.execute_batch("PRAGMA foreign_keys = OFF")
+        .context("0009: foreign_keys off")?;
+    let tx = conn.transaction().context("0009: begin rebuild")?;
+    tx.execute_batch(
+        "CREATE TABLE pack_new (
+           id         TEXT PRIMARY KEY,
+           created_at TEXT NOT NULL,
+           updated_at TEXT NOT NULL
+         );
+         INSERT INTO pack_new (id, created_at, updated_at)
+           SELECT id, created_at, updated_at FROM pack;
+         DROP TABLE pack;
+         ALTER TABLE pack_new RENAME TO pack;",
+    )
+    .context("0009: rebuild pack")?;
+    tx.commit().context("0009: commit rebuild")?;
+    conn.execute_batch("PRAGMA foreign_keys = ON")
+        .context("0009: foreign_keys on")?;
+
+    // the rebuild must not have orphaned pack_build.
+    let violations = {
+        let mut stmt = conn.prepare("PRAGMA foreign_key_check")?;
+        stmt.query_map([], |_| Ok(()))?.count()
+    };
+    if violations > 0 {
+        bail!("0009 pack rebuild left {violations} foreign-key violations");
+    }
+    Ok(())
+}
+
+/// True if `pack` still carries the retired `provenance` column.
+fn pack_has_provenance_column(conn: &Connection) -> Result<bool> {
+    let mut stmt = conn.prepare("PRAGMA table_info(pack)")?;
+    let names = stmt
+        .query_map([], |r| r.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    Ok(names.iter().any(|name| name == "provenance"))
 }
 
 /// True if `mod_version` still carries the pre-rename `target` column.
@@ -361,5 +413,52 @@ mod tests {
             )
             .unwrap();
         assert_eq!((vn.as_str(), ch.as_str()), ("1.0", "unknown"));
+    }
+
+    // A pack table from the pre-drop 0001 (provenance/source columns + a
+    // pack_build child) rebuilds to the bare shape, keeps the child rows, and is
+    // idempotent on a second run.
+    #[test]
+    fn migration_0009_drops_pack_provenance_and_keeps_builds() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE pack (
+               id         TEXT PRIMARY KEY,
+               provenance TEXT NOT NULL DEFAULT 'hivens',
+               source     TEXT NOT NULL DEFAULT 'harvested',
+               created_at TEXT NOT NULL,
+               updated_at TEXT NOT NULL,
+               CHECK (provenance IN ('sc','hivens'))
+             );
+             CREATE TABLE pack_build (
+               id      INTEGER PRIMARY KEY,
+               pack_id TEXT NOT NULL REFERENCES pack(id) ON DELETE CASCADE
+             );
+             INSERT INTO pack (id, provenance, source, created_at, updated_at)
+               VALUES ('P', 'sc', 'authored', 'T', 'T');
+             INSERT INTO pack_build (id, pack_id) VALUES (1, 'P');",
+        )
+        .unwrap();
+        assert!(pack_has_provenance_column(&conn).unwrap());
+
+        drop_pack_provenance(&mut conn).unwrap();
+
+        assert!(!pack_has_provenance_column(&conn).unwrap());
+        let id: String = conn
+            .query_row("SELECT id FROM pack WHERE id = 'P'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(id, "P");
+        let builds: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pack_build WHERE pack_id = 'P'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(builds, 1, "the pack_build child survived the rebuild");
+
+        // idempotent: a second run is a no-op
+        drop_pack_provenance(&mut conn).unwrap();
+        assert!(!pack_has_provenance_column(&conn).unwrap());
     }
 }
