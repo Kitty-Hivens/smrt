@@ -1,19 +1,23 @@
-//! Registry harvest: scan the cache + published manifests, read each jar's
-//! `mcmod.info`, batch-resolve Modrinth identity, and reconcile it all into the
-//! registry. The scan (FS + network) is async; the write (`write_scan`) is a
-//! pure, transactional DB step that's unit-tested without I/O.
+//! Registry harvest: scan the cache + published manifests, read each jar in a
+//! single pass (bytecode graph + side, declared metadata, mcmod.info),
+//! batch-resolve Modrinth identity, and reconcile it all into the registry. The
+//! scan (FS + network) is async, with the per-jar parsing offloaded to a blocking
+//! task; the write (`write_scan`) is a pure, transactional DB step unit-tested
+//! without I/O.
 //!
 //! Harvest-only: it writes `source = harvested | jar-meta | inferred | modrinth`
 //! rows (plus `curator` from published conflicts) and never clobbers authored
-//! ones. Dependency facts come from three sources by trust: Modrinth
-//! `version.dependencies` (authoritative for a Modrinth mod, targets in the
-//! `modrinth:<project_id>` selector namespace), the jar's own mcmod.info deps,
-//! and bytecode inference (suppressed for a Modrinth mod, whose declared graph we
-//! do not second-guess). The derived layers (inferred + modrinth) are rebuilt
-//! each run; consuming them into a resolver is separate (#42).
+//! ones. Dependency facts come by trust: Modrinth `version.dependencies`
+//! (authoritative for a Modrinth mod that declares any -- targets in the
+//! `modrinth:<project_id>` selector namespace), else the jar's own declaration
+//! (mcmod.info, or modern mods.toml / neoforge.mods.toml / fabric.mod.json) plus
+//! bytecode inference. The derived layers (inferred + modrinth) are rebuilt each
+//! run; consuming them into a resolver is separate (#42).
 
+use super::archive::read_zip_entry;
 use super::bytecode;
-use super::curator::{JarFacts, McModInfo, clean_mc_version, jar_facts, read_mcmod_info};
+use super::classfile::parse_class;
+use super::curator::{JarFacts, McModInfo, clean_mc_version, parse_mcmod_info};
 use super::modmeta;
 use super::modrinth::Modrinth;
 use crate::registry::model::{RelKind, Source};
@@ -149,9 +153,12 @@ fn ae(e: crate::http::ApiError) -> anyhow::Error {
     anyhow::anyhow!("{e}")
 }
 
-/// Resolve a referenced package prefix to the modid of its owning mod, for an
-/// inferred edge from `from_mod_id`. `None` when the prefix has no single owner,
-/// its owner is the referencing mod itself, or the owner carries no modid.
+/// Resolve a referenced package prefix to a selector for its owning mod, for an
+/// inferred edge from `from_mod_id`. Prefers the owner's modid; falls back to its
+/// `modrinth:<project_id>` selector when it has no modid (a Modrinth-only owner),
+/// so a package-indexed target is not silently dropped. `None` when the prefix
+/// has no single owner, its owner is the referencing mod itself, or the owner has
+/// neither identity.
 fn resolve_edge_target(
     conn: &Connection,
     prefix: &str,
@@ -163,7 +170,10 @@ fn resolve_edge_target(
     if owner == from_mod_id {
         return Ok(None);
     }
-    queries::modid_for_mod(conn, owner)
+    if let Some(modid) = queries::modid_for_mod(conn, owner)? {
+        return Ok(Some(modid));
+    }
+    Ok(queries::modrinth_id_for_mod(conn, owner)?.map(|pid| format!("modrinth:{pid}")))
 }
 
 /// Map a Modrinth `dependency_type` to a relation kind. `embedded` (a bundled
@@ -175,6 +185,105 @@ fn modrinth_rel_kind(dep_type: &str) -> Option<RelKind> {
         "optional" => Some(RelKind::OptionalDep),
         "incompatible" => Some(RelKind::Conflicts),
         _ => None,
+    }
+}
+
+/// Everything the harvest reads from one jar.
+struct JarReadout {
+    facts: JarFacts,
+    bytecode: bytecode::JarBytecode,
+    modmeta: modmeta::ModMeta,
+    mcmod: Option<McModInfo>,
+}
+
+/// Open a jar's zip ONCE and derive every fact the harvest needs from it: the
+/// loader marker, the bytecode graph + side, the modern declared metadata, and
+/// mcmod.info. Replaces four separate zip opens per jar. Best-effort -- a non-zip
+/// or truncated jar yields empty facts.
+fn read_jar(bytes: &[u8]) -> JarReadout {
+    let empty = || JarReadout {
+        facts: JarFacts::default(),
+        bytecode: bytecode::JarBytecode::default(),
+        modmeta: modmeta::ModMeta::default(),
+        mcmod: None,
+    };
+    let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
+        return empty();
+    };
+
+    let mut classes = Vec::new();
+    let mut mcmod_raw: Option<Vec<u8>> = None;
+    let mut mods_toml: Option<Vec<u8>> = None; // neoforge.mods.toml wins over mods.toml
+    let mut fabric_json: Option<Vec<u8>> = None;
+    let mut has_forge = false;
+    let mut has_fabric = false;
+    for i in 0..zip.len() {
+        let Ok(mut entry) = zip.by_index(i) else {
+            continue;
+        };
+        if !entry.is_file() {
+            continue;
+        }
+        let name = entry.name().to_string();
+        let size = entry.size();
+        if name.ends_with(".class") {
+            if let Ok(b) = read_zip_entry(&mut entry, size, &name)
+                && let Some(info) = parse_class(&b)
+            {
+                classes.push(info);
+            }
+            continue;
+        }
+        match name.as_str() {
+            "mcmod.info" => {
+                has_forge = true;
+                mcmod_raw = read_zip_entry(&mut entry, size, &name).ok();
+            }
+            "META-INF/mods.toml" => {
+                has_forge = true;
+                if mods_toml.is_none() {
+                    mods_toml = read_zip_entry(&mut entry, size, &name).ok();
+                }
+            }
+            "META-INF/neoforge.mods.toml" => {
+                has_forge = true;
+                mods_toml = read_zip_entry(&mut entry, size, &name).ok();
+            }
+            "fabric.mod.json" => {
+                has_fabric = true;
+                fabric_json = read_zip_entry(&mut entry, size, &name).ok();
+            }
+            _ => {}
+        }
+    }
+
+    let loader = if has_forge {
+        Some("forge".to_string())
+    } else if has_fabric {
+        Some("fabric".to_string())
+    } else {
+        None
+    };
+    let fabric_side = fabric_json
+        .as_deref()
+        .and_then(bytecode::fabric_side_from_json);
+    let modmeta = if let Some(t) = mods_toml.as_deref() {
+        std::str::from_utf8(t)
+            .map(modmeta::parse_mods_toml)
+            .unwrap_or_default()
+    } else if let Some(f) = fabric_json.as_deref() {
+        modmeta::parse_fabric_json(f)
+    } else {
+        modmeta::ModMeta::default()
+    };
+    JarReadout {
+        facts: JarFacts { loader },
+        bytecode: bytecode::aggregate(&classes, fabric_side),
+        modmeta,
+        mcmod: mcmod_raw
+            .as_deref()
+            .and_then(parse_mcmod_info)
+            .filter(|i| !i.modid.is_empty()),
     }
 }
 
@@ -332,11 +441,15 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
     // is skipped; a hard edge to a target suppresses a competing optional one.
     let mut inferred_requires = 0i64;
     let mut inferred_optional = 0i64;
+    // Hard pass first, accumulating each mod's hard targets across ALL its jars, so
+    // a hard reference in one artifact suppresses a soft reference to the same
+    // target in another artifact of the same mod.
+    let mut hard_by_mod: HashMap<i64, HashSet<String>> = HashMap::new();
     for (from_mod_id, jar) in &derivations {
-        let mut hard_targets: HashSet<String> = HashSet::new();
+        let hard = hard_by_mod.entry(*from_mod_id).or_default();
         for prefix in &jar.hard_refs {
             if let Some(target) = resolve_edge_target(conn, prefix, *from_mod_id)?
-                && hard_targets.insert(target.clone())
+                && hard.insert(target.clone())
                 && upsert::upsert_relation(
                     conn,
                     *from_mod_id,
@@ -350,11 +463,19 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                 inferred_requires += 1;
             }
         }
-        let mut opt_targets: HashSet<String> = HashSet::new();
+    }
+    // Optional pass: skip any target already hard for the same mod.
+    let mut opt_by_mod: HashMap<i64, HashSet<String>> = HashMap::new();
+    for (from_mod_id, jar) in &derivations {
         for prefix in &jar.optional_refs {
             if let Some(target) = resolve_edge_target(conn, prefix, *from_mod_id)?
-                && !hard_targets.contains(&target)
-                && opt_targets.insert(target.clone())
+                && !hard_by_mod
+                    .get(from_mod_id)
+                    .is_some_and(|h| h.contains(&target))
+                && opt_by_mod
+                    .entry(*from_mod_id)
+                    .or_default()
+                    .insert(target.clone())
                 && upsert::upsert_relation(
                     conn,
                     *from_mod_id,
@@ -463,26 +584,41 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
     // read mcmod.info + derive jar facts (loader marker, content signature) +
     // scan bytecode (owned packages, references, side) from every cached jar
     // (Modrinth-only mods have no local jar to read)
-    let mut mcmod_by_sha: HashMap<String, McModInfo> = HashMap::new();
-    let mut facts_by_sha: HashMap<String, JarFacts> = HashMap::new();
-    let mut bytecode_by_sha: HashMap<String, bytecode::JarBytecode> = HashMap::new();
-    let mut modmeta_by_sha: HashMap<String, modmeta::ModMeta> = HashMap::new();
-    for e in &inventory {
-        let Ok(path) = storage.cache_jar_path(&e.sha1[..2], &e.sha1) else {
-            continue;
-        };
-        let Ok(bytes) = tokio::fs::read(&path).await else {
-            continue;
-        };
-        facts_by_sha.insert(e.sha1.clone(), jar_facts(&bytes));
-        bytecode_by_sha.insert(e.sha1.clone(), bytecode::scan_jar(&bytes));
-        modmeta_by_sha.insert(e.sha1.clone(), modmeta::read_mod_meta(&bytes));
-        if let Ok(Some(info)) = read_mcmod_info(&bytes)
-            && !info.modid.is_empty()
-        {
-            mcmod_by_sha.insert(e.sha1.clone(), info);
-        }
-    }
+    // Read + parse every cached jar OFF the async runtime: each is CPU-heavy (one
+    // zip open decompressing every .class), so doing it inline would stall a tokio
+    // worker and the panel behind it. Paths are resolved up front so the blocking
+    // task owns its inputs and borrows nothing async.
+    let jar_paths: Vec<(String, std::path::PathBuf)> = inventory
+        .iter()
+        .filter_map(|e| {
+            storage
+                .cache_jar_path(&e.sha1[..2], &e.sha1)
+                .ok()
+                .map(|p| (e.sha1.clone(), p))
+        })
+        .collect();
+    let (mcmod_by_sha, facts_by_sha, bytecode_by_sha, modmeta_by_sha) =
+        tokio::task::spawn_blocking(move || {
+            let mut mcmod: HashMap<String, McModInfo> = HashMap::new();
+            let mut facts: HashMap<String, JarFacts> = HashMap::new();
+            let mut bc: HashMap<String, bytecode::JarBytecode> = HashMap::new();
+            let mut mm: HashMap<String, modmeta::ModMeta> = HashMap::new();
+            for (sha, path) in jar_paths {
+                let Ok(bytes) = std::fs::read(&path) else {
+                    continue;
+                };
+                let r = read_jar(&bytes);
+                facts.insert(sha.clone(), r.facts);
+                bc.insert(sha.clone(), r.bytecode);
+                mm.insert(sha.clone(), r.modmeta);
+                if let Some(info) = r.mcmod {
+                    mcmod.insert(sha.clone(), info);
+                }
+            }
+            (mcmod, facts, bc, mm)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("jar scan task: {e}"))?;
 
     // published builds + curator conflicts, per pack
     let mut packs = Vec::new();
@@ -1309,6 +1445,45 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    // The single-pass jar reader pulls every fact from one zip open: loader
+    // marker, bytecode graph, mcmod.info, and modern metadata -- with
+    // neoforge.mods.toml winning over a co-present mods.toml.
+    #[test]
+    fn read_jar_single_pass_extracts_all_facts() {
+        use super::super::classfile::fixtures::{build_class, jar};
+        let cls = build_class("mymod/Main", &["appeng/api/AEApi"], false, None);
+        let bytes = jar(&[
+            ("mymod/Main.class", &cls),
+            ("mcmod.info", br#"[{"modid":"mymod","name":"MyMod"}]"#),
+            (
+                "META-INF/mods.toml",
+                b"[[mods]]\nmodId=\"legacy\"\n[[dependencies.legacy]]\nmodId=\"legacydep\"\nmandatory=true",
+            ),
+            (
+                "META-INF/neoforge.mods.toml",
+                b"[[mods]]\nmodId=\"mymod\"\n[[dependencies.mymod]]\nmodId=\"jei\"\ntype=\"required\"",
+            ),
+        ]);
+        let r = read_jar(&bytes);
+        assert_eq!(r.facts.loader.as_deref(), Some("forge"));
+        assert!(r.bytecode.owned.contains("mymod"));
+        assert!(r.bytecode.hard_refs.contains("appeng/api"));
+        assert_eq!(r.mcmod.map(|i| i.modid), Some("mymod".to_string()));
+        assert_eq!(
+            r.modmeta.modid.as_deref(),
+            Some("mymod"),
+            "neoforge.mods.toml wins over mods.toml"
+        );
+        assert_eq!(
+            r.modmeta
+                .deps
+                .iter()
+                .map(|d| d.modid.as_str())
+                .collect::<Vec<_>>(),
+            vec!["jei"]
+        );
     }
 
     // #1: two distinct jars of one mod with no version metadata both become

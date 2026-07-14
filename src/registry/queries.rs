@@ -92,6 +92,18 @@ pub fn modid_for_mod(conn: &Connection, mod_id: i64) -> Result<Option<String>> {
         .optional()?)
 }
 
+/// A mod's Modrinth project id, when it carries one. The fallback selector for a
+/// derived edge whose target has no modid but is Modrinth-identified.
+pub fn modrinth_id_for_mod(conn: &Connection, mod_id: i64) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT external_key FROM mod_alias WHERE mod_id = ?1 AND source = 'modrinth' LIMIT 1",
+            params![mod_id],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
 /// The single mod that owns a package prefix, or `None` when no mod or more than
 /// one owns it. A multiply-owned prefix is an ambiguous shaded library, so it is
 /// deliberately not resolved to an edge.

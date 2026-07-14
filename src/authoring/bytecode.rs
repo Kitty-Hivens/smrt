@@ -140,8 +140,9 @@ fn read_classes(jar_bytes: &[u8]) -> Vec<ClassInfo> {
 }
 
 /// Fold parsed classes + a fabric-side hint into the jar's facts. Pure -- the
-/// unit-tested core; `scan_jar` is only the zip-reading shell around it.
-fn aggregate(classes: &[ClassInfo], fabric: Option<Side>) -> JarBytecode {
+/// unit-tested core; `scan_jar` and the harvest single-pass reader are only
+/// zip-reading shells around it.
+pub(crate) fn aggregate(classes: &[ClassInfo], fabric: Option<Side>) -> JarBytecode {
     let mut owned: BTreeSet<String> = BTreeSet::new();
     for c in classes {
         if !is_platform(&c.this_class)
@@ -244,7 +245,13 @@ fn fabric_side(jar_bytes: &[u8]) -> Option<Side> {
     let mut entry = zip.by_name("fabric.mod.json").ok()?;
     let size = entry.size();
     let raw = read_zip_entry(&mut entry, size, "fabric.mod.json").ok()?;
-    let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
+    fabric_side_from_json(&raw)
+}
+
+/// The `environment` side from a `fabric.mod.json` body (the zip-free core, so a
+/// single-pass jar reader can pass the entry it already extracted).
+pub(crate) fn fabric_side_from_json(bytes: &[u8]) -> Option<Side> {
+    let v: serde_json::Value = serde_json::from_slice(bytes).ok()?;
     match v.get("environment")?.as_str()? {
         "*" => Some(Side::Both),
         "client" => Some(Side::Client),

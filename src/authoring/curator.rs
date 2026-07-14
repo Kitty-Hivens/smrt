@@ -85,20 +85,24 @@ pub fn read_mcmod_info(jar_bytes: &[u8]) -> Result<Option<McModInfo>> {
     };
     let size = entry.size();
     let raw = read_zip_entry(&mut entry, size, "mcmod.info")?;
+    Ok(parse_mcmod_info(&raw))
+}
 
-    // mcmod.info comes from many authors over many years. Lossy UTF-8
-    // decode handles the occasional ISO-8859-1 file. BOM strip handles
-    // the occasional UTF-8-BOM-prefixed file from Windows authors. .
-    let decoded = String::from_utf8_lossy(&raw);
+/// Decode + parse `mcmod.info` bytes (the zip-free core of [`read_mcmod_info`], so
+/// a single-pass jar reader can hand over the entry it already extracted).
+pub fn parse_mcmod_info(raw: &[u8]) -> Option<McModInfo> {
+    // mcmod.info comes from many authors over many years. Lossy UTF-8 decode
+    // handles the occasional ISO-8859-1 file. BOM strip handles the occasional
+    // UTF-8-BOM-prefixed file from Windows authors.
+    let decoded = String::from_utf8_lossy(raw);
     let trimmed = decoded.trim_start_matches('\u{FEFF}').trim();
     if trimmed.is_empty() {
-        return Ok(None);
+        return None;
     }
-
     // Two valid shapes per the Forge spec era:
     //   1. JSON array of mod entries
     //   2. JSON object with a `modList` field containing the array
-    let parsed: Option<McModInfo> = if trimmed.starts_with('[') {
+    if trimmed.starts_with('[') {
         serde_json::from_str::<Vec<McModInfo>>(trimmed)
             .ok()
             .and_then(|v| v.into_iter().next())
@@ -106,9 +110,7 @@ pub fn read_mcmod_info(jar_bytes: &[u8]) -> Result<Option<McModInfo>> {
         serde_json::from_str::<McModInfoListWrap>(trimmed)
             .ok()
             .and_then(|w| w.mod_list.into_iter().next())
-    };
-
-    Ok(parsed)
+    }
 }
 
 /// Version-bearing metadata files excluded from the content signature: bumping
