@@ -57,6 +57,7 @@ export type { UploadRow } from './bindings/UploadRow';
 export type { AuditRow } from './bindings/AuditRow';
 
 // registry browser (mods + builds, faceted)
+export type { JarDiff } from './bindings/JarDiff';
 export type { ModSummary } from './bindings/ModSummary';
 export type { VersionRow } from './bindings/VersionRow';
 export type { ReleaseRow } from './bindings/ReleaseRow';

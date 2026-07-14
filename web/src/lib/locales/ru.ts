@@ -413,6 +413,14 @@ export const ru: Dict = {
   'mm.repack': 'репак?',
   'mm.repackHint':
     'самохостный jar под модом, у которого есть и Modrinth-версия -- вероятно, репак',
+  'mm.diff': 'diff',
+  'mm.diffClasses': 'классов: {n}',
+  'mm.diffResources': 'ресурсов: {n}',
+  'mm.diffAdded': 'добавлено: {n}',
+  'mm.diffRemoved': 'удалено: {n}',
+  'mm.diffIdentical': 'идентичных: {n}',
+  'mm.diffClassesH': 'Изменённые классы (то, что важно)',
+  'mm.diffNoClasses': 'Классы не менялись -- отличия только в ресурсах.',
 
   'id.title': 'Назначить identity',
   'id.titleEdit': 'Править identity',

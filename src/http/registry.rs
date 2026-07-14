@@ -10,7 +10,7 @@
 use super::{ApiError, audit};
 use crate::accounts::Identity;
 use crate::authoring::harvest::{self, HarvestReport};
-use crate::authoring::reconstruct_config;
+use crate::authoring::{JarDiff, diff_jars, reconstruct_config};
 use crate::domain::DeclaredAsset;
 use crate::registry::model::{
     BuildModRow, BuildSummary, EligibleArtifact, ModSummary, ModUse, OrphanJar, RegistryStats,
@@ -62,6 +62,9 @@ fn operator_routes(state: AppState) -> Router {
         // needs-identity door: jars with no identity yet (listing only; assigning
         // one asserts compat facts, so the write side is debug-gated below)
         .route("/v1/registry/unassigned", get(get_unassigned))
+        // repackage (tamper) diff: what a self-hosted jar changed vs its genuine
+        // Modrinth counterpart. Read-only.
+        .route("/v1/registry/files/:sha1/repack-diff", get(get_repack_diff))
         // cosmetic: canonical name / slug, nothing the resolver reads
         .route("/v1/registry/mod-meta/:mod_id", put(put_mod_rename))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
@@ -360,6 +363,49 @@ async fn post_backup(State(state): State<AppState>) -> Result<Json<BackupResult>
     Ok(Json(BackupResult {
         path: dest.to_string_lossy().into_owned(),
     }))
+}
+
+// Compare a self-hosted jar against its genuine Modrinth counterpart and report
+// what changed, class files apart from resource churn. Reads the repackaged bytes
+// from the local cache, fetches the genuine file from Modrinth, diffs by entry
+// CRC off the runtime. Read-only.
+async fn get_repack_diff(
+    State(state): State<AppState>,
+    Path(sha1): Path<String>,
+) -> Result<Json<JarDiff>, ApiError> {
+    if sha1.len() != 40 || !sha1.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ApiError::BadRequest("sha1 must be 40 hex chars".into()));
+    }
+    let sha_q = sha1.clone();
+    let (project, version_id) = run_query(&state, move |c| queries::repack_counterpart(c, &sha_q))
+        .await?
+        .ok_or_else(|| ApiError::BadRequest("no Modrinth counterpart to diff against".into()))?;
+
+    let path = state.storage.cache_jar_path(&sha1[..2], &sha1)?;
+    let repack = tokio::fs::read(&path)
+        .await
+        .map_err(|_| ApiError::NotFound)?;
+
+    let version = state
+        .modrinth
+        .project_version(&project, &version_id)
+        .await
+        .map_err(ApiError::Internal)?;
+    let url = version
+        .primary_file()
+        .map(|f| f.url.clone())
+        .ok_or_else(|| ApiError::Internal(anyhow::anyhow!("modrinth version carries no file")))?;
+    let genuine = state
+        .modrinth
+        .fetch_bytes(&url)
+        .await
+        .map_err(ApiError::Internal)?;
+
+    let diff = tokio::task::spawn_blocking(move || diff_jars(&repack, &genuine))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("diff task: {e}")))?
+        .map_err(ApiError::Internal)?;
+    Ok(Json(diff))
 }
 
 // ── authored identity door (Phase B) ─────────────────────────────────────────

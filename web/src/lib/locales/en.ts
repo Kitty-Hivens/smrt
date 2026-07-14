@@ -414,6 +414,14 @@ export const en = {
   'mm.repack': 'repack?',
   'mm.repackHint':
     'self-hosted jar under a mod that also has a Modrinth-verified file -- likely a repackage',
+  'mm.diff': 'diff',
+  'mm.diffClasses': '{n} classes',
+  'mm.diffResources': '{n} resources',
+  'mm.diffAdded': '{n} added',
+  'mm.diffRemoved': '{n} removed',
+  'mm.diffIdentical': '{n} identical',
+  'mm.diffClassesH': 'Changed classes (the tamper that matters)',
+  'mm.diffNoClasses': 'No class changed -- resource-only differences.',
 
   'id.title': 'Assign identity',
   'id.titleEdit': 'Edit identity',

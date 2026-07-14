@@ -185,6 +185,26 @@ pub fn relations_from(conn: &Connection, from_mod_id: i64) -> Result<Vec<Relatio
     Ok(out)
 }
 
+/// For the self-hosted jar `sha1`, its mod's Modrinth `(project_id, version_id)`
+/// counterpart to diff against: the mod's Modrinth project alias plus any sibling
+/// file that carries a `modrinth_version_id` (the genuine build). `None` when the
+/// jar's mod is not Modrinth-known here or has no genuine sibling to compare with.
+pub fn repack_counterpart(conn: &Connection, sha1: &str) -> Result<Option<(String, String)>> {
+    Ok(conn
+        .query_row(
+            "SELECT a.external_key, sib.modrinth_version_id
+             FROM mod_version mv
+             JOIN mod_alias a ON a.mod_id = mv.mod_id AND a.source = 'modrinth'
+             JOIN mod_version sib ON sib.mod_id = mv.mod_id
+                                 AND sib.modrinth_version_id IS NOT NULL
+             WHERE mv.sha1 = ?1
+             LIMIT 1",
+            params![sha1],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?)
+}
+
 /// Q1 -- which pack builds ship the mod identified by `(alias_source, key)`.
 pub fn packs_using_mod(
     conn: &Connection,

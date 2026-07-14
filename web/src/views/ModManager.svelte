@@ -3,7 +3,7 @@
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
   import { isDebug } from '../lib/roles';
-  import type { ModSummary, ReleaseRow, UnassignedJar, VersionRow } from '../lib/types';
+  import type { JarDiff, ModSummary, ReleaseRow, UnassignedJar, VersionRow } from '../lib/types';
   import ModIcon from './ModIcon.svelte';
   import IdentityDialog, { type IdentityTarget } from './IdentityDialog.svelte';
   import DropZone from './ui/DropZone.svelte';
@@ -175,6 +175,33 @@
       await load();
     } catch (x) {
       err = fail(x);
+    }
+  }
+
+  // Repackage (tamper) diff: for a self-hosted file under a mod that also has a
+  // Modrinth-verified sibling, show what it changed vs the genuine build. Toggles
+  // an inline panel; the changed classes are the signal, resources are noise.
+  let diffFor = $state<string | null>(null);
+  let diffData = $state<JarDiff | null>(null);
+  let diffLoading = $state(false);
+  let diffErr = $state('');
+
+  async function showDiff(f: VersionRow) {
+    if (diffFor === f.sha1) {
+      diffFor = null;
+      diffData = null;
+      return;
+    }
+    diffFor = f.sha1;
+    diffData = null;
+    diffErr = '';
+    diffLoading = true;
+    try {
+      diffData = await api.repackDiff(f.sha1);
+    } catch (e) {
+      diffErr = fail(e);
+    } finally {
+      diffLoading = false;
     }
   }
 
@@ -359,12 +386,43 @@
                       <span class="chip">{t('mm.selfhost')}</span>
                     {/if}
                     <div class="factions">
+                      {#if !f.modrinth_version_id && modHasVerified && f.cached}
+                        <button
+                          class="link"
+                          class:active={diffFor === f.sha1}
+                          onclick={() => showDiff(f)}>{t('mm.diff')}</button>
+                      {/if}
                       {#if canDebug}
                         <button class="link" onclick={() => editFile(f, rel, m.name)}>{t('mm.edit')}</button>
                       {/if}
                       <button class="link danger" onclick={() => delFile(f)}>{t('common.delete')}</button>
                     </div>
                   </div>
+                  {#if diffFor === f.sha1}
+                    <div class="diffpanel">
+                      {#if diffLoading}
+                        <div class="muted s">{t('common.loading')}</div>
+                      {:else if diffErr}
+                        <div class="err mono">{diffErr}</div>
+                      {:else if diffData}
+                        <div class="diffsum mono">
+                          {t('mm.diffClasses', { n: diffData.changed_classes.length })} ·
+                          {t('mm.diffResources', { n: diffData.changed_resources.length })} ·
+                          {t('mm.diffAdded', { n: diffData.added.length })} ·
+                          {t('mm.diffRemoved', { n: diffData.removed.length })} ·
+                          {t('mm.diffIdentical', { n: diffData.identical })}
+                        </div>
+                        {#if diffData.changed_classes.length}
+                          <div class="diffh">{t('mm.diffClassesH')}</div>
+                          {#each diffData.changed_classes as c}
+                            <div class="mono diffrow">{c}</div>
+                          {/each}
+                        {:else}
+                          <div class="muted s">{t('mm.diffNoClasses')}</div>
+                        {/if}
+                      {/if}
+                    </div>
+                  {/if}
                 {/each}
               </div>
             {/each}
@@ -537,6 +595,33 @@
     display: flex;
     gap: 2px;
     flex-shrink: 0;
+  }
+  .link.active {
+    color: var(--accent-strong);
+  }
+  .diffpanel {
+    margin: 2px 0 var(--space-3) 34px;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--seam);
+    border-radius: var(--radius-sm);
+    background: var(--panel-2);
+  }
+  .diffsum {
+    font-size: 11px;
+    color: var(--fg-dim);
+    margin-bottom: 6px;
+  }
+  .diffh {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--warn);
+    margin: 4px 0;
+  }
+  .diffrow {
+    font-size: 11px;
+    padding: 1px 0;
+    overflow-wrap: anywhere;
   }
   .cnt {
     font-size: 11px;

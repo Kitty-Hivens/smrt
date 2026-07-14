@@ -14,6 +14,7 @@ pub mod classfile;
 pub mod curator;
 pub mod harvest;
 pub mod harvest_sched;
+pub mod jardiff;
 pub mod modmeta;
 pub mod modrinth;
 pub mod reconstruct;
@@ -27,6 +28,7 @@ pub use curator::{
     jar_icon, load_role_table, read_mcmod_info,
 };
 pub use harvest_sched::HarvestScheduler;
+pub use jardiff::{JarDiff, diff_jars};
 pub use modrinth::*;
 pub use reconstruct::reconstruct_config;
 pub use resolve::{ResolveReport, resolve_pack};
