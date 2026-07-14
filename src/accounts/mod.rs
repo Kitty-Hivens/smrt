@@ -15,6 +15,10 @@ use ts_rs::TS;
 
 const SCHEMA: &str = include_str!("schema.sql");
 const SESSION_TTL: Duration = Duration::from_secs(86_400);
+/// The `mod_uploads` columns `upload_from_row` reads, in its index order. One
+/// source so the several upload SELECTs cannot drift from the row mapper.
+const UPLOAD_COLS: &str = "id, uploader, pack_id, filename, sha1, size_bytes, status, note, created_at, \
+     upstream_maintainer, decided_by";
 /// Reserved uid for the synthetic machine-bearer admin (the `Bearer` token path
 /// in the http layer). It is never persisted as a `users` row; the guards below
 /// keep uid 0 unassignable so it can't collide with a real GitHub account.
@@ -103,6 +107,14 @@ pub struct UploadRow {
     pub note: Option<String>,
     #[ts(type = "number")]
     pub created_at: i64,
+    /// Who the uploader named as the jar's upstream origin (archival provenance).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub upstream_maintainer: Option<String>,
+    /// GitHub uid of the moderator who decided this upload; absent while pending.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub decided_by: Option<i64>,
 }
 
 /// One entry in the system-wide audit log: who did what, when.
@@ -154,6 +166,9 @@ impl Accounts {
         conn.execute_batch(SCHEMA)
             .context("applying accounts schema")?;
         widen_role_check(&conn).context("widening users.role check")?;
+        // provenance columns on a DB that predates them (#44)
+        ensure_column(&conn, "mod_uploads", "upstream_maintainer", "TEXT")?;
+        ensure_column(&conn, "mod_uploads", "decided_by", "INTEGER")?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -295,7 +310,9 @@ impl Accounts {
 
     // ── moderation queue (member jar uploads) ───────────────────────────────
 
-    /// Enqueue a pending member upload; returns its id. Blocking.
+    /// Enqueue a pending member upload; returns its id. `upstream_maintainer` is
+    /// the uploader-named origin of the jar, kept for archival provenance.
+    /// Blocking.
     pub fn enqueue_upload(
         &self,
         uploader: i64,
@@ -303,14 +320,15 @@ impl Accounts {
         filename: &str,
         sha1: &str,
         size_bytes: i64,
+        upstream_maintainer: Option<&str>,
     ) -> Result<i64> {
         let now = unix_now();
         let guard = self.conn.lock().expect("accounts mutex poisoned");
         guard.execute(
             "INSERT INTO mod_uploads
-               (uploader, pack_id, filename, sha1, size_bytes, status, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
-            params![uploader, pack_id, filename, sha1, size_bytes, now],
+               (uploader, pack_id, filename, sha1, size_bytes, status, created_at, upstream_maintainer)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?7)",
+            params![uploader, pack_id, filename, sha1, size_bytes, now, upstream_maintainer],
         )?;
         Ok(guard.last_insert_rowid())
     }
@@ -318,10 +336,9 @@ impl Accounts {
     /// Pending uploads, oldest first -- the operator's moderation queue. Blocking.
     pub fn list_pending_uploads(&self) -> Result<Vec<UploadRow>> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
-        let mut stmt = guard.prepare(
-            "SELECT id, uploader, pack_id, filename, sha1, size_bytes, status, note, created_at
-             FROM mod_uploads WHERE status = 'pending' ORDER BY created_at ASC",
-        )?;
+        let mut stmt = guard.prepare(&format!(
+            "SELECT {UPLOAD_COLS} FROM mod_uploads WHERE status = 'pending' ORDER BY created_at ASC"
+        ))?;
         let rows = stmt
             .query_map([], upload_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -331,10 +348,9 @@ impl Accounts {
     /// A member's own uploads (any status), newest first. Blocking.
     pub fn list_user_uploads(&self, uploader: i64) -> Result<Vec<UploadRow>> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
-        let mut stmt = guard.prepare(
-            "SELECT id, uploader, pack_id, filename, sha1, size_bytes, status, note, created_at
-             FROM mod_uploads WHERE uploader = ?1 ORDER BY created_at DESC",
-        )?;
+        let mut stmt = guard.prepare(&format!(
+            "SELECT {UPLOAD_COLS} FROM mod_uploads WHERE uploader = ?1 ORDER BY created_at DESC"
+        ))?;
         let rows = stmt
             .query_map(params![uploader], upload_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -346,8 +362,7 @@ impl Accounts {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
         guard
             .query_row(
-                "SELECT id, uploader, pack_id, filename, sha1, size_bytes, status, note, created_at
-                 FROM mod_uploads WHERE id = ?1",
+                &format!("SELECT {UPLOAD_COLS} FROM mod_uploads WHERE id = ?1"),
                 params![id],
                 upload_from_row,
             )
@@ -355,17 +370,25 @@ impl Accounts {
             .context("read upload")
     }
 
-    /// Decide a pending upload: `approved` or `rejected`, with an optional note.
-    /// Blocking.
-    pub fn set_upload_status(&self, id: i64, status: &str, note: Option<&str>) -> Result<()> {
+    /// Decide a pending upload: `approved` or `rejected`, with an optional note
+    /// and the deciding moderator's uid (kept for accountability). Blocking.
+    pub fn set_upload_status(
+        &self,
+        id: i64,
+        status: &str,
+        note: Option<&str>,
+        decided_by: Option<i64>,
+    ) -> Result<()> {
         if status != "approved" && status != "rejected" {
             anyhow::bail!("invalid upload status '{status}'");
         }
         let now = unix_now();
         let guard = self.conn.lock().expect("accounts mutex poisoned");
         let n = guard.execute(
-            "UPDATE mod_uploads SET status = ?2, note = ?3, decided_at = ?4 WHERE id = ?1",
-            params![id, status, note, now],
+            "UPDATE mod_uploads
+               SET status = ?2, note = ?3, decided_at = ?4, decided_by = ?5
+             WHERE id = ?1",
+            params![id, status, note, now, decided_by],
         )?;
         if n == 0 {
             anyhow::bail!("no upload with id {id}");
@@ -447,6 +470,26 @@ impl Accounts {
     }
 }
 
+/// Add a nullable column to an existing table when it is absent -- the ADD
+/// COLUMN counterpart to `CREATE TABLE IF NOT EXISTS`, so a schema addition
+/// reaches a DB that predates it. `table`/`column`/`decl` are code constants,
+/// never user input, so interpolating them is safe. Idempotent.
+fn ensure_column(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<()> {
+    let present = conn
+        .prepare(&format!("PRAGMA table_info({table})"))?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<String>>>()?
+        .iter()
+        .any(|name| name == column);
+    if !present {
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"),
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 /// Widen the `users.role` CHECK to admit the debug rung (#39). `CREATE TABLE IF
 /// NOT EXISTS` cannot alter a table that predates the change, so an existing DB
 /// keeps the old two-value CHECK and would reject a `debug` write. When the
@@ -499,6 +542,8 @@ fn upload_from_row(r: &rusqlite::Row) -> rusqlite::Result<UploadRow> {
         status: r.get(6)?,
         note: r.get(7)?,
         created_at: r.get(8)?,
+        upstream_maintainer: r.get(9)?,
+        decided_by: r.get(10)?,
     })
 }
 
@@ -568,6 +613,67 @@ mod tests {
         let sid = a.sign_in_github(7, "x", Some(Role::Admin)).unwrap();
         a.delete_session(&sid).unwrap();
         assert!(a.session_identity(&sid).unwrap().is_none());
+    }
+
+    #[test]
+    fn upload_keeps_provenance_and_the_decider() {
+        let a = Accounts::open_in_memory().unwrap();
+        let id = a
+            .enqueue_upload(
+                42,
+                "u/42/p",
+                "thaumcraft.jar",
+                &"a".repeat(40),
+                100,
+                Some("the upstream"),
+            )
+            .unwrap();
+        let row = a.get_upload(id).unwrap().unwrap();
+        assert_eq!(row.status, "pending");
+        assert_eq!(row.upstream_maintainer.as_deref(), Some("the upstream"));
+        assert_eq!(row.decided_by, None); // undecided while pending
+
+        a.set_upload_status(id, "approved", None, Some(7)).unwrap();
+        let row = a.get_upload(id).unwrap().unwrap();
+        assert_eq!(row.status, "approved");
+        assert_eq!(row.decided_by, Some(7));
+        // the origin the uploader named survives the decision
+        assert_eq!(row.upstream_maintainer.as_deref(), Some("the upstream"));
+    }
+
+    #[test]
+    fn ensure_column_adds_missing_and_is_idempotent() {
+        // a mod_uploads created before the provenance columns
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE mod_uploads (
+                 id INTEGER PRIMARY KEY, uploader INTEGER NOT NULL, pack_id TEXT NOT NULL,
+                 filename TEXT NOT NULL, sha1 TEXT NOT NULL, size_bytes INTEGER NOT NULL,
+                 status TEXT NOT NULL DEFAULT 'pending', note TEXT, created_at INTEGER NOT NULL,
+                 decided_at INTEGER);",
+        )
+        .unwrap();
+        ensure_column(&conn, "mod_uploads", "upstream_maintainer", "TEXT").unwrap();
+        ensure_column(&conn, "mod_uploads", "decided_by", "INTEGER").unwrap();
+        // a second run is a no-op (column already there)
+        ensure_column(&conn, "mod_uploads", "decided_by", "INTEGER").unwrap();
+        conn.execute(
+            "INSERT INTO mod_uploads
+               (uploader, pack_id, filename, sha1, size_bytes, status, created_at,
+                upstream_maintainer, decided_by)
+             VALUES (1, 'p', 'f.jar', 'sha', 1, 'pending', 0, 'up', 9)",
+            [],
+        )
+        .unwrap();
+        let (m, d): (String, i64) = conn
+            .query_row(
+                "SELECT upstream_maintainer, decided_by FROM mod_uploads",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(m, "up");
+        assert_eq!(d, 9);
     }
 
     #[test]

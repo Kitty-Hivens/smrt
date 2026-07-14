@@ -2,8 +2,8 @@
 //! `require_session` and scoped to what they own. Distinct from `admin`, which
 //! requires the admin role -- this is the member tier of the ladder.
 
-use super::ApiError;
-use crate::accounts::{Identity, UploadRow};
+use super::{ApiError, audit};
+use crate::accounts::{Identity, Role, UploadRow};
 use crate::authoring::curator::{clean_mc_version, jar_facts, read_mcmod_info};
 use crate::authoring::modmeta;
 use crate::domain::{PackConfig, PackSummary, Visibility};
@@ -71,6 +71,13 @@ async fn my_authoring(
 #[derive(Deserialize)]
 struct UploadParams {
     filename: String,
+    /// Who the uploader names as the jar's upstream origin -- archival provenance.
+    #[serde(default)]
+    maintainer: Option<String>,
+    /// Force past the Modrinth-coverage gate (a repackaged/relabeled jar for a
+    /// foreign FML handshake). A debug operation (#39); ignored for lesser roles.
+    #[serde(default)]
+    force: bool,
 }
 
 /// Upload a self-hosted jar for one of the caller's community packs. Two auto-
@@ -105,10 +112,18 @@ async fn upload_jar(
         ));
     }
 
+    // Forcing past the coverage gate is the debug-only escape hatch (#39): a
+    // repackaged/relabeled jar hosted to satisfy a foreign server's FML handshake
+    // (#37). A non-debug caller cannot request it.
+    if p.force && identity.role < Role::Debug {
+        return Err(ApiError::Forbidden);
+    }
+    let forcing = p.force && identity.role >= Role::Debug;
+
     // Coverage gate: a Modrinth-known mod whose (mc, loader) target Modrinth
     // already carries is a relabel, not archival. Conservative -- any uncertainty
-    // falls through to the human moderation queue.
-    if let Some(reason) = modrinth_covers_upload(&state, &body).await? {
+    // falls through to the human moderation queue. Skipped only for a debug force.
+    if !forcing && let Some(reason) = modrinth_covers_upload(&state, &body).await? {
         return Err(ApiError::BadRequest(reason));
     }
 
@@ -116,10 +131,33 @@ async fn upload_jar(
 
     let uid = identity.uid;
     let size = body.len() as i64;
-    let (acc, pid, fname, sha) = (state.accounts.clone(), pack_id, p.filename, sha1);
-    let id = tokio::task::spawn_blocking(move || acc.enqueue_upload(uid, &pid, &fname, &sha, size))
-        .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("enqueue task: {e}")))??;
+    let maintainer = p.maintainer.filter(|s| !s.trim().is_empty());
+    let (audit_sha, audit_pack) = (sha1.clone(), pack_id.clone());
+    let (acc, pid, fname, sha, m) = (
+        state.accounts.clone(),
+        pack_id,
+        p.filename,
+        sha1,
+        maintainer,
+    );
+    let id = tokio::task::spawn_blocking(move || {
+        acc.enqueue_upload(uid, &pid, &fname, &sha, size, m.as_deref())
+    })
+    .await
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("enqueue task: {e}")))??;
+
+    // A forced upload bypassed a policy gate -- record it (the normal queued path
+    // is already visible to moderators, so it needs no audit line of its own).
+    if forcing {
+        audit(
+            &state,
+            &identity,
+            "upload.force",
+            Some(&audit_sha),
+            Some(&audit_pack),
+        )
+        .await;
+    }
 
     let acc = state.accounts.clone();
     let row = tokio::task::spawn_blocking(move || acc.get_upload(id))

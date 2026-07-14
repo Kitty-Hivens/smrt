@@ -353,17 +353,21 @@ export const api = {
     send('POST', `/v1/uploads/${uploadId}/reject`, { note }),
   // member: upload a self-hosted jar for a community pack, and see own uploads
   myUploads: () => getJson<UploadRow[]>('/v1/me/uploads'),
-  async uploadJar(packId: string, file: File): Promise<UploadRow> {
+  async uploadJar(
+    packId: string,
+    file: File,
+    opts?: { maintainer?: string; force?: boolean },
+  ): Promise<UploadRow> {
     const buf = await file.arrayBuffer();
-    const r = await fetch(
-      `/v1/me/packs/${encodeURIComponent(packId)}/uploads?filename=${encodeURIComponent(file.name)}`,
-      {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/java-archive' },
-        body: buf,
-      },
-    );
+    const q = new URLSearchParams({ filename: file.name });
+    if (opts?.maintainer) q.set('maintainer', opts.maintainer);
+    if (opts?.force) q.set('force', 'true');
+    const r = await fetch(`/v1/me/packs/${encodeURIComponent(packId)}/uploads?${q}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/java-archive' },
+      body: buf,
+    });
     if (!r.ok) throw await toError(r);
     return (await r.json()) as UploadRow;
   },

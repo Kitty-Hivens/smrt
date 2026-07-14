@@ -35,7 +35,11 @@ DELETE FROM users WHERE github_uid = 0;
 -- Member jar uploads awaiting moderation. A self-hosted jar never lands in the
 -- shared cache directly: it stages here as `pending`, an operator approves it
 -- (jar promoted to the cache) or rejects it. `note` carries the auto-gate reason
--- or the moderator's. See the upload-moderation policy.
+-- or the moderator's. Provenance (an archival upload must stay a traceable
+-- record): `upstream_maintainer` is who the uploader names as the jar's origin,
+-- `decided_by` the moderator who accepted/rejected it. See the upload-moderation
+-- policy. (upstream_maintainer/decided_by are also added to an older DB by an
+-- ADD COLUMN migration in `Accounts::init`.)
 CREATE TABLE IF NOT EXISTS mod_uploads (
     id         INTEGER PRIMARY KEY,
     uploader   INTEGER NOT NULL,
@@ -47,7 +51,9 @@ CREATE TABLE IF NOT EXISTS mod_uploads (
                CHECK (status IN ('pending', 'approved', 'rejected')),
     note       TEXT,
     created_at INTEGER NOT NULL,
-    decided_at INTEGER
+    decided_at INTEGER,
+    upstream_maintainer TEXT,
+    decided_by INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_uploads_status ON mod_uploads(status);
 CREATE INDEX IF NOT EXISTS idx_uploads_uploader ON mod_uploads(uploader);

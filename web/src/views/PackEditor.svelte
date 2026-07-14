@@ -3,6 +3,7 @@
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { isDebug } from '../lib/roles';
   import type {
     DeclaredAsset,
     Display,
@@ -51,19 +52,54 @@
     }
   }
 
+  // debug operators can force an archival upload past the Modrinth-coverage gate
+  let canDebug = $state(false);
+  api
+    .me()
+    .then((m) => (canDebug = isDebug(m?.role)))
+    .catch(() => {});
+
   // Upload a self-hosted jar for this community pack -- it enters the moderation
-  // queue; once approved it is in the shared cache to add via "from mirror".
+  // queue; once approved it is in the shared cache to add via "from mirror". The
+  // uploader names the jar's upstream origin for archival provenance.
   async function onUploadJar(e: Event) {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
     if (!file) return;
+    const maintainer = await dialogs.prompt(t('pe.uploadMaintainer'), {
+      title: t('pe.uploadJar'),
+      placeholder: t('pe.uploadMaintainerHint'),
+    });
+    if (maintainer == null) return; // cancelled
+    const opts = { maintainer: maintainer.trim() || undefined };
     try {
-      await api.uploadJar(packId, file);
+      await api.uploadJar(packId, file, opts);
       await dialogs.confirm(t('pe.uploadQueued', { name: file.name }), {
         title: t('pe.uploadJar'),
       });
     } catch (x) {
+      // A coverage rejection ("Modrinth already carries ...") can be forced only
+      // by a debug operator -- the repackage-for-FML-handshake exception (#37/#44).
+      const coverage =
+        x instanceof ApiError && x.status === 400 && x.body.includes('already carries');
+      if (canDebug && coverage) {
+        const force = await dialogs.confirm(t('pe.uploadForce', { name: file.name }), {
+          title: t('pe.uploadForceTitle'),
+          danger: true,
+        });
+        if (force) {
+          try {
+            await api.uploadJar(packId, file, { ...opts, force: true });
+            await dialogs.confirm(t('pe.uploadQueued', { name: file.name }), {
+              title: t('pe.uploadJar'),
+            });
+          } catch (y) {
+            err = y instanceof ApiError ? `${y.status} ${y.body}` : String(y);
+          }
+          return;
+        }
+      }
       err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
     }
   }

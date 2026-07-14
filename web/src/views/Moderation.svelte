@@ -59,6 +59,9 @@
             {u.pack_id} &middot; {size(u.size_bytes)} &middot; uid {u.uploader}
           </div>
           <div class="sha faint mono">{u.sha1}</div>
+          {#if u.upstream_maintainer}
+            <div class="origin mono">{t('mod.origin', { who: u.upstream_maintainer })}</div>
+          {/if}
         </div>
         <div class="grow"></div>
         <button class="ok" onclick={() => approve(u)}>{t('mod.approve')}</button>
@@ -110,6 +113,11 @@
     margin-top: 1px;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .origin {
+    font-size: 11px;
+    margin-top: 3px;
+    color: var(--info);
   }
   .grow {
     flex: 1;

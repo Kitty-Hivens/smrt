@@ -3,4 +3,12 @@
 /**
  * A member jar upload in the moderation queue.
  */
-export type UploadRow = { id: number, uploader: number, pack_id: string, filename: string, sha1: string, size_bytes: number, status: string, note?: string, created_at: number, };
+export type UploadRow = { id: number, uploader: number, pack_id: string, filename: string, sha1: string, size_bytes: number, status: string, note?: string, created_at: number, 
+/**
+ * Who the uploader named as the jar's upstream origin (archival provenance).
+ */
+upstream_maintainer?: string, 
+/**
+ * GitHub uid of the moderator who decided this upload; absent while pending.
+ */
+decided_by?: number, };

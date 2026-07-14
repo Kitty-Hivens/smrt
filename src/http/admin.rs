@@ -171,9 +171,12 @@ async fn approve_upload(
         .ok_or(ApiError::NotFound)?;
     state.storage.promote_upload(&upload.sha1).await?;
     let acc = state.accounts.clone();
-    tokio::task::spawn_blocking(move || acc.set_upload_status(id, "approved", None))
-        .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("status task: {e}")))??;
+    let decided_by = identity.uid;
+    tokio::task::spawn_blocking(move || {
+        acc.set_upload_status(id, "approved", None, Some(decided_by))
+    })
+    .await
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("status task: {e}")))??;
     state.harvest.poke();
     audit(
         &state,
@@ -207,9 +210,12 @@ async fn reject_upload(
     state.storage.discard_upload(&upload.sha1).await?;
     let acc = state.accounts.clone();
     let note = body.note.clone();
-    tokio::task::spawn_blocking(move || acc.set_upload_status(id, "rejected", note.as_deref()))
-        .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("status task: {e}")))??;
+    let decided_by = identity.uid;
+    tokio::task::spawn_blocking(move || {
+        acc.set_upload_status(id, "rejected", note.as_deref(), Some(decided_by))
+    })
+    .await
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("status task: {e}")))??;
     audit(
         &state,
         &identity,
