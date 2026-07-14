@@ -14,10 +14,11 @@ use super::classfile::{ClassInfo, parse_class};
 use std::collections::BTreeSet;
 use std::io::Cursor;
 
-/// A mod's runtime side, derived from `@Mod(clientSideOnly/serverSideOnly)` or a
-/// `fabric.mod.json` `environment`. `Both` is the safe default for a 1.12.2
-/// content mod (it must match the server), so an undecided jar yields `None`
-/// rather than a guess.
+/// A mod's runtime side, derived from `@Mod(clientSideOnly/serverSideOnly)`
+/// (Forge 1.7-1.12) or `fabric.mod.json` `environment` (Fabric/Quilt, any
+/// version). Modern Forge/NeoForge declare no standard mod-level side, so those
+/// jars stay `None` -- undecided is treated as both (a content mod must match the
+/// server), which is why we do not guess.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
     Both,

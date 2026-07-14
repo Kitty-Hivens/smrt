@@ -34,9 +34,12 @@ const MOD_DESCRIPTORS: &[&str] = &[
 ];
 
 /// Annotation descriptors that mark a class/method as conditionally-loaded
-/// integration code: Forge's soft-dependency `@Optional.*`, and the common
-/// mod-integration plugin markers. Presence of any of these `Utf8`s in a class's
-/// pool means its references to the named mod are soft, not hard.
+/// integration code across loaders/eras: Forge 1.7-1.12 soft-dependency
+/// `@Optional.*` (modern Forge dropped it for `isModLoaded` guards), plus the
+/// common integration-plugin markers. Presence of any of these `Utf8`s in a
+/// class's pool means its references to the named mod are soft, not hard. The
+/// list is a curated allowlist -- extend it; a miss only over-grades a soft dep
+/// to hard (the safe direction), and an authored edge overrides either way.
 const OPTIONAL_MARKERS: &[&str] = &[
     "Lnet/minecraftforge/fml/common/Optional$Interface;",
     "Lnet/minecraftforge/fml/common/Optional$Method;",
@@ -44,19 +47,24 @@ const OPTIONAL_MARKERS: &[&str] = &[
     "Lcpw/mods/fml/common/Optional$Interface;",
     "Lcpw/mods/fml/common/Optional$Method;",
     "Lcpw/mods/fml/common/Optional$InterfaceList;",
-    // JEI: a plugin class references the JEI API but does not require JEI.
-    "Lmezz/jei/api/JEIPlugin;",
-    "Lmezz/jei/api/JeiPlugin;",
+    // integration plugins: the class references an API it does not require.
+    "Lmezz/jei/api/JEIPlugin;",               // JEI 1.12
+    "Lmezz/jei/api/JeiPlugin;",               // JEI 1.13+
+    "Lmcp/mobius/waila/api/WailaPlugin;",     // Waila / Hwyla
+    "Lsnownee/jade/api/WailaPlugin;",         // Jade
+    "Lcrafttweaker/annotations/ZenRegister;", // CraftTweaker 1.13+
 ];
 
 /// `(owner-class, method-name)` pairs whose invocation guards a code path on a
-/// mod being present. A class that references any of these treats its mod
-/// references as conditional.
+/// mod being present, across loaders and eras. A class that references any of
+/// these treats its mod references as conditional.
 const MOD_LOADED_GUARDS: &[(&str, &str)] = &[
-    ("net/minecraftforge/fml/common/Loader", "isModLoaded"),
-    ("cpw/mods/fml/common/Loader", "isModLoaded"),
-    ("net/minecraftforge/fml/ModList", "isLoaded"),
-    ("net/neoforged/fml/ModList", "isLoaded"),
+    ("cpw/mods/fml/common/Loader", "isModLoaded"), // Forge 1.7.10
+    ("net/minecraftforge/fml/common/Loader", "isModLoaded"), // Forge 1.8-1.12
+    ("net/minecraftforge/fml/ModList", "isLoaded"), // Forge 1.13+
+    ("net/neoforged/fml/ModList", "isLoaded"),     // NeoForge
+    ("net/fabricmc/loader/api/FabricLoader", "isModLoaded"), // Fabric
+    ("org/quiltmc/loader/api/QuiltLoader", "isModLoaded"), // Quilt
 ];
 
 /// The facts one `.class` yields for derivation.
@@ -664,6 +672,26 @@ mod tests {
             info.conditional,
             "isModLoaded guard marks the class conditional"
         );
+    }
+
+    #[test]
+    fn detects_fabric_and_neoforge_guards_as_conditional() {
+        for (owner, method) in [
+            ("net/fabricmc/loader/api/FabricLoader", "isModLoaded"),
+            ("org/quiltmc/loader/api/QuiltLoader", "isModLoaded"),
+            ("net/neoforged/fml/ModList", "isLoaded"),
+        ] {
+            let mut w = ClassWriter::default();
+            let obj = w.class("java/lang/Object");
+            let this = w.class("mymod/compat/Integration");
+            w.methodref(owner, method, "(Ljava/lang/String;)Z");
+            let bytes = w.build(this, obj, &[], 0);
+            let info = parse_class(&bytes).expect("parses");
+            assert!(
+                info.conditional,
+                "{owner}.{method} marks the class conditional"
+            );
+        }
     }
 
     #[test]
