@@ -327,6 +327,9 @@ export const api = {
     send('PUT', `/v1/registry/mod-meta/${modId}`, body),
   editRelease: (releaseId: number, body: { version_number?: string; channel?: string }) =>
     send('PUT', `/v1/registry/releases/${releaseId}`, body),
+  // merge one mod identity into another (surviving into_mod_id); debug-gated
+  mergeMods: (fromModId: number, intoModId: number) =>
+    send('POST', '/v1/registry/merge', { from_mod_id: fromModId, into_mod_id: intoModId }),
   registryBuilds: () => getJson<BuildSummary[]>('/v1/registry/builds'),
   registryBuildMods: (packId: string, packVersion: string) =>
     getJson<BuildModRow[]>(

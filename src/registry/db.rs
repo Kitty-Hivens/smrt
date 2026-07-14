@@ -97,6 +97,13 @@ impl Registry {
         self.with_txn(|c| authored::rename_mod(c, mod_id, name, slug, &now))
     }
 
+    /// Merge the `from` mod identity into `into` (authored). Repoints all of
+    /// `from`'s aliases/releases/files/relations onto `into`, then drops `from`.
+    pub fn merge_mods(&self, from_mod_id: i64, into_mod_id: i64) -> Result<()> {
+        let now = upsert::now_rfc3339();
+        self.with_txn(|c| authored::merge_mods(c, from_mod_id, into_mod_id, &now))
+    }
+
     /// Edit a release's version number and/or channel (authored).
     pub fn edit_release(
         &self,

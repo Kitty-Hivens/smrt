@@ -76,6 +76,110 @@ pub fn set_authored_conflict(
     Ok(())
 }
 
+/// Merge one mod identity into another: repoint every alias, release, file, and
+/// relation from `from_mod_id` onto `into_mod_id`, then drop the now-empty source
+/// mod. For when a mod ended up under two `mods` rows (a modid-harvested jar and
+/// a Modrinth-identified one that failed to collapse, or two hand-created rows).
+///
+/// Release-key collision: `mod_release` is unique on `(mod_id, version_number,
+/// channel)`, so when both mods carry a release with the same key, the source
+/// release's files are folded into the target's release rather than violating it.
+/// Relation and package rows dedupe onto the target (the unique index ignores a
+/// duplicate; any left behind by that ignore is dropped). The survivor is marked
+/// `authored` so the merge decision is precious. Rejects `from == into` and an
+/// unknown id. Idempotent only in that a re-run with the (now gone) source id
+/// fails the existence check.
+pub fn merge_mods(conn: &Connection, from_mod_id: i64, into_mod_id: i64, now: &str) -> Result<()> {
+    if from_mod_id == into_mod_id {
+        bail!("cannot merge a mod into itself");
+    }
+    let exists = |id: i64| -> Result<bool> {
+        Ok(conn
+            .query_row("SELECT 1 FROM mods WHERE id = ?1", params![id], |_| Ok(()))
+            .optional()?
+            .is_some())
+    };
+    if !exists(from_mod_id)? {
+        bail!("source mod {from_mod_id} not in registry");
+    }
+    if !exists(into_mod_id)? {
+        bail!("target mod {into_mod_id} not in registry");
+    }
+
+    // 1. releases: fold a colliding (version_number, channel) into the target's
+    //    release, repoint the rest.
+    let from_releases: Vec<(i64, String, String)> = {
+        let mut stmt =
+            conn.prepare("SELECT id, version_number, channel FROM mod_release WHERE mod_id = ?1")?;
+        stmt.query_map(params![from_mod_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for (rid, vnum, chan) in from_releases {
+        let target: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM mod_release
+                 WHERE mod_id = ?1 AND version_number = ?2 AND channel = ?3",
+                params![into_mod_id, vnum, chan],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match target {
+            Some(tid) => {
+                conn.execute(
+                    "UPDATE mod_version SET release_id = ?2 WHERE release_id = ?1",
+                    params![rid, tid],
+                )?;
+                conn.execute("DELETE FROM mod_release WHERE id = ?1", params![rid])?;
+            }
+            None => {
+                conn.execute(
+                    "UPDATE mod_release SET mod_id = ?2, updated_at = ?3 WHERE id = ?1",
+                    params![rid, into_mod_id, now],
+                )?;
+            }
+        }
+    }
+
+    // 2. files, 3. aliases -- both keyed by content/external key, no collision.
+    conn.execute(
+        "UPDATE mod_version SET mod_id = ?2, updated_at = ?3 WHERE mod_id = ?1",
+        params![from_mod_id, into_mod_id, now],
+    )?;
+    conn.execute(
+        "UPDATE mod_alias SET mod_id = ?2 WHERE mod_id = ?1",
+        params![from_mod_id, into_mod_id],
+    )?;
+
+    // 4. outgoing relations + 5. package prefixes: dedupe onto the target, drop
+    //    any the unique index refused to move.
+    conn.execute(
+        "UPDATE OR IGNORE relation SET from_mod_id = ?2 WHERE from_mod_id = ?1",
+        params![from_mod_id, into_mod_id],
+    )?;
+    conn.execute(
+        "DELETE FROM relation WHERE from_mod_id = ?1",
+        params![from_mod_id],
+    )?;
+    conn.execute(
+        "UPDATE OR IGNORE mod_package SET mod_id = ?2 WHERE mod_id = ?1",
+        params![from_mod_id, into_mod_id],
+    )?;
+    conn.execute(
+        "DELETE FROM mod_package WHERE mod_id = ?1",
+        params![from_mod_id],
+    )?;
+
+    // 6. mark the survivor precious and drop the empty source.
+    conn.execute(
+        "UPDATE mods SET source = 'authored', updated_at = ?2 WHERE id = ?1",
+        params![into_mod_id, now],
+    )?;
+    conn.execute("DELETE FROM mods WHERE id = ?1", params![from_mod_id])?;
+    Ok(())
+}
+
 // ── mod / release / file identity (the authoring door) ───────────────────────
 
 /// Which mod a file belongs to: an existing surrogate id the operator picked, or
@@ -285,7 +389,9 @@ pub fn edit_release(
 
 #[cfg(test)]
 mod tests {
+    use crate::registry::model::{RelKind, Source};
     use crate::registry::{Registry, queries, upsert};
+    use rusqlite::{OptionalExtension, params};
 
     #[test]
     fn authored_facts_survive_reharvest() {
@@ -335,6 +441,93 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    #[test]
+    fn merge_folds_identities_and_colliding_releases() {
+        let r = Registry::open_in_memory().unwrap();
+        // the same mod split in two rows: a modid-harvested one and a
+        // Modrinth-identified one that failed to collapse
+        let (a, b) = r
+            .with_txn(|c| {
+                let a = upsert::upsert_mod_by_alias(c, &[("modid", "foo")], "T0")?;
+                upsert::upsert_mod_version(c, a, "1.0", &["forge"], "sha_a", 1, None, None, "T0")?;
+                upsert::upsert_relation(
+                    c,
+                    a,
+                    "bar",
+                    None,
+                    RelKind::Requires,
+                    Source::Inferred,
+                    "T0",
+                )?;
+                let b = upsert::upsert_mod_by_alias(c, &[("modrinth", "proj")], "T0")?;
+                // 1.0 collides on (version_number, channel) with a's release
+                upsert::upsert_mod_version(c, b, "1.0", &["fabric"], "sha_b", 1, None, None, "T0")?;
+                upsert::upsert_mod_version(c, b, "2.0", &["fabric"], "sha_c", 1, None, None, "T0")?;
+                Ok((a, b))
+            })
+            .unwrap();
+
+        r.merge_mods(a, b).unwrap();
+
+        r.with_conn(|c| {
+            // source gone; both aliases resolve to the survivor
+            assert!(
+                c.query_row("SELECT 1 FROM mods WHERE id = ?1", params![a], |_| Ok(()))
+                    .optional()?
+                    .is_none()
+            );
+            assert_eq!(queries::mod_id_for_alias(c, "modid", "foo")?, Some(b));
+            assert_eq!(queries::mod_id_for_alias(c, "modrinth", "proj")?, Some(b));
+            // all three files under the survivor
+            let files: i64 = c.query_row(
+                "SELECT count(*) FROM mod_version WHERE mod_id = ?1",
+                params![b],
+                |r| r.get(0),
+            )?;
+            assert_eq!(files, 3);
+            // the colliding 1.0/unknown release is folded, not duplicated
+            let rel_10: i64 = c.query_row(
+                "SELECT count(*) FROM mod_release
+                 WHERE mod_id = ?1 AND version_number = '1.0' AND channel = 'unknown'",
+                params![b],
+                |r| r.get(0),
+            )?;
+            assert_eq!(rel_10, 1, "colliding release folded");
+            let files_10: i64 = c.query_row(
+                "SELECT count(*) FROM mod_version mv JOIN mod_release r ON r.id = mv.release_id
+                 WHERE r.mod_id = ?1 AND r.version_number = '1.0'",
+                params![b],
+                |r| r.get(0),
+            )?;
+            assert_eq!(files_10, 2, "both 1.0 files grouped under the survivor");
+            // outgoing relation repointed off the dropped source
+            let moved: i64 = c.query_row(
+                "SELECT count(*) FROM relation WHERE from_mod_id = ?1 AND target_modid = 'bar'",
+                params![b],
+                |r| r.get(0),
+            )?;
+            assert_eq!(moved, 1);
+            let orphaned: i64 = c.query_row(
+                "SELECT count(*) FROM relation WHERE from_mod_id = ?1",
+                params![a],
+                |r| r.get(0),
+            )?;
+            assert_eq!(orphaned, 0);
+            // survivor marked precious
+            let src: String =
+                c.query_row("SELECT source FROM mods WHERE id = ?1", params![b], |r| {
+                    r.get(0)
+                })?;
+            assert_eq!(src, "authored");
+            Ok(())
+        })
+        .unwrap();
+
+        // self-merge and an unknown id are rejected
+        assert!(r.merge_mods(b, b).is_err());
+        assert!(r.merge_mods(9999, b).is_err());
     }
 
     #[test]

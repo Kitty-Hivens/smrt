@@ -77,6 +77,7 @@ fn debug_routes(state: AppState) -> Router {
         .route("/v1/registry/conflicts", post(post_conflict))
         .route("/v1/registry/files/:sha1/identity", put(put_file_identity))
         .route("/v1/registry/releases/:release_id", put(put_release_edit))
+        .route("/v1/registry/merge", post(post_merge))
         .layer(from_fn_with_state(
             state.clone(),
             super::auth::require_debug,
@@ -310,6 +311,37 @@ async fn post_conflict(
         "registry.conflict.add"
     };
     audit(&state, &identity, action, Some(&a_modid), Some(&b_modid)).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct MergeBody {
+    from_mod_id: i64,
+    into_mod_id: i64,
+}
+
+/// Merge two mod identities into one (the surviving `into_mod_id`). Compat-
+/// affecting registry surgery, so debug-gated and audited.
+async fn post_merge(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Json(b): Json<MergeBody>,
+) -> Result<StatusCode, ApiError> {
+    let (from, into) = (b.from_mod_id, b.into_mod_id);
+    run_write(&state, move |reg| reg.merge_mods(from, into))
+        .await
+        .map_err(|e| match e {
+            ApiError::Internal(inner) => ApiError::BadRequest(inner.to_string()),
+            other => other,
+        })?;
+    audit(
+        &state,
+        &identity,
+        "registry.merge",
+        Some(&into.to_string()),
+        Some(&format!("from {from}")),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -152,6 +152,32 @@
     }
   }
 
+  // Merge this mod into another (the target survives). Debug-only registry
+  // surgery: the operator gives the surviving mod's id (shown as #id on each row).
+  async function merge(m: ModSummary, e: Event) {
+    e.stopPropagation();
+    const raw = await dialogs.prompt(t('mm.mergePrompt', { name: m.name, id: m.mod_id }), {
+      title: t('mm.mergeTitle'),
+    });
+    if (raw == null) return;
+    const into = parseInt(raw.trim(), 10);
+    if (!Number.isFinite(into) || into === m.mod_id) {
+      err = t('mm.mergeBadId');
+      return;
+    }
+    const ok = await dialogs.confirm(t('mm.mergeConfirm', { from: m.mod_id, into }), {
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.mergeMods(m.mod_id, into);
+      if (openId === m.mod_id) openId = null;
+      await load();
+    } catch (x) {
+      err = fail(x);
+    }
+  }
+
   async function editReleaseVersion(rel: ReleaseRow) {
     const v = (
       await dialogs.prompt(t('mm.versionPrompt'), {
@@ -290,6 +316,12 @@
               <button class="link" onclick={(e) => rename(m, e)} title={t('mm.renameTitle')}>
                 {t('mm.rename')}
               </button>
+              {#if canDebug}
+                <button class="link" onclick={(e) => merge(m, e)} title={t('mm.mergeTitle')}>
+                  {t('mm.merge')}
+                </button>
+                <span class="faint mono modid">#{m.mod_id}</span>
+              {/if}
             </div>
             {#if relLoading}
               <div class="muted s">{t('common.loading')}</div>
@@ -493,8 +525,13 @@
   }
   .modactions {
     display: flex;
+    align-items: center;
     justify-content: flex-end;
+    gap: var(--space-2);
     padding: 0 0 4px;
+  }
+  .modid {
+    font-size: 11px;
   }
   .factions {
     display: flex;
