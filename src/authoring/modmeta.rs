@@ -45,6 +45,10 @@ pub struct ModMeta {
     /// The mod's own id, when declared. Fallback identity for a jar without an
     /// `mcmod.info` and without a Modrinth match.
     pub modid: Option<String>,
+    /// The Minecraft version the jar targets, from its `minecraft` dependency
+    /// range (the first concrete version in it). Used by the upload gate to check
+    /// Modrinth coverage; `None` when no usable version is declared.
+    pub mc: Option<String>,
     pub deps: Vec<DeclaredDep>,
 }
 
@@ -115,14 +119,28 @@ pub fn parse_mods_toml(text: &str) -> ModMeta {
         .find_map(|m| m.mod_id)
         .filter(|s| !s.trim().is_empty());
     let mut deps = Vec::new();
+    let mut mc = None;
     for entry in parsed.dependencies.into_values().flatten() {
         // read the kind (borrows entry) before consuming its fields
         let Some(kind) = forge_dep_kind(&entry) else {
             continue; // embedded / unknown -> not a graph edge
         };
-        let Some(target) = entry.mod_id.filter(|s| !s.trim().is_empty()) else {
+        let Some(target) = entry
+            .mod_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+        else {
             continue;
         };
+        // the minecraft dependency carries the target MC version, not a mod edge
+        if target.eq_ignore_ascii_case("minecraft") {
+            if mc.is_none() {
+                mc = entry.version_range.as_deref().and_then(first_mc);
+            }
+            continue;
+        }
         if is_platform_modid(&target) {
             continue;
         }
@@ -132,7 +150,7 @@ pub fn parse_mods_toml(text: &str) -> ModMeta {
             version_range: clean_range(entry.version_range),
         });
     }
-    ModMeta { modid, deps }
+    ModMeta { modid, mc, deps }
 }
 
 /// Kind of a Forge/NeoForge dependency: `type` when present, else the legacy
@@ -196,6 +214,13 @@ pub fn parse_fabric_json(bytes: &[u8]) -> ModMeta {
     let Ok(parsed) = serde_json::from_slice::<FabricModJson>(bytes) else {
         return ModMeta::default();
     };
+    // the `minecraft` dependency carries the target MC version
+    let mc = parsed
+        .depends
+        .get("minecraft")
+        .and_then(|p| p.range())
+        .as_deref()
+        .and_then(first_mc);
     let mut deps = Vec::new();
     let mut add = |map: HashMap<String, VersionPredicate>, kind: RelKind| {
         for (modid, pred) in map {
@@ -217,6 +242,7 @@ pub fn parse_fabric_json(bytes: &[u8]) -> ModMeta {
     deps.sort_by(|a, b| a.modid.cmp(&b.modid));
     ModMeta {
         modid: parsed.id.filter(|s| !s.trim().is_empty()),
+        mc,
         deps,
     }
 }
@@ -234,6 +260,19 @@ fn clean_range(range: Option<String>) -> Option<String> {
     range
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty() && s != "*")
+}
+
+/// The first concrete Minecraft version in a dependency range -- the lower bound
+/// of `[1.20.1,)` / `>=1.20.1` / a bare `1.19.2`. Requires a dotted version (so a
+/// bare loader number like `47` is ignored). `None` when the range names none.
+fn first_mc(range: &str) -> Option<String> {
+    let bytes = range.as_bytes();
+    let start = bytes.iter().position(u8::is_ascii_digit)?;
+    let end = range[start..]
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .map_or(range.len(), |i| start + i);
+    let v = range[start..end].trim_end_matches('.');
+    (v.contains('.')).then(|| v.to_string())
 }
 
 #[cfg(test)]
@@ -288,6 +327,24 @@ mod tests {
                 // minecraft filtered as a platform modid; somelib dropped (embedded)
             ]
         );
+    }
+
+    #[test]
+    fn extracts_mc_from_minecraft_dependency() {
+        // Forge: the minecraft dep's range lower bound, and it is not a mod edge
+        let forge = parse_mods_toml(
+            "[[mods]]\nmodId=\"m\"\n[[dependencies.m]]\nmodId=\"minecraft\"\ntype=\"required\"\nversionRange=\"[1.20.1,1.21)\"",
+        );
+        assert_eq!(forge.mc.as_deref(), Some("1.20.1"));
+        assert!(forge.deps.iter().all(|d| d.modid != "minecraft"));
+
+        // Fabric: from depends.minecraft
+        let fabric = parse_fabric_json(br#"{"id":"m","depends":{"minecraft":">=1.19.2"}}"#);
+        assert_eq!(fabric.mc.as_deref(), Some("1.19.2"));
+
+        // a bare loader number (no dot) is not a version
+        assert_eq!(first_mc("[47,)"), None);
+        assert_eq!(first_mc(">=1.20.1"), Some("1.20.1".into()));
     }
 
     #[test]
