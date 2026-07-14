@@ -311,7 +311,9 @@ pub fn mod_version_id_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<i
 }
 
 /// Insert a sourced assertion; de-duped by the (from, target, kind, source,
-/// range) unique index, so a re-harvest adds nothing.
+/// range) unique index, so a re-harvest adds nothing. Returns whether a new row
+/// was actually inserted (false when the dedupe index ignored it), so a caller
+/// can count edges without over-counting duplicates across a mod's several jars.
 pub fn upsert_relation(
     conn: &Connection,
     from_mod_id: i64,
@@ -320,8 +322,8 @@ pub fn upsert_relation(
     kind: RelKind,
     source: Source,
     now: &str,
-) -> Result<()> {
-    conn.execute(
+) -> Result<bool> {
+    let inserted = conn.execute(
         "INSERT OR IGNORE INTO relation
            (from_mod_id, target_modid, target_version_range, kind, source, confidence, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -335,7 +337,7 @@ pub fn upsert_relation(
             now
         ],
     )?;
-    Ok(())
+    Ok(inserted > 0)
 }
 
 pub fn upsert_pack(conn: &Connection, pack_id: &str, now: &str) -> Result<()> {

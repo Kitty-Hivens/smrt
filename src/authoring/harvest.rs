@@ -250,11 +250,17 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         // group the file under the release for its (version, channel)
         let channel = jar.channel.as_deref().unwrap_or("unknown");
         upsert::set_harvested_release(conn, &jar.sha1, mod_id, version, channel, now)?;
-        // Declared deps (author-written) go in for a non-Modrinth jar: mcmod.info
-        // modids for 1.12.2, plus typed + version-ranged deps from modern metadata.
-        // A Modrinth jar's deps come from version.dependencies only (below) -- more
-        // reliable -- so we neither duplicate nor second-guess it here.
-        let is_modrinth = jar.project_id.is_some();
+        // A Modrinth mod's deps come from version.dependencies (below), which is
+        // authoritative -- but only when Modrinth actually declares some. An empty
+        // upstream list is more likely unfilled than a genuine "no dependencies",
+        // so it does NOT suppress the jar's own declaration or the bytecode: we
+        // never want a Modrinth mod to end up with zero edges just because its
+        // Modrinth page is bare.
+        let is_modrinth = jar.project_id.is_some() && !jar.modrinth_deps.is_empty();
+
+        // Declared deps (author-written) go in for a non-authoritative-Modrinth
+        // jar: mcmod.info modids for 1.12.2, plus typed + version-ranged deps from
+        // modern metadata.
         if !is_modrinth {
             for dep in &jar.requires {
                 upsert::upsert_relation(
@@ -268,7 +274,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                 )?;
             }
             for (target, kind, range) in &jar.declared_deps {
-                upsert::upsert_relation(
+                if upsert::upsert_relation(
                     conn,
                     mod_id,
                     target,
@@ -276,8 +282,9 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                     *kind,
                     Source::JarMeta,
                     now,
-                )?;
-                declared_deps_written += 1;
+                )? {
+                    declared_deps_written += 1;
+                }
             }
         }
 
@@ -290,20 +297,17 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
             sides_derived += 1;
         }
 
-        // Modrinth's curated dependency graph is authoritative for a Modrinth mod.
-        // Emit it (target in the `modrinth:<project_id>` selector namespace), and
-        // suppress the bytecode inference for the same mod -- we do not second-
-        // guess a Modrinth-declared requirement.
-        // A Modrinth target lives in the `modrinth:<project_id>` selector
-        // namespace; for such an edge the version slot carries the exact pinned
-        // Modrinth version_id (when Modrinth pins one), not a Maven range.
+        // Emit Modrinth's curated deps whenever the jar is Modrinth-identified. The
+        // target lives in the `modrinth:<project_id>` selector namespace, and for
+        // such an edge the version slot carries the exact pinned Modrinth
+        // version_id (when Modrinth pins one), not a Maven range.
         if let Some(pid) = jar.project_id.as_deref() {
             for (dep_pid, dep_type, version_id) in &jar.modrinth_deps {
                 if dep_pid == pid {
                     continue; // a project never depends on itself
                 }
-                if let Some(kind) = modrinth_rel_kind(dep_type) {
-                    upsert::upsert_relation(
+                if let Some(kind) = modrinth_rel_kind(dep_type)
+                    && upsert::upsert_relation(
                         conn,
                         mod_id,
                         &format!("modrinth:{dep_pid}"),
@@ -311,7 +315,8 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                         kind,
                         Source::Modrinth,
                         now,
-                    )?;
+                    )?
+                {
                     modrinth_deps_written += 1;
                 }
             }
@@ -332,8 +337,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         for prefix in &jar.hard_refs {
             if let Some(target) = resolve_edge_target(conn, prefix, *from_mod_id)?
                 && hard_targets.insert(target.clone())
-            {
-                upsert::upsert_relation(
+                && upsert::upsert_relation(
                     conn,
                     *from_mod_id,
                     &target,
@@ -341,7 +345,8 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                     RelKind::Requires,
                     Source::Inferred,
                     now,
-                )?;
+                )?
+            {
                 inferred_requires += 1;
             }
         }
@@ -350,8 +355,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
             if let Some(target) = resolve_edge_target(conn, prefix, *from_mod_id)?
                 && !hard_targets.contains(&target)
                 && opt_targets.insert(target.clone())
-            {
-                upsert::upsert_relation(
+                && upsert::upsert_relation(
                     conn,
                     *from_mod_id,
                     &target,
@@ -359,7 +363,8 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                     RelKind::OptionalDep,
                     Source::Inferred,
                     now,
-                )?;
+                )?
+            {
                 inferred_optional += 1;
             }
         }
@@ -1267,6 +1272,40 @@ mod tests {
                 ],
                 "typed declared edges with version ranges, sourced jar-meta"
             );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // A Modrinth mod whose upstream version.dependencies is empty is NOT
+    // authoritative: its jar declaration and bytecode still apply, so it does not
+    // end up edgeless just because its Modrinth page is bare.
+    #[test]
+    fn empty_modrinth_deps_does_not_suppress_the_fallback() {
+        let r = Registry::open_in_memory().unwrap();
+        let mut moda = mseed("sha_a", "moda", "PROJ_A", &[]); // Modrinth, but no deps
+        moda.hard_refs = vec!["appeng/api".into()];
+        let scan = ScanData {
+            jars: vec![
+                moda,
+                dseed("sha_ae2", "ae2", &["appeng/api"], &[], &[], None),
+            ],
+            packs: vec![],
+        };
+        let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        assert_eq!(rep.modrinth_deps, 0);
+        assert_eq!(
+            rep.inferred_requires, 1,
+            "bytecode fills in when Modrinth declared nothing"
+        );
+        r.with_conn(|c| {
+            let moda_id = queries::mod_id_for_alias(c, "modid", "moda")?.unwrap();
+            let target: String = c.query_row(
+                "SELECT target_modid FROM relation WHERE from_mod_id = ?1 AND source = 'inferred'",
+                [moda_id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(target, "ae2");
             Ok(())
         })
         .unwrap();

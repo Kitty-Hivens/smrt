@@ -526,6 +526,16 @@ pub(crate) mod fixtures {
             e.extend_from_slice(&v.to_be_bytes());
             self.add(&e)
         }
+        /// A Long constant, which occupies TWO consecutive pool slots (the second
+        /// is unusable). Returns the index of the first slot.
+        pub(crate) fn long(&mut self, v: i64) -> u16 {
+            self.pool.push(5u8);
+            self.pool.extend_from_slice(&v.to_be_bytes());
+            self.count += 1;
+            let idx = self.count;
+            self.count += 1; // reserve the phantom second slot
+            idx
+        }
         pub(crate) fn name_and_type(&mut self, name: &str, desc: &str) -> u16 {
             let n = self.utf8(name);
             let d = self.utf8(desc);
@@ -736,6 +746,24 @@ mod tests {
         let bytes = w.build(this, obj, &attrs, 1);
         let info = parse_class(&bytes).expect("parses");
         assert_eq!(info.mod_sides, Some((true, false)));
+    }
+
+    #[test]
+    fn parses_pool_with_a_long_two_slot_entry() {
+        // A Long consumes two pool slots; if the parser miscounts, every index
+        // after it shifts and this_class / references resolve to the wrong entry.
+        let mut w = ClassWriter::default();
+        let obj = w.class("java/lang/Object");
+        w.long(0x0123_4567_89ab_cdef);
+        let this = w.class("some/Mod");
+        w.class("other/Lib");
+        let bytes = w.build(this, obj, &[], 0);
+        let info = parse_class(&bytes).expect("parses past a long constant");
+        assert_eq!(
+            info.this_class, "some/Mod",
+            "index alignment survived the long"
+        );
+        assert!(info.referenced.contains("other/Lib"));
     }
 
     #[test]
