@@ -14,6 +14,7 @@
 
 use super::bytecode;
 use super::curator::{JarFacts, McModInfo, clean_mc_version, jar_facts, read_mcmod_info};
+use super::modmeta;
 use super::modrinth::Modrinth;
 use crate::registry::model::{RelKind, Source};
 use crate::registry::{Registry, queries, upsert};
@@ -54,11 +55,16 @@ pub struct JarSeed {
     pub optional_refs: Vec<String>,
     // Derived runtime side (both/client/server), or None when undecided.
     pub side: Option<String>,
-    // Modrinth `version.dependencies` (target project_id, dependency_type), for a
-    // Modrinth-identified jar. This is Modrinth's curated dependency graph -- more
-    // reliable than either a jar declaration or bytecode -- so it is authoritative
-    // and suppresses the bytecode inference for the same mod.
-    pub modrinth_deps: Vec<(String, String)>,
+    // Modrinth `version.dependencies` (target project_id, dependency_type, pinned
+    // version_id if any), for a Modrinth-identified jar. This is Modrinth's curated
+    // dependency graph -- more reliable than either a jar declaration or bytecode --
+    // so it is authoritative and suppresses every other dependency source for the
+    // same mod.
+    pub modrinth_deps: Vec<(String, String, Option<String>)>,
+    // Modern declared deps (mods.toml / neoforge.mods.toml / fabric.mod.json):
+    // typed, version-ranged. Emitted for a non-Modrinth jar; the target modid,
+    // its relation kind, and an optional version range.
+    pub declared_deps: Vec<(String, RelKind, Option<String>)>,
 }
 
 pub struct BuildModSeed {
@@ -103,6 +109,9 @@ pub struct HarvestReport {
     pub sides_derived: i64,
     /// Dependency edges taken from Modrinth `version.dependencies` this harvest.
     pub modrinth_deps: i64,
+    /// Typed dependency edges taken from modern declared metadata (mods.toml /
+    /// neoforge.mods.toml / fabric.mod.json) this harvest.
+    pub declared_deps: i64,
 }
 
 // mcmod.info dependency lists routinely name the platform, not a real mod.
@@ -190,6 +199,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
 
     let mut sides_derived = 0i64;
     let mut modrinth_deps_written = 0i64;
+    let mut declared_deps_written = 0i64;
     // (from_mod_id, jar) for jars carrying references, resolved to edges in a
     // second pass once every jar's packages are in the index.
     let mut derivations: Vec<(i64, &JarSeed)> = Vec::new();
@@ -240,16 +250,35 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         // group the file under the release for its (version, channel)
         let channel = jar.channel.as_deref().unwrap_or("unknown");
         upsert::set_harvested_release(conn, &jar.sha1, mod_id, version, channel, now)?;
-        for dep in &jar.requires {
-            upsert::upsert_relation(
-                conn,
-                mod_id,
-                dep,
-                None,
-                RelKind::Requires,
-                Source::JarMeta,
-                now,
-            )?;
+        // Declared deps (author-written) go in for a non-Modrinth jar: mcmod.info
+        // modids for 1.12.2, plus typed + version-ranged deps from modern metadata.
+        // A Modrinth jar's deps come from version.dependencies only (below) -- more
+        // reliable -- so we neither duplicate nor second-guess it here.
+        let is_modrinth = jar.project_id.is_some();
+        if !is_modrinth {
+            for dep in &jar.requires {
+                upsert::upsert_relation(
+                    conn,
+                    mod_id,
+                    dep,
+                    None,
+                    RelKind::Requires,
+                    Source::JarMeta,
+                    now,
+                )?;
+            }
+            for (target, kind, range) in &jar.declared_deps {
+                upsert::upsert_relation(
+                    conn,
+                    mod_id,
+                    target,
+                    range.as_deref(),
+                    *kind,
+                    Source::JarMeta,
+                    now,
+                )?;
+                declared_deps_written += 1;
+            }
         }
 
         // bytecode-derived facts: this jar's owned packages (into the index) and
@@ -265,9 +294,11 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         // Emit it (target in the `modrinth:<project_id>` selector namespace), and
         // suppress the bytecode inference for the same mod -- we do not second-
         // guess a Modrinth-declared requirement.
-        let is_modrinth = jar.project_id.is_some();
+        // A Modrinth target lives in the `modrinth:<project_id>` selector
+        // namespace; for such an edge the version slot carries the exact pinned
+        // Modrinth version_id (when Modrinth pins one), not a Maven range.
         if let Some(pid) = jar.project_id.as_deref() {
-            for (dep_pid, dep_type) in &jar.modrinth_deps {
+            for (dep_pid, dep_type, version_id) in &jar.modrinth_deps {
                 if dep_pid == pid {
                     continue; // a project never depends on itself
                 }
@@ -276,7 +307,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                         conn,
                         mod_id,
                         &format!("modrinth:{dep_pid}"),
-                        None,
+                        version_id.as_deref(),
                         kind,
                         Source::Modrinth,
                         now,
@@ -410,6 +441,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         inferred_optional,
         sides_derived,
         modrinth_deps: modrinth_deps_written,
+        declared_deps: declared_deps_written,
     })
 }
 
@@ -429,6 +461,7 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
     let mut mcmod_by_sha: HashMap<String, McModInfo> = HashMap::new();
     let mut facts_by_sha: HashMap<String, JarFacts> = HashMap::new();
     let mut bytecode_by_sha: HashMap<String, bytecode::JarBytecode> = HashMap::new();
+    let mut modmeta_by_sha: HashMap<String, modmeta::ModMeta> = HashMap::new();
     for e in &inventory {
         let Ok(path) = storage.cache_jar_path(&e.sha1[..2], &e.sha1) else {
             continue;
@@ -438,6 +471,7 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
         };
         facts_by_sha.insert(e.sha1.clone(), jar_facts(&bytes));
         bytecode_by_sha.insert(e.sha1.clone(), bytecode::scan_jar(&bytes));
+        modmeta_by_sha.insert(e.sha1.clone(), modmeta::read_mod_meta(&bytes));
         if let Ok(Some(info)) = read_mcmod_info(&bytes)
             && !info.modid.is_empty()
         {
@@ -553,6 +587,7 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
             let mrv = modrinth_by_sha.get(&sha);
             let facts = facts_by_sha.get(&sha);
             let bc = bytecode_by_sha.get(&sha);
+            let mm = modmeta_by_sha.get(&sha);
             let project = mrv.and_then(|v| projects.get(&v.project_id));
             // name: jar-meta name wins (local), else Modrinth title
             let name = info
@@ -572,7 +607,12 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
             let slug = project.map(|p| p.slug.clone()).filter(|s| !s.is_empty());
             JarSeed {
                 size_bytes: size_by_sha.get(&sha).copied().unwrap_or(0),
-                modid: info.map(|i| i.modid.clone()).filter(|s| !s.is_empty()),
+                // identity: jar-meta modid wins; else the modern declared modid,
+                // so a self-hosted modern jar (no mcmod.info) is not identity-less.
+                modid: info
+                    .map(|i| i.modid.clone())
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| mm.and_then(|m| m.modid.clone())),
                 version: info
                     .map(|i| i.version.clone())
                     .filter(|s| !s.is_empty())
@@ -617,14 +657,25 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
                     .unwrap_or_default(),
                 side: bc.and_then(|b| b.side).map(|s| s.as_str().to_string()),
                 // Modrinth's declared deps, keeping only those naming a target
-                // project (a dependency may carry only a version id -- skip those).
+                // project (a dependency may carry only a version id -- skip those);
+                // a pinned version_id rides along as the exact-version constraint.
                 modrinth_deps: mrv
                     .map(|v| {
                         v.dependencies
                             .iter()
                             .filter_map(|d| {
-                                d.project_id.clone().map(|p| (p, d.dependency_type.clone()))
+                                d.project_id
+                                    .clone()
+                                    .map(|p| (p, d.dependency_type.clone(), d.version_id.clone()))
                             })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                declared_deps: mm
+                    .map(|m| {
+                        m.deps
+                            .iter()
+                            .map(|d| (d.modid.clone(), d.kind, d.version_range.clone()))
                             .collect()
                     })
                     .unwrap_or_default(),
@@ -678,6 +729,7 @@ mod tests {
                     optional_refs: vec![],
                     side: None,
                     modrinth_deps: vec![],
+                    declared_deps: vec![],
                 },
                 JarSeed {
                     sha1: "sha_b".into(),
@@ -699,6 +751,7 @@ mod tests {
                     optional_refs: vec![],
                     side: None,
                     modrinth_deps: vec![],
+                    declared_deps: vec![],
                 },
                 JarSeed {
                     sha1: "sha_noid".into(),
@@ -720,6 +773,7 @@ mod tests {
                     optional_refs: vec![],
                     side: None,
                     modrinth_deps: vec![],
+                    declared_deps: vec![],
                 },
             ],
             packs: vec![PackSeed {
@@ -872,6 +926,7 @@ mod tests {
             optional_refs: vec![],
             side: None,
             modrinth_deps: vec![],
+            declared_deps: vec![],
         }
     }
 
@@ -905,16 +960,33 @@ mod tests {
             optional_refs: strs(opt),
             side: side.map(String::from),
             modrinth_deps: vec![],
+            declared_deps: vec![],
         }
     }
 
-    /// A Modrinth-identified jar seed carrying `version.dependencies`.
-    fn mseed(sha: &str, modid: &str, project_id: &str, deps: &[(&str, &str)]) -> JarSeed {
+    /// A Modrinth-identified jar seed carrying `version.dependencies`
+    /// (project_id, dependency_type, optional pinned version_id).
+    fn mseed(
+        sha: &str,
+        modid: &str,
+        project_id: &str,
+        deps: &[(&str, &str, Option<&str>)],
+    ) -> JarSeed {
         let mut s = dseed(sha, modid, &[], &[], &[], None);
         s.project_id = Some(project_id.into());
         s.modrinth_deps = deps
             .iter()
-            .map(|(p, t)| (p.to_string(), t.to_string()))
+            .map(|(p, t, v)| (p.to_string(), t.to_string(), v.map(String::from)))
+            .collect();
+        s
+    }
+
+    /// A non-Modrinth jar seed carrying modern declared deps (modid, kind, range).
+    fn ddseed(sha: &str, modid: &str, deps: &[(&str, RelKind, Option<&str>)]) -> JarSeed {
+        let mut s = dseed(sha, modid, &[], &[], &[], None);
+        s.declared_deps = deps
+            .iter()
+            .map(|(m, k, v)| (m.to_string(), *k, v.map(String::from)))
             .collect();
         s
     }
@@ -1064,15 +1136,17 @@ mod tests {
             "moda",
             "PROJ_A",
             &[
-                ("PROJ_LIB", "required"),
-                ("PROJ_OPT", "optional"),
-                ("PROJ_BAD", "incompatible"),
-                ("PROJ_EMB", "embedded"), // bundled -> no edge
-                ("PROJ_A", "required"),   // self -> skipped
+                ("PROJ_LIB", "required", Some("VER123")), // pinned to an exact version
+                ("PROJ_OPT", "optional", None),
+                ("PROJ_BAD", "incompatible", None),
+                ("PROJ_EMB", "embedded", None), // bundled -> no edge
+                ("PROJ_A", "required", None),   // self -> skipped
             ],
         );
-        // a real bytecode reference that WOULD be an inferred edge if not suppressed
+        // a real bytecode reference AND a jar declaration that would each be an edge
+        // if not suppressed -- Modrinth's version.dependencies is the sole source
         moda.hard_refs = vec!["appeng/api".into()];
+        moda.declared_deps = vec![("suppressed".into(), RelKind::Requires, None)];
         let scan = ScanData {
             jars: vec![
                 moda,
@@ -1087,11 +1161,15 @@ mod tests {
             rep.inferred_requires, 0,
             "bytecode suppressed for a Modrinth mod"
         );
+        assert_eq!(
+            rep.declared_deps, 0,
+            "jar declaration suppressed for a Modrinth mod"
+        );
 
         r.with_conn(|c| {
             let moda_id = queries::mod_id_for_alias(c, "modid", "moda")?.unwrap();
             let mut stmt = c.prepare(
-                "SELECT target_modid, kind, source FROM relation
+                "SELECT target_modid, kind, source, target_version_range FROM relation
                  WHERE from_mod_id = ?1 ORDER BY target_modid",
             )?;
             let rows = stmt
@@ -1100,6 +1178,7 @@ mod tests {
                         r.get::<_, String>(0)?,
                         r.get::<_, String>(1)?,
                         r.get::<_, String>(2)?,
+                        r.get::<_, Option<String>>(3)?,
                     ))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1109,20 +1188,84 @@ mod tests {
                     (
                         "modrinth:PROJ_BAD".into(),
                         "conflicts".into(),
-                        "modrinth".into()
+                        "modrinth".into(),
+                        None,
                     ),
+                    // required dep pinned to its exact Modrinth version_id
                     (
                         "modrinth:PROJ_LIB".into(),
                         "requires".into(),
-                        "modrinth".into()
+                        "modrinth".into(),
+                        Some("VER123".into()),
                     ),
                     (
                         "modrinth:PROJ_OPT".into(),
                         "optional_dep".into(),
-                        "modrinth".into()
+                        "modrinth".into(),
+                        None,
                     ),
                 ],
-                "typed Modrinth edges only; embedded + self dropped; no inferred edge"
+                "typed Modrinth edges with a version pin; embedded + self dropped; no inferred edge"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // A self-hosted modern jar (no Modrinth): its declared metadata becomes typed,
+    // version-ranged jar-meta edges.
+    #[test]
+    fn write_scan_takes_modern_declared_deps() {
+        let r = Registry::open_in_memory().unwrap();
+        let scan = ScanData {
+            jars: vec![ddseed(
+                "sha_m",
+                "mymod",
+                &[
+                    ("jei", RelKind::Requires, Some("[15,)")),
+                    ("architectury", RelKind::OptionalDep, None),
+                    ("badmod", RelKind::Conflicts, None),
+                ],
+            )],
+            packs: vec![],
+        };
+        let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        assert_eq!(rep.declared_deps, 3);
+
+        r.with_conn(|c| {
+            let mymod = queries::mod_id_for_alias(c, "modid", "mymod")?.unwrap();
+            let mut stmt = c.prepare(
+                "SELECT target_modid, kind, source, target_version_range FROM relation
+                 WHERE from_mod_id = ?1 ORDER BY target_modid",
+            )?;
+            let rows = stmt
+                .query_map([mymod], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            assert_eq!(
+                rows,
+                vec![
+                    (
+                        "architectury".into(),
+                        "optional_dep".into(),
+                        "jar-meta".into(),
+                        None,
+                    ),
+                    ("badmod".into(), "conflicts".into(), "jar-meta".into(), None),
+                    (
+                        "jei".into(),
+                        "requires".into(),
+                        "jar-meta".into(),
+                        Some("[15,)".into()),
+                    ),
+                ],
+                "typed declared edges with version ranges, sourced jar-meta"
             );
             Ok(())
         })

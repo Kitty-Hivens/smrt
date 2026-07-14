@@ -14,6 +14,7 @@ pub mod classfile;
 pub mod curator;
 pub mod harvest;
 pub mod harvest_sched;
+pub mod modmeta;
 pub mod modrinth;
 pub mod reconstruct;
 pub mod validate;

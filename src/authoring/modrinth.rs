@@ -369,11 +369,14 @@ pub struct Version {
 }
 
 /// A Modrinth version dependency. `project_id` is the target (Modrinth
-/// namespace); `dependency_type` is required|optional|incompatible|embedded.
+/// namespace); `version_id` pins an exact version when set; `dependency_type` is
+/// required|optional|incompatible|embedded.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dependency {
     #[serde(default)]
     pub project_id: Option<String>,
+    #[serde(default)]
+    pub version_id: Option<String>,
     #[serde(default)]
     pub dependency_type: String,
 }
