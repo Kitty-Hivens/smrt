@@ -82,6 +82,7 @@ impl HarvestScheduler {
                         builds = rep.builds,
                         inferred_requires = rep.inferred_requires,
                         inferred_optional = rep.inferred_optional,
+                        modrinth_deps = rep.modrinth_deps,
                         sides = rep.sides_derived,
                         "auto-harvest complete"
                     ),

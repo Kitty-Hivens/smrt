@@ -296,6 +296,7 @@ async fn run_registry_harvest(storage: &Path) -> Result<()> {
         builds = report.builds,
         inferred_requires = report.inferred_requires,
         inferred_optional = report.inferred_optional,
+        modrinth_deps = report.modrinth_deps,
         sides = report.sides_derived,
         "harvest complete"
     );
