@@ -1,7 +1,7 @@
 -- accounts.db: persistent user identities (from GitHub OAuth) and server-side
 -- sessions keyed to a user -- the multi-user auth foundation. A sign-in is a
--- `users` row; a session id maps to a user, not to a raw token. Grants,
--- user_flags, upload moderation, and the audit log join here in later phases.
+-- `users` row; a session id maps to a user, not to a raw token. Grants and
+-- user_flags may join here in later phases.
 
 CREATE TABLE IF NOT EXISTS accounts_meta (
     k TEXT PRIMARY KEY,
@@ -51,6 +51,23 @@ CREATE TABLE IF NOT EXISTS mod_uploads (
 );
 CREATE INDEX IF NOT EXISTS idx_uploads_status ON mod_uploads(status);
 CREATE INDEX IF NOT EXISTS idx_uploads_uploader ON mod_uploads(uploader);
+
+-- System-wide audit log: who did what, when. Every accountable operator /
+-- moderator action (role changes, upload decisions, pack edits, takedowns, ...)
+-- records the actor's github identity, the action, its target, and optional
+-- detail. Community-mirror accountability -- a plain "who did what" trail for the
+-- mirror's own operators. Local-only; never egresses.
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          INTEGER PRIMARY KEY,
+    actor_uid   INTEGER NOT NULL,
+    actor_login TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    target      TEXT,
+    detail      TEXT,
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_uid);
 
 -- Rules-of-use acceptance, keyed by github uid. A member must accept before
 -- authoring or forking community content. A separate table (not a users column)

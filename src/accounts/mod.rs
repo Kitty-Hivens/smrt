@@ -101,6 +101,26 @@ pub struct UploadRow {
     pub created_at: i64,
 }
 
+/// One entry in the system-wide audit log: who did what, when.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct AuditRow {
+    #[ts(type = "number")]
+    pub id: i64,
+    #[ts(type = "number")]
+    pub actor_uid: i64,
+    pub actor_login: String,
+    pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub detail: Option<String>,
+    #[ts(type = "number")]
+    pub created_at: i64,
+}
+
 pub struct Accounts {
     conn: Mutex<Connection>,
 }
@@ -366,6 +386,52 @@ impl Accounts {
             .unwrap_or(false);
         Ok(accepted)
     }
+
+    // ── audit log ────────────────────────────────────────────────────────────
+
+    /// Append one entry to the system-wide audit log. Blocking. Callers treat a
+    /// failure as non-fatal to the audited action -- the action already happened;
+    /// a lost entry is logged, not raised.
+    pub fn record_audit(
+        &self,
+        actor_uid: i64,
+        actor_login: &str,
+        action: &str,
+        target: Option<&str>,
+        detail: Option<&str>,
+    ) -> Result<()> {
+        let now = unix_now();
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard.execute(
+            "INSERT INTO audit_log (actor_uid, actor_login, action, target, detail, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![actor_uid, actor_login, action, target, detail, now],
+        )?;
+        Ok(())
+    }
+
+    /// The most recent audit entries, newest first, capped at `limit`. Blocking.
+    pub fn list_audit(&self, limit: i64) -> Result<Vec<AuditRow>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let mut stmt = guard.prepare(
+            "SELECT id, actor_uid, actor_login, action, target, detail, created_at
+             FROM audit_log ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit], |r| {
+                Ok(AuditRow {
+                    id: r.get(0)?,
+                    actor_uid: r.get(1)?,
+                    actor_login: r.get(2)?,
+                    action: r.get(3)?,
+                    target: r.get(4)?,
+                    detail: r.get(5)?,
+                    created_at: r.get(6)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
 }
 
 fn upload_from_row(r: &rusqlite::Row) -> rusqlite::Result<UploadRow> {
@@ -473,5 +539,23 @@ mod tests {
 
         // the reserved uid 0 is untouchable
         assert!(a.set_role(0, "member").is_err());
+    }
+
+    #[test]
+    fn audit_log_records_and_lists_newest_first() {
+        let a = Accounts::open_in_memory().unwrap();
+        a.record_audit(42, "octocat", "role.set", Some("7"), Some("admin"))
+            .unwrap();
+        a.record_audit(42, "octocat", "upload.approve", Some("deadbeef"), None)
+            .unwrap();
+        let rows = a.list_audit(10).unwrap();
+        assert_eq!(rows.len(), 2);
+        // newest first
+        assert_eq!(rows[0].action, "upload.approve");
+        assert_eq!(rows[0].target.as_deref(), Some("deadbeef"));
+        assert_eq!(rows[0].detail, None);
+        assert_eq!(rows[1].action, "role.set");
+        assert_eq!(rows[1].actor_login, "octocat");
+        assert_eq!(rows[1].detail.as_deref(), Some("admin"));
     }
 }

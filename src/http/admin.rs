@@ -1,5 +1,5 @@
 use super::ApiError;
-use crate::accounts::{Identity, UploadRow, UserRow};
+use crate::accounts::{AuditRow, Identity, UploadRow, UserRow};
 use crate::authoring::{ValidateReport, jar_icon, modrinth, reconstruct_config, validate};
 use crate::domain::*;
 use crate::state::AppState;
@@ -45,6 +45,7 @@ fn operator_router(state: AppState) -> Router {
         .route("/v1/uploads", get(list_uploads))
         .route("/v1/uploads/:id/approve", post(approve_upload))
         .route("/v1/uploads/:id/reject", post(reject_upload))
+        .route("/v1/audit", get(get_audit_log))
         .layer(DefaultBodyLimit::max(ADMIN_BODY_LIMIT))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
         .with_state(state)
@@ -90,6 +91,41 @@ fn authoring_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+// ── audit ────────────────────────────────────────────────────────────────────
+
+/// Best-effort audit write: record who did what. A failure is logged, never
+/// raised -- the audited action already happened, so a lost trail entry must not
+/// turn a successful operation into an error for the caller.
+async fn audit(
+    state: &AppState,
+    who: &Identity,
+    action: &str,
+    target: Option<&str>,
+    detail: Option<&str>,
+) {
+    let acc = state.accounts.clone();
+    let (uid, login, action) = (who.uid, who.login.clone(), action.to_string());
+    let (target, detail) = (target.map(String::from), detail.map(String::from));
+    let res = tokio::task::spawn_blocking(move || {
+        acc.record_audit(uid, &login, &action, target.as_deref(), detail.as_deref())
+    })
+    .await;
+    match res {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => tracing::warn!(error = %e, "audit write failed"),
+        Err(e) => tracing::warn!(error = %e, "audit task failed"),
+    }
+}
+
+/// The recent audit trail, newest first -- the operator's "who did what" view.
+async fn get_audit_log(State(state): State<AppState>) -> Result<Json<Vec<AuditRow>>, ApiError> {
+    let acc = state.accounts.clone();
+    let rows = tokio::task::spawn_blocking(move || acc.list_audit(200))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("audit task: {e}")))??;
+    Ok(Json(rows))
+}
+
 // ── handlers ───────────────────────────────────────────────────────────────
 
 /// Every registered user and their role, for the operator's user-management
@@ -110,15 +146,24 @@ struct RoleReq {
 /// Set a user's role (member/admin) by GitHub uid.
 async fn set_user_role(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path(uid): Path<i64>,
     Json(req): Json<RoleReq>,
 ) -> Result<StatusCode, ApiError> {
     let acc = state.accounts.clone();
-    let role = req.role;
+    let role = req.role.clone();
     tokio::task::spawn_blocking(move || acc.set_role(uid, &role))
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("role task: {e}")))?
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    audit(
+        &state,
+        &identity,
+        "role.set",
+        Some(&uid.to_string()),
+        Some(&req.role),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -135,6 +180,7 @@ async fn list_uploads(State(state): State<AppState>) -> Result<Json<Vec<UploadRo
 /// approved. The registry is poked so the new artifact is harvested.
 async fn approve_upload(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     let acc = state.accounts.clone();
@@ -148,6 +194,14 @@ async fn approve_upload(
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("status task: {e}")))??;
     state.harvest.poke();
+    audit(
+        &state,
+        &identity,
+        "upload.approve",
+        Some(&upload.sha1),
+        Some(&upload.pack_id),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -160,6 +214,7 @@ struct RejectBody {
 /// optional moderator note the uploader sees.
 async fn reject_upload(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<i64>,
     Json(body): Json<RejectBody>,
 ) -> Result<StatusCode, ApiError> {
@@ -170,10 +225,18 @@ async fn reject_upload(
         .ok_or(ApiError::NotFound)?;
     state.storage.discard_upload(&upload.sha1).await?;
     let acc = state.accounts.clone();
-    let note = body.note;
+    let note = body.note.clone();
     tokio::task::spawn_blocking(move || acc.set_upload_status(id, "rejected", note.as_deref()))
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("status task: {e}")))??;
+    audit(
+        &state,
+        &identity,
+        "upload.reject",
+        Some(&upload.sha1),
+        body.note.as_deref(),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -218,6 +281,7 @@ async fn put_cache_jar(
 
 async fn delete_cache_jar(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path((prefix, filename)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
     let sha1 = filename
@@ -228,6 +292,7 @@ async fn delete_cache_jar(
     }
     state.storage.delete_cache_jar(sha1).await?;
     state.harvest.poke(); // artifact gone -> refresh the registry
+    audit(&state, &identity, "cache.delete", Some(sha1), None).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -675,6 +740,14 @@ async fn put_pack_config(
         },
     }
     state.storage.save_pack_config(&pack_id, &cfg).await?;
+    audit(
+        &state,
+        &identity,
+        "pack.config",
+        Some(&pack_id),
+        Some(&format!("{} mods", cfg.mods.len())),
+    )
+    .await;
     Ok((StatusCode::CREATED, Json(cfg)))
 }
 
@@ -703,6 +776,14 @@ async fn revert_pack_config(
     let summary = state.storage.load_pack_summary(&pack_id).await?;
     let cfg = reconstruct_config(&manifest, &summary);
     state.storage.save_pack_config(&pack_id, &cfg).await?;
+    audit(
+        &state,
+        &identity,
+        "pack.revert",
+        Some(&pack_id),
+        Some(&p.version),
+    )
+    .await;
     Ok(Json(cfg))
 }
 
@@ -766,6 +847,7 @@ async fn delete_pack(
         return Err(ApiError::Forbidden);
     }
     state.storage.delete_pack(&pack_id).await?;
+    audit(&state, &identity, "pack.delete", Some(&pack_id), None).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -784,6 +866,14 @@ async fn set_pack_visibility(
         .storage
         .set_pack_visibility(&pack_id, req.visibility)
         .await?;
+    audit(
+        &state,
+        &identity,
+        "pack.visibility",
+        Some(&pack_id),
+        Some(&format!("{:?}", req.visibility)),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
