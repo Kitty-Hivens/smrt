@@ -17,6 +17,7 @@ pub mod harvest_sched;
 pub mod modmeta;
 pub mod modrinth;
 pub mod reconstruct;
+pub mod resolve;
 pub mod validate;
 
 pub use bootstrap::{BootstrapArgs, bootstrap};
@@ -28,4 +29,5 @@ pub use curator::{
 pub use harvest_sched::HarvestScheduler;
 pub use modrinth::*;
 pub use reconstruct::reconstruct_config;
+pub use resolve::{ResolveReport, resolve_pack};
 pub use validate::{ValidateReport, validate};

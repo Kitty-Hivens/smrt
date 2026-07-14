@@ -43,6 +43,14 @@ export type { Requirement } from './bindings/Requirement';
 // validate report (config vs SC archive)
 export type { ValidateReport } from './bindings/ValidateReport';
 
+// resolve report (config vs registry dependency graph)
+export type { ResolveReport } from './bindings/ResolveReport';
+export type { MissingDep } from './bindings/MissingDep';
+export type { ActiveConflict } from './bindings/ActiveConflict';
+export type { CapabilityOverlap } from './bindings/CapabilityOverlap';
+export type { VersionIssue } from './bindings/VersionIssue';
+export type { RequiredHint } from './bindings/RequiredHint';
+
 // accounts (users + roles)
 export type { UserRow } from './bindings/UserRow';
 export type { UploadRow } from './bindings/UploadRow';

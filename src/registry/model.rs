@@ -40,6 +40,20 @@ impl Source {
     pub fn is_precious(self) -> bool {
         matches!(self, Source::Curator | Source::Authored)
     }
+    /// Inverse of [`as_str`], for reading a stored `relation.source` back into the
+    /// vocab. `None` for an unrecognised cell (a forward-compat guard, not a hard
+    /// error -- an unknown source just drops out of the resolver's precedence).
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "curator" => Source::Curator,
+            "authored" => Source::Authored,
+            "jar-meta" => Source::JarMeta,
+            "modrinth" => Source::Modrinth,
+            "inferred" => Source::Inferred,
+            "harvested" => Source::Harvested,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +77,33 @@ impl RelKind {
             RelKind::Breaks => "breaks",
         }
     }
+    /// Inverse of [`as_str`], for reading a stored `relation.kind` back into the
+    /// vocab. `None` for an unrecognised cell (see [`Source::parse`]).
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "requires" => RelKind::Requires,
+            "conflicts" => RelKind::Conflicts,
+            "optional_dep" => RelKind::OptionalDep,
+            "provides" => RelKind::Provides,
+            "recommends" => RelKind::Recommends,
+            "breaks" => RelKind::Breaks,
+            _ => return None,
+        })
+    }
+}
+
+/// One edge out of a mod in the dependency graph, as the resolver reads it:
+/// the target selector (a bare modid, or `modrinth:<project_id>`), an optional
+/// Maven/semver version window, the kind, and the provenance -- `confidence`
+/// carries the source rank so a caller can pick the authoritative edge per
+/// target without re-deriving it. No I/O; filled by `queries::relations_from`.
+#[derive(Debug, Clone)]
+pub struct RelationRow {
+    pub target: String,
+    pub version_range: Option<String>,
+    pub kind: RelKind,
+    pub source: Source,
+    pub confidence: i64,
 }
 
 /// Q1: a (pack build, version, filename) that ships a given mod.

@@ -8,6 +8,7 @@
     Display,
     JobStatus,
     PackConfig,
+    ResolveReport,
     SourceDecl,
     ValidateReport,
   } from '../lib/types';
@@ -15,6 +16,7 @@
   import BrandingEditor from './BrandingEditor.svelte';
   import JobLog from './JobLog.svelte';
   import ModIcon from './ModIcon.svelte';
+  import ResolvePanel from './ResolvePanel.svelte';
   import ModrinthPicker from './ModrinthPicker.svelte';
   import MirrorPicker from './MirrorPicker.svelte';
   import GithubPicker from './GithubPicker.svelte';
@@ -107,6 +109,11 @@
   let validating = $state(false);
   let valReport = $state<ValidateReport | null>(null);
   let valErr = $state('');
+
+  // resolve the saved config against the registry dependency graph
+  let resolving = $state(false);
+  let resReport = $state<ResolveReport | null>(null);
+  let resErr = $state('');
 
   // published build versions, for "revert config to build" (config edits autosave
   // with no undo, so the last built state is the recovery point)
@@ -247,6 +254,32 @@
     } finally {
       validating = false;
       input.value = '';
+    }
+  }
+
+  // Resolve reads the SAVED config, so flush a pending autosave first -- the
+  // report must reflect what is on screen, not the last debounced save.
+  async function onResolve() {
+    if (!cfg) return;
+    resolving = true;
+    resErr = '';
+    try {
+      const s = sig();
+      if (s !== lastSig) {
+        clearTimeout(saveTimer);
+        await doSave(s);
+        if (saveState === 'error') {
+          resErr = saveErr;
+          resReport = null;
+          return;
+        }
+      }
+      resReport = await api.resolvePack(packId);
+    } catch (x) {
+      resErr = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+      resReport = null;
+    } finally {
+      resolving = false;
     }
   }
 
@@ -583,6 +616,8 @@
           {/if}
         </div>
       {:else}
+        {#if resErr}<div class="err mono">{resErr}</div>{/if}
+        {#if resReport}<ResolvePanel report={resReport} />{/if}
         {#if valErr}<div class="err mono">{valErr}</div>{/if}
         {#if valReport}
           <div class="panel valrep">
@@ -635,6 +670,9 @@
                 <input type="file" accept=".jar" onchange={onUploadJar} hidden />
               </label>
             {/if}
+            <button class="sm" onclick={onResolve} disabled={resolving} title={t('resolve.hint')}>
+              {resolving ? t('resolve.resolving') : t('resolve.resolve')}
+            </button>
             <label class="sm valbtn">
               {validating ? t('pe.validating') : t('pe.validate')}
               <input type="file" accept=".zip" onchange={onValidate} disabled={validating} hidden />

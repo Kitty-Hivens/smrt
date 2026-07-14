@@ -1,6 +1,8 @@
 use super::ApiError;
 use crate::accounts::{AuditRow, Identity, UploadRow, UserRow};
-use crate::authoring::{ValidateReport, jar_icon, modrinth, reconstruct_config, validate};
+use crate::authoring::{
+    ResolveReport, ValidateReport, jar_icon, modrinth, reconstruct_config, resolve_pack, validate,
+};
 use crate::domain::*;
 use crate::state::AppState;
 use axum::body::Bytes;
@@ -80,6 +82,7 @@ fn authoring_router(state: AppState) -> Router {
             post(duplicate_pack),
         )
         .route("/v1/authoring/packs/:pack_id/validate", post(validate_pack))
+        .route("/v1/authoring/packs/:pack_id/resolve", get(pack_resolve))
         .route("/v1/modrinth/search", get(modrinth_search))
         .route("/v1/modrinth/versions", get(modrinth_versions))
         .route("/v1/modrinth/icon", get(modrinth_icon))
@@ -481,6 +484,30 @@ async fn validate_pack(
     let report = tokio::task::spawn_blocking(move || validate(&cfg, &body))
         .await
         .map_err(|e| ApiError::Internal(e.into()))?
+        .map_err(ApiError::Internal)?;
+    Ok(Json(report))
+}
+
+// ── resolve against the dependency graph ─────────────────────────────────────
+
+// Read the saved config and check it against the registry dependency graph:
+// unmet hard deps, active conflicts, capability overlaps, version windows, and
+// which declared mods are depended-on. Read-only -- it never edits the config,
+// so required/optional stays the pack's decision. spawn_blocking: the registry
+// is a synchronous SQLite handle.
+async fn pack_resolve(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+) -> Result<Json<ResolveReport>, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    let cfg = state.storage.load_pack_config(&pack_id).await?;
+    let registry = state.registry.clone();
+    let report = tokio::task::spawn_blocking(move || registry.with_conn(|c| resolve_pack(c, &cfg)))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("resolve task: {e}")))?
         .map_err(ApiError::Internal)?;
     Ok(Json(report))
 }

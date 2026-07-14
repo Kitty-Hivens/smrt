@@ -21,6 +21,7 @@ import type {
   PackManifest,
   PackSummary,
   ReleaseRow,
+  ResolveReport,
   ServerEntry,
   ServerListing,
   UnassignedJar,
@@ -220,6 +221,10 @@ export const api = {
     getJson<PackManifest>(
       `/v1/packs/${encodeURIComponent(id)}/manifest/${encodeURIComponent(version)}`,
     ),
+
+  // ── resolve the saved config against the registry dependency graph ──
+  resolvePack: (id: string) =>
+    getJson<ResolveReport>(`/v1/authoring/packs/${encodeURIComponent(id)}/resolve`),
 
   // ── validate a config against an SC archive ──
   async validatePack(id: string, file: File): Promise<ValidateReport> {

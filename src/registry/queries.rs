@@ -116,6 +116,75 @@ pub fn owner_mod_for_prefix(conn: &Connection, prefix: &str) -> Result<Option<i6
     Ok(if ids.len() == 1 { Some(ids[0]) } else { None })
 }
 
+/// Resolve a `relation.target_modid` selector to a mod row id. A bare value is a
+/// `modid` alias; a `modrinth:<project_id>` value (the fallback the derivation
+/// emits when a target carries no modid) is a Modrinth-project alias.
+pub fn mod_id_for_selector(conn: &Connection, selector: &str) -> Result<Option<i64>> {
+    match selector.strip_prefix("modrinth:") {
+        Some(pid) => mod_id_for_alias(conn, "modrinth", pid),
+        None => mod_id_for_alias(conn, "modid", selector),
+    }
+}
+
+/// The `mod` row id + version string of the harvested artifact with this sha1.
+/// The resolver uses it to place a self-hosted mod on the graph and read the
+/// version it would ship, for the version-window check.
+pub fn artifact_by_sha1(conn: &Connection, sha1: &str) -> Result<Option<(i64, String)>> {
+    Ok(conn
+        .query_row(
+            "SELECT mod_id, version FROM mod_version WHERE sha1 = ?1",
+            params![sha1],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?)
+}
+
+/// The version string of a harvested Modrinth artifact, keyed by its Modrinth
+/// version id (a pack pins a Modrinth mod by version id, not sha1).
+pub fn version_by_modrinth_version_id(
+    conn: &Connection,
+    version_id: &str,
+) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT version FROM mod_version WHERE modrinth_version_id = ?1 LIMIT 1",
+            params![version_id],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
+/// Every edge out of `from_mod_id` in the dependency graph, for the resolver.
+/// Ordered by `confidence` (the stored source rank) descending so the caller
+/// reads the authoritative edge per target first -- an authored/curator fact
+/// outranks a jar-meta declaration, which outranks a bytecode inference. A row
+/// whose `kind`/`source` cell is unrecognised is skipped, not fatal.
+pub fn relations_from(conn: &Connection, from_mod_id: i64) -> Result<Vec<RelationRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT target_modid, target_version_range, kind, source, confidence
+         FROM relation
+         WHERE from_mod_id = ?1
+         ORDER BY confidence DESC, id",
+    )?;
+    let mut rows = stmt.query(params![from_mod_id])?;
+    let mut out = Vec::new();
+    while let Some(r) = rows.next()? {
+        let kind: String = r.get(2)?;
+        let source: String = r.get(3)?;
+        let (Some(kind), Some(source)) = (RelKind::parse(&kind), Source::parse(&source)) else {
+            continue;
+        };
+        out.push(RelationRow {
+            target: r.get(0)?,
+            version_range: r.get(1)?,
+            kind,
+            source,
+            confidence: r.get(4)?,
+        });
+    }
+    Ok(out)
+}
+
 /// Q1 -- which pack builds ship the mod identified by `(alias_source, key)`.
 pub fn packs_using_mod(
     conn: &Connection,
