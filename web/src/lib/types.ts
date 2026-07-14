@@ -46,6 +46,7 @@ export type { ValidateReport } from './bindings/ValidateReport';
 // accounts (users + roles)
 export type { UserRow } from './bindings/UserRow';
 export type { UploadRow } from './bindings/UploadRow';
+export type { AuditRow } from './bindings/AuditRow';
 
 // registry browser (mods + builds, faceted)
 export type { ModSummary } from './bindings/ModSummary';

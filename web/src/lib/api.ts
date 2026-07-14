@@ -2,6 +2,7 @@
 // API. credentials:'include' carries the session cookie set at login.
 
 import type {
+  AuditRow,
   AuthoringPacksListing,
   BuildModRow,
   BuildSummary,
@@ -332,6 +333,7 @@ export const api = {
     ),
 
   listUsers: () => getJson<UserRow[]>('/v1/users'),
+  auditLog: () => getJson<AuditRow[]>('/v1/audit'),
   setUserRole: (uid: number, role: string) =>
     send('POST', `/v1/users/${uid}/role`, { role }),
   setVisibility: (id: string, visibility: Visibility) =>

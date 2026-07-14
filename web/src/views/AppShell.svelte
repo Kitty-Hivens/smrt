@@ -57,6 +57,7 @@
     mods: 'nav.mods',
     users: 'nav.users',
     moderation: 'nav.moderation',
+    audit: 'nav.audit',
     profile: 'nav.profile',
     mypacks: 'nav.mypacks',
   };

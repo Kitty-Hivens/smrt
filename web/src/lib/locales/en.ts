@@ -335,6 +335,7 @@ export const en = {
   'nav.mods': 'Mods',
   'nav.users': 'Users',
   'nav.moderation': 'Moderation',
+  'nav.audit': 'Audit',
   'mod.approve': 'Approve',
   'mod.reject': 'Reject',
   'mod.rejectNote': 'Reason (shown to the uploader)',
@@ -349,6 +350,7 @@ export const en = {
   'terms.body':
     'By creating or forking community content you agree to the rules: only upload mods you may redistribute, do not self-host mods available on Modrinth, and keep content lawful. Uploaded jars are moderated. Accept to continue.',
   'users.empty': 'No one has signed in yet.',
+  'audit.empty': 'No audit entries yet.',
   'users.lastLogin': 'last seen',
   'users.never': 'never',
   'users.promote': 'Make admin',
