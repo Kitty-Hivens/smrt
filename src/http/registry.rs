@@ -7,7 +7,8 @@
 //! operator tolerates the few-second wait. Streaming it as a job is a Phase 2
 //! nicety, not needed here.
 
-use super::ApiError;
+use super::{ApiError, audit};
+use crate::accounts::Identity;
 use crate::authoring::harvest::{self, HarvestReport};
 use crate::authoring::reconstruct_config;
 use crate::domain::DeclaredAsset;
@@ -21,10 +22,16 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::middleware::from_fn_with_state;
 use axum::routing::{get, post, put};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 
 pub fn router(state: AppState) -> Router {
+    operator_routes(state.clone()).merge(debug_routes(state))
+}
+
+/// Reads, harvest, backup, and cosmetic authoring (mod rename) -- none of these
+/// move the compatibility graph, so the admin role is enough.
+fn operator_routes(state: AppState) -> Router {
     Router::new()
         .route("/v1/registry/harvest", post(post_harvest))
         .route("/v1/registry/stats", get(get_stats))
@@ -51,15 +58,29 @@ pub fn router(state: AppState) -> Router {
             "/v1/registry/mods/:alias_source/:external_key/uses",
             get(get_mod_uses),
         )
-        // authored moderation (Phase 2)
-        .route("/v1/registry/conflicts", post(post_conflict))
         .route("/v1/registry/backup", post(post_backup))
-        // authored identity door: jars needing identity, and setting it
+        // needs-identity door: jars with no identity yet (listing only; assigning
+        // one asserts compat facts, so the write side is debug-gated below)
         .route("/v1/registry/unassigned", get(get_unassigned))
-        .route("/v1/registry/files/:sha1/identity", put(put_file_identity))
+        // cosmetic: canonical name / slug, nothing the resolver reads
         .route("/v1/registry/mod-meta/:mod_id", put(put_mod_rename))
-        .route("/v1/registry/releases/:release_id", put(put_release_edit))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
+        .with_state(state)
+}
+
+/// Compat-affecting authoring (#39): asserting a jar's loaders/mc/version, a
+/// release's version number, or a dependency/conflict fact. These move the
+/// derivation graph the eligibility + resolver ride on, so they sit above the
+/// admin token on the debug rung and are audited.
+fn debug_routes(state: AppState) -> Router {
+    Router::new()
+        .route("/v1/registry/conflicts", post(post_conflict))
+        .route("/v1/registry/files/:sha1/identity", put(put_file_identity))
+        .route("/v1/registry/releases/:release_id", put(put_release_edit))
+        .layer(from_fn_with_state(
+            state.clone(),
+            super::auth::require_debug,
+        ))
         .with_state(state)
 }
 
@@ -275,12 +296,20 @@ struct ConflictBody {
 
 async fn post_conflict(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Json(b): Json<ConflictBody>,
 ) -> Result<StatusCode, ApiError> {
+    let (a_modid, b_modid, remove) = (b.a_modid.clone(), b.b_modid.clone(), b.remove);
     run_write(&state, move |reg| {
         reg.set_conflict(&b.a_modid, &b.b_modid, b.remove)
     })
     .await?;
+    let action = if remove {
+        "registry.conflict.remove"
+    } else {
+        "registry.conflict.add"
+    };
+    audit(&state, &identity, action, Some(&a_modid), Some(&b_modid)).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -352,6 +381,7 @@ struct AuthoredFile {
 // cache, and the write is `source='authored'` so a re-harvest never reverts it.
 async fn put_file_identity(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path(sha1): Path<String>,
     Json(body): Json<IdentityBody>,
 ) -> Result<Json<AuthoredFile>, ApiError> {
@@ -393,6 +423,9 @@ async fn put_file_identity(
             )
         })?;
 
+    // captured before `body` moves into the write closure
+    let audit_target = sha1.clone();
+    let audit_detail = format!("{} {}", body.version_number.trim(), body.channel);
     let mv_id = run_write(&state, move |reg| {
         let mod_ref = match (body.mod_id, body.mod_name.as_deref().map(str::trim)) {
             (Some(id), _) => authored::ModRef::Existing(id),
@@ -412,6 +445,14 @@ async fn put_file_identity(
         reg.author_file(&fid)
     })
     .await?;
+    audit(
+        &state,
+        &identity,
+        "registry.file.identity",
+        Some(&audit_target),
+        Some(&audit_detail),
+    )
+    .await;
     Ok(Json(AuthoredFile {
         mod_version_id: mv_id,
     }))
@@ -447,6 +488,7 @@ struct EditReleaseBody {
 
 async fn put_release_edit(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     Path(release_id): Path<i64>,
     Json(b): Json<EditReleaseBody>,
 ) -> Result<StatusCode, ApiError> {
@@ -458,6 +500,11 @@ async fn put_release_edit(
             authored::CHANNELS
         )));
     }
+    let detail = [b.version_number.clone(), b.channel.clone()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ");
     run_write(&state, move |reg| {
         reg.edit_release(
             release_id,
@@ -466,5 +513,13 @@ async fn put_release_edit(
         )
     })
     .await?;
+    audit(
+        &state,
+        &identity,
+        "registry.release.edit",
+        Some(&release_id.to_string()),
+        Some(&detail),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }

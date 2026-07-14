@@ -21,14 +21,16 @@ const SESSION_TTL: Duration = Duration::from_secs(86_400);
 const BREAK_GLASS_UID: i64 = 0;
 
 /// The panel's authorization tiers, ordered low -> high: **declaration order is
-/// the rank** (`Member < Admin`), so `role >= Role::Admin` is the admin gate and
-/// the future `Debug` rung -- a role ABOVE admin (#39), not a flag -- slots on
-/// top for free by being declared after `Admin`. `member` is the default on
-/// sign-in; `admin` comes from the operator allowlist.
+/// the rank** (`Member < Admin < Debug`), so `role >= Role::Admin` is the admin
+/// gate and `role >= Role::Debug` the debug gate. `Debug` is a rung ABOVE admin
+/// (#39), not a flag: a guard on the compat-affecting authoring that would
+/// otherwise let a casual operator corrupt the derivation graph. `member` is the
+/// default on sign-in; `admin`/`debug` come from the operator allowlists.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Role {
     Member,
     Admin,
+    Debug,
 }
 
 impl Role {
@@ -36,11 +38,13 @@ impl Role {
         match self {
             Role::Member => "member",
             Role::Admin => "admin",
+            Role::Debug => "debug",
         }
     }
 
     fn from_db(s: &str) -> Role {
         match s {
+            "debug" => Role::Debug,
             "admin" => Role::Admin,
             _ => Role::Member,
         }
@@ -149,36 +153,45 @@ impl Accounts {
         .context("setting accounts pragmas")?;
         conn.execute_batch(SCHEMA)
             .context("applying accounts schema")?;
+        widen_role_check(&conn).context("widening users.role check")?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
     }
 
     /// Upsert the signed-in GitHub user and open a session for them, returning
-    /// the opaque session id for the cookie. `is_admin` comes from the operator
-    /// allowlist and sets the role on the record -- the admin source until DB
-    /// grants land. A returning user keeps their row; login and last-login
-    /// refresh. Blocking; wrap in `spawn_blocking`.
-    pub fn sign_in_github(&self, github_uid: i64, login: &str, is_admin: bool) -> Result<String> {
+    /// the opaque session id for the cookie. `forced_role` comes from the operator
+    /// allowlists (admin or debug) and is authoritative -- it sets the role on the
+    /// record and re-asserts it on every login. `None` seeds a plain member on
+    /// first sight, then leaves the role alone so an operator's UI promotion
+    /// sticks across the user's later logins. A returning user keeps their row;
+    /// login and last-login refresh. Blocking; wrap in `spawn_blocking`.
+    pub fn sign_in_github(
+        &self,
+        github_uid: i64,
+        login: &str,
+        forced_role: Option<Role>,
+    ) -> Result<String> {
         let now = unix_now();
-        // Allowlisted uids: env is authoritative, always admin. Others: seed
-        // member on first sight, then leave the role alone so an operator's UI
-        // promotion sticks across the user's later logins.
-        let sql = if is_admin {
-            "INSERT INTO users (github_uid, login, role, created_at, last_login_at)
-             VALUES (?1, ?2, 'admin', ?3, ?3)
-             ON CONFLICT(github_uid) DO UPDATE SET
-               login = excluded.login, role = 'admin', last_login_at = excluded.last_login_at"
-        } else {
-            "INSERT INTO users (github_uid, login, role, created_at, last_login_at)
-             VALUES (?1, ?2, 'member', ?3, ?3)
-             ON CONFLICT(github_uid) DO UPDATE SET
-               login = excluded.login, last_login_at = excluded.last_login_at"
-        };
         let mut guard = self.conn.lock().expect("accounts mutex poisoned");
         let tx = guard.transaction().context("begin sign-in txn")?;
-        tx.execute(sql, params![github_uid, login, now])
-            .context("upsert user")?;
+        match forced_role {
+            Some(role) => tx.execute(
+                "INSERT INTO users (github_uid, login, role, created_at, last_login_at)
+                 VALUES (?1, ?2, ?4, ?3, ?3)
+                 ON CONFLICT(github_uid) DO UPDATE SET
+                   login = excluded.login, role = ?4, last_login_at = excluded.last_login_at",
+                params![github_uid, login, now, role.as_str()],
+            ),
+            None => tx.execute(
+                "INSERT INTO users (github_uid, login, role, created_at, last_login_at)
+                 VALUES (?1, ?2, 'member', ?3, ?3)
+                 ON CONFLICT(github_uid) DO UPDATE SET
+                   login = excluded.login, last_login_at = excluded.last_login_at",
+                params![github_uid, login, now],
+            ),
+        }
+        .context("upsert user")?;
         let user_id: i64 = tx
             .query_row(
                 "SELECT id FROM users WHERE github_uid = ?1",
@@ -266,7 +279,7 @@ impl Accounts {
         if github_uid == BREAK_GLASS_UID {
             anyhow::bail!("cannot change the reserved uid 0");
         }
-        if role != "member" && role != "admin" {
+        if role != "member" && role != "admin" && role != "debug" {
             anyhow::bail!("invalid role '{role}'");
         }
         let guard = self.conn.lock().expect("accounts mutex poisoned");
@@ -434,6 +447,47 @@ impl Accounts {
     }
 }
 
+/// Widen the `users.role` CHECK to admit the debug rung (#39). `CREATE TABLE IF
+/// NOT EXISTS` cannot alter a table that predates the change, so an existing DB
+/// keeps the old two-value CHECK and would reject a `debug` write. When the
+/// stored DDL still lacks it, rebuild the table (SQLite's supported path for a
+/// CHECK change) with ids preserved so the `sessions` foreign key stays valid.
+/// Idempotent and a no-op on a fresh DB, whose schema already carries the rung.
+fn widen_role_check(conn: &Connection) -> Result<()> {
+    let ddl: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let needs_rebuild = ddl.is_some_and(|sql| sql.contains("CHECK") && !sql.contains("'debug'"));
+    if !needs_rebuild {
+        return Ok(());
+    }
+    // foreign_keys must be toggled outside a transaction; off so dropping the old
+    // users table does not disturb sessions rows, whose ids we carry over intact.
+    conn.execute_batch(
+        "PRAGMA foreign_keys = OFF;
+         BEGIN;
+         CREATE TABLE users_new (
+             id            INTEGER PRIMARY KEY,
+             github_uid    INTEGER NOT NULL UNIQUE,
+             login         TEXT NOT NULL,
+             role          TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'admin', 'debug')),
+             created_at    INTEGER NOT NULL,
+             last_login_at INTEGER NOT NULL
+         );
+         INSERT INTO users_new (id, github_uid, login, role, created_at, last_login_at)
+           SELECT id, github_uid, login, role, created_at, last_login_at FROM users;
+         DROP TABLE users;
+         ALTER TABLE users_new RENAME TO users;
+         COMMIT;
+         PRAGMA foreign_keys = ON;",
+    )?;
+    Ok(())
+}
+
 fn upload_from_row(r: &rusqlite::Row) -> rusqlite::Result<UploadRow> {
     Ok(UploadRow {
         id: r.get(0)?,
@@ -481,7 +535,7 @@ mod tests {
     #[test]
     fn github_sign_in_persists_user_and_resolves_session() {
         let a = Accounts::open_in_memory().unwrap();
-        let sid = a.sign_in_github(42, "octocat", false).unwrap();
+        let sid = a.sign_in_github(42, "octocat", None).unwrap();
         let id = a.session_identity(&sid).unwrap().expect("session resolves");
         assert_eq!(id.uid, 42);
         assert_eq!(id.login, "octocat");
@@ -489,7 +543,9 @@ mod tests {
 
         // a second sign-in reuses the row (no duplicate), and the allowlist can
         // promote the same uid to admin
-        let sid2 = a.sign_in_github(42, "octocat-renamed", true).unwrap();
+        let sid2 = a
+            .sign_in_github(42, "octocat-renamed", Some(Role::Admin))
+            .unwrap();
         let id2 = a.session_identity(&sid2).unwrap().unwrap();
         assert_eq!(id2.login, "octocat-renamed");
         assert_eq!(id2.role, Role::Admin);
@@ -509,24 +565,46 @@ mod tests {
     #[test]
     fn deleted_session_stops_resolving() {
         let a = Accounts::open_in_memory().unwrap();
-        let sid = a.sign_in_github(7, "x", true).unwrap();
+        let sid = a.sign_in_github(7, "x", Some(Role::Admin)).unwrap();
         a.delete_session(&sid).unwrap();
         assert!(a.session_identity(&sid).unwrap().is_none());
+    }
+
+    #[test]
+    fn debug_rung_outranks_admin_and_is_grantable() {
+        let a = Accounts::open_in_memory().unwrap();
+        // allowlisted as debug -> the top rung, re-asserted on login
+        let sid = a.sign_in_github(3, "t", Some(Role::Debug)).unwrap();
+        let id = a.session_identity(&sid).unwrap().unwrap();
+        assert_eq!(id.role, Role::Debug);
+        assert!(id.role > Role::Admin);
+
+        // a member can be granted debug through the UI path
+        a.sign_in_github(11, "helper", None).unwrap();
+        a.set_role(11, "debug").unwrap();
+        let sid2 = a.sign_in_github(11, "helper", None).unwrap();
+        assert_eq!(
+            a.session_identity(&sid2).unwrap().unwrap().role,
+            Role::Debug
+        );
+
+        // an unknown role is still rejected
+        assert!(a.set_role(11, "root").is_err());
     }
 
     #[test]
     fn ui_promotion_sticks_but_allowlist_stays_authoritative() {
         let a = Accounts::open_in_memory().unwrap();
         // a non-allowlisted member is promoted via the UI, then signs in again
-        a.sign_in_github(5, "m", false).unwrap();
+        a.sign_in_github(5, "m", None).unwrap();
         a.set_role(5, "admin").unwrap();
-        let sid = a.sign_in_github(5, "m", false).unwrap();
+        let sid = a.sign_in_github(5, "m", None).unwrap();
         assert_eq!(a.session_identity(&sid).unwrap().unwrap().role, Role::Admin);
 
         // an allowlisted user re-promotes to admin on login even after a demote
-        a.sign_in_github(9, "op", true).unwrap();
+        a.sign_in_github(9, "op", Some(Role::Admin)).unwrap();
         a.set_role(9, "member").unwrap();
-        let sid2 = a.sign_in_github(9, "op", true).unwrap();
+        let sid2 = a.sign_in_github(9, "op", Some(Role::Admin)).unwrap();
         assert_eq!(
             a.session_identity(&sid2).unwrap().unwrap().role,
             Role::Admin
@@ -539,6 +617,51 @@ mod tests {
 
         // the reserved uid 0 is untouchable
         assert!(a.set_role(0, "member").is_err());
+    }
+
+    #[test]
+    fn role_check_migration_admits_debug_on_a_legacy_db() {
+        // a DB created before the debug rung: the two-value CHECK rejects 'debug'
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE users (
+                 id INTEGER PRIMARY KEY, github_uid INTEGER NOT NULL UNIQUE, login TEXT NOT NULL,
+                 role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'admin')),
+                 created_at INTEGER NOT NULL, last_login_at INTEGER NOT NULL);
+             CREATE TABLE sessions (id TEXT PRIMARY KEY,
+                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                 created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+             INSERT INTO users (github_uid, login, role, created_at, last_login_at)
+               VALUES (5, 'x', 'admin', 0, 0);
+             INSERT INTO sessions VALUES ('s', 1, 0, 0);",
+        )
+        .unwrap();
+        assert!(
+            conn.execute("UPDATE users SET role = 'debug' WHERE github_uid = 5", [])
+                .is_err(),
+            "legacy CHECK should reject debug"
+        );
+
+        widen_role_check(&conn).unwrap();
+
+        // after the rebuild debug is accepted and the row + its session survived
+        conn.execute("UPDATE users SET role = 'debug' WHERE github_uid = 5", [])
+            .unwrap();
+        let role: String = conn
+            .query_row("SELECT role FROM users WHERE github_uid = 5", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(role, "debug");
+        let sessions: i64 = conn
+            .query_row("SELECT count(*) FROM sessions WHERE user_id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(sessions, 1);
+
+        // second run is a no-op (DDL already carries the rung)
+        widen_role_check(&conn).unwrap();
     }
 
     #[test]

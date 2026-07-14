@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY,
     github_uid    INTEGER NOT NULL UNIQUE,
     login         TEXT NOT NULL,
-    role          TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'admin')),
+    role          TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'admin', 'debug')),
     created_at    INTEGER NOT NULL,
     last_login_at INTEGER NOT NULL
 );

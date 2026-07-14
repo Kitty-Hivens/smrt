@@ -22,6 +22,12 @@ pub struct Config {
     /// GitHub numeric user ids granted the admin role on sign-in. Keyed by uid,
     /// not login: a login can be renamed or reassigned, a uid cannot.
     pub admin_github_uids: Vec<u64>,
+    /// Machine-bearer token for the debug rung (compat-affecting authoring),
+    /// above `admin_token`. Unset -> no break-glass debug bearer.
+    pub debug_token: Option<String>,
+    /// GitHub numeric user ids granted the debug role on sign-in -- the rung above
+    /// admin (#39). A uid here outranks the admin allowlist.
+    pub debug_github_uids: Vec<u64>,
 }
 
 impl Config {
@@ -47,11 +53,16 @@ impl Config {
         let nonempty = |k: &str| std::env::var(k).ok().filter(|s| !s.trim().is_empty());
         let github_client_id = nonempty("SMRT_GITHUB_CLIENT_ID");
         let github_client_secret = nonempty("SMRT_GITHUB_CLIENT_SECRET");
-        let admin_github_uids = std::env::var("SMRT_ADMIN_GITHUB_UIDS")
-            .unwrap_or_default()
-            .split(',')
-            .filter_map(|s| s.trim().parse::<u64>().ok())
-            .collect();
+        let parse_uids = |k: &str| -> Vec<u64> {
+            std::env::var(k)
+                .unwrap_or_default()
+                .split(',')
+                .filter_map(|s| s.trim().parse::<u64>().ok())
+                .collect()
+        };
+        let admin_github_uids = parse_uids("SMRT_ADMIN_GITHUB_UIDS");
+        let debug_github_uids = parse_uids("SMRT_DEBUG_GITHUB_UIDS");
+        let debug_token = std::env::var("SMRT_DEBUG_TOKEN").ok();
 
         Ok(Self {
             bind_addr,
@@ -62,6 +73,8 @@ impl Config {
             github_client_id,
             github_client_secret,
             admin_github_uids,
+            debug_token,
+            debug_github_uids,
         })
     }
 }

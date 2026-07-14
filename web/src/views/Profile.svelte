@@ -59,4 +59,9 @@
     border-color: color-mix(in srgb, var(--info) 45%, var(--seam));
     background: var(--info-soft);
   }
+  .chip.role-debug {
+    color: var(--warn);
+    border-color: color-mix(in srgb, var(--warn) 45%, var(--seam));
+    background: var(--warn-soft);
+  }
 </style>

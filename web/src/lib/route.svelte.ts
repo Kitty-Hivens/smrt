@@ -2,6 +2,8 @@
 // (which highlights + sets it) and the content area (which renders by it).
 // Persisted so a refresh keeps you where you were.
 
+import { isOperator } from './roles';
+
 export type Section =
   | 'browse'
   | 'overview'
@@ -33,7 +35,7 @@ export const MEMBER_SECTIONS: Section[] = ['browse', 'mypacks', 'profile'];
 const KNOWN_SECTIONS: Section[] = [...SECTIONS, 'mypacks'];
 export function visibleSections(me: { role: string } | null): Section[] {
   if (!me) return GUEST_SECTIONS;
-  if (me.role === 'admin') return SECTIONS;
+  if (isOperator(me.role)) return SECTIONS;
   return MEMBER_SECTIONS;
 }
 

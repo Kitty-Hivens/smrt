@@ -14,8 +14,34 @@ pub mod registry;
 
 pub use error::ApiError;
 
+use crate::accounts::Identity;
 use crate::state::AppState;
 use axum::Router;
+
+/// Best-effort audit write shared by the admin and registry write paths: record
+/// who did what. A failure is logged, never raised -- the audited action already
+/// happened, so a lost trail entry must not turn a successful operation into an
+/// error for the caller.
+pub(crate) async fn audit(
+    state: &AppState,
+    who: &Identity,
+    action: &str,
+    target: Option<&str>,
+    detail: Option<&str>,
+) {
+    let acc = state.accounts.clone();
+    let (uid, login, action) = (who.uid, who.login.clone(), action.to_string());
+    let (target, detail) = (target.map(String::from), detail.map(String::from));
+    let res = tokio::task::spawn_blocking(move || {
+        acc.record_audit(uid, &login, &action, target.as_deref(), detail.as_deref())
+    })
+    .await;
+    match res {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => tracing::warn!(error = %e, "audit write failed"),
+        Err(e) => tracing::warn!(error = %e, "audit task failed"),
+    }
+}
 
 /// The full application router: public reads, admin writes + authoring, build
 /// jobs, the panel auth endpoints, and the embedded panel under `/admin`.
@@ -83,6 +109,8 @@ mod tests {
             github_client_id: None,
             github_client_secret: None,
             admin_github_uids: Vec::new(),
+            debug_token: None,
+            debug_github_uids: Vec::new(),
         };
         let state = AppState::new(config).unwrap();
         let _ = router(state);

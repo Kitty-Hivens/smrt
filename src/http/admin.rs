@@ -96,29 +96,7 @@ fn authoring_router(state: AppState) -> Router {
 
 // ── audit ────────────────────────────────────────────────────────────────────
 
-/// Best-effort audit write: record who did what. A failure is logged, never
-/// raised -- the audited action already happened, so a lost trail entry must not
-/// turn a successful operation into an error for the caller.
-async fn audit(
-    state: &AppState,
-    who: &Identity,
-    action: &str,
-    target: Option<&str>,
-    detail: Option<&str>,
-) {
-    let acc = state.accounts.clone();
-    let (uid, login, action) = (who.uid, who.login.clone(), action.to_string());
-    let (target, detail) = (target.map(String::from), detail.map(String::from));
-    let res = tokio::task::spawn_blocking(move || {
-        acc.record_audit(uid, &login, &action, target.as_deref(), detail.as_deref())
-    })
-    .await;
-    match res {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => tracing::warn!(error = %e, "audit write failed"),
-        Err(e) => tracing::warn!(error = %e, "audit task failed"),
-    }
-}
+use super::audit;
 
 /// The recent audit trail, newest first -- the operator's "who did what" view.
 async fn get_audit_log(State(state): State<AppState>) -> Result<Json<Vec<AuditRow>>, ApiError> {

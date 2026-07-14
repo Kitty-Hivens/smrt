@@ -2,10 +2,20 @@
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { isDebug } from '../lib/roles';
   import type { ModSummary, ReleaseRow, UnassignedJar, VersionRow } from '../lib/types';
   import ModIcon from './ModIcon.svelte';
   import IdentityDialog, { type IdentityTarget } from './IdentityDialog.svelte';
   import DropZone from './ui/DropZone.svelte';
+
+  // Compat-affecting authoring -- assigning/editing a jar's identity or a
+  // release's version -- is debug-gated on the server (#39). Hide those controls
+  // for a plain admin so they never click a button that would 403.
+  let canDebug = $state(false);
+  api
+    .me()
+    .then((m) => (canDebug = isDebug(m?.role)))
+    .catch(() => {});
 
   let mods = $state<ModSummary[]>([]);
   let unassigned = $state<UnassignedJar[]>([]);
@@ -216,7 +226,9 @@
             <span class="mono">{u.sha1.slice(0, 16)}</span>
             <span class="faint mono">{fmtBytes(u.size_bytes)}</span>
           </div>
-          <button class="primary sm" onclick={() => assign(u)}>{t('mm.assign')}</button>
+          {#if canDebug}
+            <button class="primary sm" onclick={() => assign(u)}>{t('mm.assign')}</button>
+          {/if}
         </div>
       {/each}
     </section>
@@ -288,7 +300,9 @@
                   <span class="rver mono">{rel.version_number}</span>
                   <span class="chip ch-{rel.channel}">{rel.channel}</span>
                   <span class="faint mono">{t('mm.filesN', { n: rel.files.length })}</span>
-                  <button class="link sm" onclick={() => editReleaseVersion(rel)}>{t('mm.edit')}</button>
+                  {#if canDebug}
+                    <button class="link sm" onclick={() => editReleaseVersion(rel)}>{t('mm.edit')}</button>
+                  {/if}
                 </div>
                 {#each rel.files as f (f.sha1)}
                   <div class="file">
@@ -313,7 +327,9 @@
                       <span class="chip">{t('mm.selfhost')}</span>
                     {/if}
                     <div class="factions">
-                      <button class="link" onclick={() => editFile(f, rel, m.name)}>{t('mm.edit')}</button>
+                      {#if canDebug}
+                        <button class="link" onclick={() => editFile(f, rel, m.name)}>{t('mm.edit')}</button>
+                      {/if}
                       <button class="link danger" onclick={() => delFile(f)}>{t('common.delete')}</button>
                     </div>
                   </div>

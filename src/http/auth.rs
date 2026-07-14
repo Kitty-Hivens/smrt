@@ -123,16 +123,24 @@ async fn github_callback(
         Ok(user) => user,
         Err(_) => return redirect_clearing_state("/?auth=failed", secure),
     };
-    let is_admin = state.config.admin_github_uids.contains(&uid);
+    // debug outranks admin: a uid on both allowlists is granted the higher rung.
+    let forced_role = if state.config.debug_github_uids.contains(&uid) {
+        Some(Role::Debug)
+    } else if state.config.admin_github_uids.contains(&uid) {
+        Some(Role::Admin)
+    } else {
+        None
+    };
 
     let acc = state.accounts.clone();
-    let sid =
-        match tokio::task::spawn_blocking(move || acc.sign_in_github(uid as i64, &login, is_admin))
-            .await
-        {
-            Ok(Ok(sid)) => sid,
-            _ => return redirect_clearing_state("/?auth=failed", secure),
-        };
+    let sid = match tokio::task::spawn_blocking(move || {
+        acc.sign_in_github(uid as i64, &login, forced_role)
+    })
+    .await
+    {
+        Ok(Ok(sid)) => sid,
+        _ => return redirect_clearing_state("/?auth=failed", secure),
+    };
 
     let mut resp = Redirect::to("/").into_response();
     resp.headers_mut().append(
@@ -253,6 +261,25 @@ pub async fn require_auth(
     Ok(next.run(req).await)
 }
 
+/// Guard the debug surface: compat-affecting registry authoring (#39). Requires
+/// the debug rung -- above admin -- so a plain admin (or a break-glass admin
+/// token) cannot assert loaders/mc/version or dependency/conflict facts and
+/// silently corrupt the derivation graph the resolver rides on.
+pub async fn require_debug(
+    State(state): State<AppState>,
+    mut req: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let Some(identity) = resolve_identity(&state, req.headers()).await else {
+        return Err(ApiError::Unauthorized);
+    };
+    if identity.role < Role::Debug {
+        return Err(ApiError::Forbidden);
+    }
+    req.extensions_mut().insert(identity);
+    Ok(next.run(req).await)
+}
+
 /// Guard a member-accessible endpoint: require any authenticated identity
 /// (member and up) and attach it, without requiring the admin role. Own-resource
 /// authorization (e.g. pack ownership via [`Identity::owns_or_admin`]) is the
@@ -310,10 +337,19 @@ async fn resolve_identity(state: &AppState, headers: &HeaderMap) -> Option<Ident
         .and_then(|h| h.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
         .map(str::to_string);
-    if let (Some(tok), Some(expected)) = (&bearer, state.config.admin_token.as_deref())
-        && constant_time_eq(expected.as_bytes(), tok.as_bytes())
-    {
-        return Some(break_glass());
+    // debug token is checked first: it is the higher rung, so a value set as both
+    // resolves to debug. Either bearer maps to the synthetic break-glass identity.
+    if let Some(tok) = &bearer {
+        if let Some(expected) = state.config.debug_token.as_deref()
+            && constant_time_eq(expected.as_bytes(), tok.as_bytes())
+        {
+            return Some(break_glass(Role::Debug));
+        }
+        if let Some(expected) = state.config.admin_token.as_deref()
+            && constant_time_eq(expected.as_bytes(), tok.as_bytes())
+        {
+            return Some(break_glass(Role::Admin));
+        }
     }
 
     let sid = cookie_value(headers, COOKIE_NAME)?;
@@ -327,11 +363,11 @@ async fn resolve_identity(state: &AppState, headers: &HeaderMap) -> Option<Ident
 
 // -- helpers ----------------------------------------------------------------
 
-fn break_glass() -> Identity {
+fn break_glass(role: Role) -> Identity {
     Identity {
         uid: 0,
         login: "break-glass".into(),
-        role: Role::Admin,
+        role,
     }
 }
 

@@ -372,6 +372,8 @@ mod tests {
             github_client_id: None,
             github_client_secret: None,
             admin_github_uids: Vec::new(),
+            debug_token: None,
+            debug_github_uids: Vec::new(),
         }
     }
 

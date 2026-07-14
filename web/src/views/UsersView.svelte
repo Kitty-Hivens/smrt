@@ -4,6 +4,9 @@
   import type { UserRow } from '../lib/types';
   import Avatar from './Avatar.svelte';
 
+  // low -> high; debug is the compat-authoring rung above admin (#39)
+  const ROLES = ['member', 'admin', 'debug'] as const;
+
   let users = $state<UserRow[]>([]);
   let meUid = $state<number | null>(null);
   let err = $state('');
@@ -58,11 +61,11 @@
         </div>
         <span class="chip role-{u.role}">{u.role}</span>
         {#if u.github_uid !== meUid}
-          {#if u.role === 'admin'}
-            <button class="link" onclick={() => setRole(u, 'member')}>{t('users.demote')}</button>
-          {:else}
-            <button class="link" onclick={() => setRole(u, 'admin')}>{t('users.promote')}</button>
-          {/if}
+          <div class="roleset">
+            {#each ROLES.filter((r) => r !== u.role) as r}
+              <button class="link" onclick={() => setRole(u, r)}>{t(`users.make.${r}`)}</button>
+            {/each}
+          </div>
         {/if}
       </div>
     {/each}
@@ -134,6 +137,15 @@
     color: var(--info);
     border-color: color-mix(in srgb, var(--info) 45%, var(--seam));
     background: var(--info-soft);
+  }
+  .chip.role-debug {
+    color: var(--warn);
+    border-color: color-mix(in srgb, var(--warn) 45%, var(--seam));
+    background: var(--warn-soft);
+  }
+  .roleset {
+    display: flex;
+    flex-shrink: 0;
   }
   .link {
     background: transparent;
