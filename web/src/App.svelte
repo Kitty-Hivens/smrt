@@ -2,6 +2,7 @@
   import { api, setUnauthorizedHandler } from './lib/api';
   import { t } from './lib/i18n.svelte';
   import { route } from './lib/route.svelte';
+  import { isOperator } from './lib/roles';
   import { terms } from './lib/terms.svelte';
   import Login from './views/Login.svelte';
   import AppShell from './views/AppShell.svelte';
@@ -44,7 +45,7 @@
       <Profile {me} />
     {:else if route.section === 'mypacks' && me}
       <MyPacks {me} />
-    {:else if me?.role === 'admin' && route.section !== 'browse'}
+    {:else if me && isOperator(me.role) && route.section !== 'browse'}
       <Browse {me} />
     {:else}
       <PublicBrowse me={me ?? null} />
