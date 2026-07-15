@@ -31,5 +31,5 @@ pub use harvest_sched::HarvestScheduler;
 pub use jardiff::{JarDiff, diff_jars};
 pub use modrinth::*;
 pub use reconstruct::reconstruct_config;
-pub use resolve::{ResolveReport, resolve_pack};
+pub use resolve::{ResolveReport, pack_graph, resolve_pack};
 pub use validate::{ValidateReport, validate};

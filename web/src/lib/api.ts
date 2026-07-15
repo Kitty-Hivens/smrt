@@ -227,6 +227,10 @@ export const api = {
     ),
 
   // ── resolve the saved config against the registry dependency graph ──
+  // the pack's own relation graph: its mods, wired by what its shipped artifacts
+  // declare. A dangling target is a requirement this pack does not carry.
+  packGraph: (id: string) =>
+    getJson<GraphData>(`/v1/authoring/packs/${encodeURIComponent(id)}/graph`),
   resolvePack: (id: string) =>
     getJson<ResolveReport>(`/v1/authoring/packs/${encodeURIComponent(id)}/resolve`),
 

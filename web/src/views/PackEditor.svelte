@@ -15,6 +15,7 @@
   } from '../lib/types';
   import BuildConsole from './BuildConsole.svelte';
   import BrandingEditor from './BrandingEditor.svelte';
+  import PackGraph from './PackGraph.svelte';
   import JobLog from './JobLog.svelte';
   import ModIcon from './ModIcon.svelte';
   import ResolvePanel from './ResolvePanel.svelte';
@@ -104,7 +105,7 @@
     }
   }
 
-  type Tab = 'config' | 'branding' | 'build';
+  type Tab = 'config' | 'branding' | 'graph' | 'build';
   let tab = $state<Tab>('config');
   let previewOpen = $state(false);
   let previewToken = $state(0);
@@ -575,6 +576,7 @@
   const tabs = $derived<[Tab, string][]>([
     ['config', t('pe.tab.config')],
     ['branding', t('pe.tab.branding')],
+    ['graph', t('pe.tab.graph')],
     ['build', t('pe.tab.build')],
   ]);
 </script>
@@ -865,6 +867,8 @@
           </div>
         </div>
       {/if}
+    {:else if tab === 'graph'}
+      <PackGraph {packId} />
     {:else if tab === 'build'}
       <BuildConsole {packId} />
     {/if}

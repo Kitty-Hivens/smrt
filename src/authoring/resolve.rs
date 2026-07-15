@@ -13,12 +13,13 @@
 //! reports that as unresolved/unchecked rather than guess, so a flagged problem
 //! is a real one.
 //!
-//! The graph is mod-level, not artifact-level: an edge belongs to a mod, derived
-//! across whatever jars were harvested for it, so the resolver reasons at mod
-//! granularity and does not re-scope edges to the pack's exact loader/mc.
+//! Edges are read at artifact granularity (#48): a pack declares a file, so the
+//! facts that apply are the ones that file declares, plus whatever is asserted
+//! about its mod as a whole. A jar the registry has never read gets the mod-level
+//! facts only -- it does not borrow a sibling version's dependencies.
 
 use crate::domain::{PackConfig, SourceDecl};
-use crate::registry::model::RelKind;
+use crate::registry::model::{GraphData, GraphEdge, RelKind};
 use crate::registry::{queries, semver};
 use anyhow::Result;
 use rusqlite::Connection;
@@ -130,10 +131,11 @@ struct Present {
     mod_version_id: Option<i64>,
 }
 
-/// Resolve `cfg` against the registry graph reachable through `conn`.
-pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport> {
-    // 1. Place each declared jar mod on the graph. A SmrtStatic source is not a
-    //    mod (config/asset file); a jar with no registry identity is unresolved.
+/// Place each declared jar mod on the registry graph, returning the ones that
+/// landed plus the filenames that could not be identified. A `SmrtStatic` source
+/// is not a mod (a config/asset file) and is skipped; a jar with no registry
+/// identity cannot be reasoned about and is reported unresolved.
+fn place_mods(conn: &Connection, cfg: &PackConfig) -> Result<(Vec<Present>, Vec<String>)> {
     let mut present: Vec<Present> = Vec::new();
     let mut unresolved: Vec<String> = Vec::new();
     for m in &cfg.mods {
@@ -169,6 +171,54 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
             mod_version_id,
         });
     }
+    Ok((present, unresolved))
+}
+
+/// The relation graph of one pack: its own mods, wired by the relations the exact
+/// artifacts it ships declare.
+///
+/// The same edges mean something different here than in the registry-wide graph.
+/// Globally "X requires forge" is noise; inside a pack the question is whether the
+/// thing required is actually here. So a target is resolved only when the pack
+/// ships that mod -- anything else stays dangling, and the panel can read a
+/// dangling `requires` as a missing dependency and a `conflicts` between two
+/// present mods as a live one, off the same shape the registry graph already uses.
+///
+/// Unlike the registry graph this keeps every declared mod as a node, isolated or
+/// not: a mod with no relations is still part of the pack, and this is a picture of
+/// the pack's composition rather than of the relation web.
+pub fn pack_graph(conn: &Connection, cfg: &PackConfig) -> Result<GraphData> {
+    let (present, _unresolved) = place_mods(conn, cfg)?;
+    let in_pack: HashSet<i64> = present.iter().map(|p| p.mod_id).collect();
+
+    let mut nodes = Vec::with_capacity(present.len());
+    let mut seen: HashSet<i64> = HashSet::new();
+    for p in &present {
+        if seen.insert(p.mod_id) {
+            nodes.push(queries::graph_node_for(conn, p.mod_id)?);
+        }
+    }
+
+    let mut edges = Vec::new();
+    for p in &present {
+        for e in queries::relations_for_artifact(conn, p.mod_version_id.unwrap_or(-1), p.mod_id)? {
+            let to = queries::mod_id_for_selector(conn, &e.target)?.filter(|t| in_pack.contains(t));
+            edges.push(GraphEdge {
+                from_mod_id: p.mod_id,
+                to_mod_id: to,
+                target: e.target,
+                kind: e.kind.as_str().to_string(),
+                source: e.source.as_str().to_string(),
+            });
+        }
+    }
+    Ok(GraphData { nodes, edges })
+}
+
+/// Resolve `cfg` against the registry graph reachable through `conn`.
+pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport> {
+    // 1. Place each declared jar mod on the graph.
+    let (present, mut unresolved) = place_mods(conn, cfg)?;
 
     // first declaration of a mod_id wins the index (a pack rarely ships one mod
     // twice; if it does, the earlier row is the one findings point at)
@@ -401,6 +451,123 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    // The pack graph is the same shape as the registry graph, but read against the
+    // pack: a target the pack ships resolves, and one it does not stays dangling.
+    // That is what lets the panel read a dangling `requires` as a missing dependency
+    // and a `conflicts` between two present mods as a live one.
+    #[test]
+    fn pack_graph_resolves_only_what_the_pack_ships() {
+        use crate::registry::model::Source;
+        let r = Registry::open_in_memory().unwrap();
+        let a = add_mod(&r, "aaa", "1.0", "sha_a");
+        let b = add_mod(&r, "bbb", "1.0", "sha_b");
+        add_mod(&r, "ccc", "1.0", "sha_c"); // in the registry, but not in this pack
+        relate(&r, a, "bbb", None, RelKind::Requires, Source::JarMeta); // satisfied here
+        relate(&r, a, "ccc", None, RelKind::Requires, Source::JarMeta); // not shipped
+        relate(&r, a, "bbb", None, RelKind::Conflicts, Source::Authored); // live conflict
+        let _ = b;
+
+        let cfg = config(vec![
+            declared("a.jar", true, cache("sha_a")),
+            declared("b.jar", true, cache("sha_b")),
+        ]);
+        let g = r.with_conn(|c| pack_graph(c, &cfg)).unwrap();
+
+        // every declared mod is a node, whether or not it has relations
+        assert_eq!(g.nodes.len(), 2);
+
+        let find = |target: &str, kind: &str| {
+            g.edges
+                .iter()
+                .find(|e| e.target == target && e.kind == kind)
+                .unwrap_or_else(|| panic!("no {kind} edge to {target}"))
+        };
+        assert!(
+            find("bbb", "requires").to_mod_id.is_some(),
+            "a requirement the pack ships resolves"
+        );
+        assert!(
+            find("ccc", "requires").to_mod_id.is_none(),
+            "a requirement the pack does not ship dangles -- that is the missing dep"
+        );
+        assert!(
+            find("bbb", "conflicts").to_mod_id.is_some(),
+            "a conflict between two shipped mods is live"
+        );
+    }
+
+    // An artifact's own facts, not its mod's other versions (#48), decide what the
+    // pack graph draws: shipping the old jar must not pull the new jar's dependency.
+    #[test]
+    fn pack_graph_follows_the_shipped_artifact() {
+        use crate::registry::model::Source;
+        let r = Registry::open_in_memory().unwrap();
+        let (m, old, new) = r
+            .with_conn_mut(|c| {
+                let m = upsert::upsert_mod_by_alias(c, &[("modid", "mmm")], NOW)?;
+                let old = upsert::upsert_mod_version(
+                    c,
+                    m,
+                    "1.0",
+                    &["forge"],
+                    "sha_old",
+                    1,
+                    None,
+                    None,
+                    NOW,
+                )?;
+                let new = upsert::upsert_mod_version(
+                    c,
+                    m,
+                    "2.0",
+                    &["forge"],
+                    "sha_new",
+                    1,
+                    None,
+                    None,
+                    NOW,
+                )?;
+                Ok((m, old, new))
+            })
+            .unwrap();
+        add_mod(&r, "oldlib", "1.0", "sha_oldlib");
+        add_mod(&r, "newlib", "1.0", "sha_newlib");
+        r.with_conn_mut(|c| {
+            upsert::upsert_relation(
+                c,
+                m,
+                Some(old),
+                "oldlib",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+            upsert::upsert_relation(
+                c,
+                m,
+                Some(new),
+                "newlib",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        // the pack ships the OLD jar
+        let cfg = config(vec![declared("m.jar", true, cache("sha_old"))]);
+        let g = r.with_conn(|c| pack_graph(c, &cfg)).unwrap();
+        let targets: Vec<&str> = g.edges.iter().map(|e| e.target.as_str()).collect();
+        assert_eq!(
+            targets,
+            vec!["oldlib"],
+            "the shipped artifact's dependency only -- the sibling version's is not this pack's"
+        );
     }
 
     #[test]

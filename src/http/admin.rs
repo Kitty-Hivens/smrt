@@ -1,9 +1,11 @@
 use super::ApiError;
 use crate::accounts::{AuditRow, Identity, UploadRow, UserRow};
 use crate::authoring::{
-    ResolveReport, ValidateReport, jar_icon, modrinth, reconstruct_config, resolve_pack, validate,
+    ResolveReport, ValidateReport, jar_icon, modrinth, pack_graph, reconstruct_config,
+    resolve_pack, validate,
 };
 use crate::domain::*;
+use crate::registry::model::GraphData;
 use crate::state::AppState;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
@@ -83,6 +85,7 @@ fn authoring_router(state: AppState) -> Router {
         )
         .route("/v1/authoring/packs/:pack_id/validate", post(validate_pack))
         .route("/v1/authoring/packs/:pack_id/resolve", get(pack_resolve))
+        .route("/v1/authoring/packs/:pack_id/graph", get(pack_graph_view))
         .route("/v1/modrinth/search", get(modrinth_search))
         .route("/v1/modrinth/versions", get(modrinth_versions))
         .route("/v1/modrinth/icon", get(modrinth_icon))
@@ -494,6 +497,29 @@ async fn pack_resolve(
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("resolve task: {e}")))?
         .map_err(ApiError::Internal)?;
     Ok(Json(report))
+}
+
+/// The pack's own relation graph: its mods, wired by what the exact artifacts it
+/// ships declare. The registry-wide graph answers "what does the mirror hold"; this
+/// answers "does this pack hold together", which is the question being asked while
+/// a pack is authored. Same shape as the registry graph, so the panel renders it
+/// with the same view -- an edge that dangles here is a requirement the pack does
+/// not carry.
+async fn pack_graph_view(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+) -> Result<Json<GraphData>, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    let cfg = state.storage.load_pack_config(&pack_id).await?;
+    let registry = state.registry.clone();
+    let graph = tokio::task::spawn_blocking(move || registry.with_conn(|c| pack_graph(c, &cfg)))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("pack graph task: {e}")))?
+        .map_err(ApiError::Internal)?;
+    Ok(Json(graph))
 }
 
 // ── removed-list (takedown) ──────────────────────────────────────────────────

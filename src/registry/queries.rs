@@ -296,7 +296,7 @@ pub fn graph(conn: &Connection) -> Result<GraphData> {
 
     let mut nodes = Vec::with_capacity(node_ids.len());
     for id in node_ids {
-        nodes.push(graph_node(conn, id)?);
+        nodes.push(graph_node_for(conn, id)?);
     }
     Ok(GraphData { nodes, edges })
 }
@@ -304,7 +304,7 @@ pub fn graph(conn: &Connection) -> Result<GraphData> {
 /// One mod as a graph node: the name resolved server-side (canonical -> slug ->
 /// modid -> `#id`) and whether it carries a Modrinth identity, so the view can
 /// mark a genuine identity apart from a bare-modid one.
-fn graph_node(conn: &Connection, id: i64) -> Result<GraphNode> {
+pub fn graph_node_for(conn: &Connection, id: i64) -> Result<GraphNode> {
     let (canonical, slug): (Option<String>, Option<String>) = conn.query_row(
         "SELECT canonical_name, slug FROM mods WHERE id = ?1",
         params![id],
@@ -484,7 +484,7 @@ pub fn graph_for_slice(
     // not drawn as a lone node
     let mut nodes = Vec::with_capacity(endpoints.len());
     for id in endpoints {
-        nodes.push(graph_node(conn, id)?);
+        nodes.push(graph_node_for(conn, id)?);
     }
     Ok(GraphData { nodes, edges })
 }
