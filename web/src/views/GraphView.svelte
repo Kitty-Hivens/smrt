@@ -9,6 +9,7 @@
   } from '@xyflow/svelte';
   import '@xyflow/svelte/dist/style.css';
   import dagre from '@dagrejs/dagre';
+  import TendrilEdge from './TendrilEdge.svelte';
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
@@ -38,6 +39,8 @@
     provides: 'var(--ok)',
   };
   const KINDS = ['requires', 'optional_dep', 'recommends', 'conflicts', 'breaks', 'provides'];
+
+  const edgeTypes = { tendril: TendrilEdge };
 
   const modNodeId = (modId: number) => `m${modId}`;
   const idToMod = (id: string) => (id.startsWith('m') ? parseInt(id.slice(1), 10) : NaN);
@@ -82,16 +85,31 @@
         }
       }
       const authored = e.source === 'authored' || e.source === 'curator';
+      const color = KIND_COLOR[e.kind] ?? 'var(--fg-dim)';
+      // A hard incompatibility keeps the marching red dash -- it reads as an alarm,
+      // which is exactly what it is. Everything else becomes a tendril: the colour
+      // still carries the kind, and the travelling wave carries the direction.
+      const alarm = e.kind === 'conflicts' || e.kind === 'breaks';
+      // No `label`: the kind is already in the colour, and a label per edge turns a
+      // real pack's graph into a field of plates.
       es.push({
         id: `e${i}`,
         source,
         target,
-        label: e.kind,
-        animated: e.kind === 'conflicts' || e.kind === 'breaks',
+        type: alarm ? undefined : 'tendril',
+        animated: alarm,
         selectable: true,
         deletable: canDebug && authored,
-        style: `stroke:${KIND_COLOR[e.kind] ?? 'var(--fg-dim)'};stroke-width:1.5`,
-        data: { authored, kind: e.kind, target: e.target, from: e.from_mod_id },
+        style: alarm ? `stroke:${color};stroke-width:1.5` : undefined,
+        data: {
+          authored,
+          kind: e.kind,
+          target: e.target,
+          from: e.from_mod_id,
+          color,
+          // stagger the wave so the graph does not pulse in lockstep
+          phase: i * 13,
+        },
       });
     });
     return { ns, es };
@@ -213,6 +231,7 @@
       <SvelteFlow
         bind:nodes
         bind:edges
+        {edgeTypes}
         fitView
         nodesConnectable={canDebug}
         deleteKey={['Delete', 'Backspace']}
@@ -313,11 +332,44 @@
     color: var(--fg-dim);
     background: transparent;
   }
-  .flowwrap :global(.svelte-flow__edge-text) {
-    font-size: 9px;
-    fill: var(--fg-dim);
+
+  /* zoom / fit / lock controls: the library ships them white, which on this field
+     reads as four blank plates. Dress them like every other control here. */
+  .flowwrap :global(.svelte-flow__controls) {
+    box-shadow: none;
   }
-  .flowwrap :global(.svelte-flow__edge-textbg) {
-    fill: var(--panel);
+  .flowwrap :global(.svelte-flow__controls-button) {
+    width: 26px;
+    height: 26px;
+    padding: 5px;
+    background: var(--panel-2);
+    border: 1px solid var(--seam);
+    border-bottom: none;
+    color: var(--fg-dim);
+    fill: currentColor;
+  }
+  .flowwrap :global(.svelte-flow__controls-button:first-child) {
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  }
+  .flowwrap :global(.svelte-flow__controls-button:last-child) {
+    border-bottom: 1px solid var(--seam);
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  }
+  .flowwrap :global(.svelte-flow__controls-button:hover) {
+    background: var(--panel-3);
+    color: var(--fg);
+  }
+  .flowwrap :global(.svelte-flow__controls-button svg) {
+    fill: currentColor;
+    max-width: 12px;
+    max-height: 12px;
+  }
+  /* the library's attribution stays (its licence asks for it) -- just stop it
+     glowing white against the field */
+  .flowwrap :global(.svelte-flow__attribution) {
+    background: transparent;
+  }
+  .flowwrap :global(.svelte-flow__attribution a) {
+    color: var(--fg-faint);
   }
 </style>
