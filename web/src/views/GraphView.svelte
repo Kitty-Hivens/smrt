@@ -10,6 +10,7 @@
   import '@xyflow/svelte/dist/style.css';
   import dagre from '@dagrejs/dagre';
   import TendrilEdge from './TendrilEdge.svelte';
+  import GraphFit from './GraphFit.svelte';
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
@@ -19,12 +20,36 @@
 
   // The dependency/conflict graph. Read-only for an operator; a debug user can
   // draw an edge (authors a relation) or delete an authored one (#33 phase 3-4).
+  //
+  // The whole registry at once is only readable while it is small: a real pack
+  // puts a couple of hundred mods on the field, each requiring forge and the same
+  // handful of libraries, and the result is a hairball no styling can rescue. So
+  // the view is focus-first -- pick a mod, see its neighbourhood, walk outwards by
+  // clicking. `raw` keeps the full graph; `nodes`/`edges` are only what is on
+  // screen.
+  let raw = $state<GraphData | null>(null);
   let nodes = $state<Node[]>([]);
   let edges = $state<Edge[]>([]);
   let err = $state('');
   let loading = $state(true);
   let canDebug = $state(false);
   let empty = $state(false);
+
+  // focus state: the mod at the centre, and how many relation hops out to draw
+  let focusId = $state<number | null>(null);
+  let hops = $state(1);
+  // an explicit opt-in to render the whole web anyway, however unreadable
+  let showAll = $state(false);
+  let query = $state('');
+
+  // Above this many mods the unfocused view is a hairball, so it is not drawn
+  // until the operator either focuses something or explicitly asks for it.
+  const BIG = 60;
+
+  const focusedNode = $derived(raw?.nodes.find((n) => n.mod_id === focusId) ?? null);
+  const needsFocus = $derived(
+    !loading && raw !== null && raw.nodes.length > BIG && focusId === null && !showAll,
+  );
 
   // node id -> its modid, to form the target selector when authoring an edge
   let modidById = new Map<string, string | undefined>();
@@ -45,11 +70,47 @@
   const modNodeId = (modId: number) => `m${modId}`;
   const idToMod = (id: string) => (id.startsWith('m') ? parseInt(id.slice(1), 10) : NaN);
 
-  function build(g: GraphData): { ns: Node[]; es: Edge[] } {
+  /**
+   * The mods within `depth` relation hops of `root`, walking edges in both
+   * directions -- what a mod conflicts with matters as much as what it needs, and
+   * so does whoever depends on it. External (uncatalogued) targets are not walked
+   * through; they hang off whichever kept mod names them.
+   */
+  function neighborhood(g: GraphData, root: number, depth: number): Set<number> {
+    const keep = new Set<number>([root]);
+    let frontier = new Set<number>([root]);
+    for (let h = 0; h < depth; h++) {
+      const next = new Set<number>();
+      for (const e of g.edges) {
+        if (e.to_mod_id == null) continue;
+        if (frontier.has(e.from_mod_id) && !keep.has(e.to_mod_id)) {
+          keep.add(e.to_mod_id);
+          next.add(e.to_mod_id);
+        }
+        if (frontier.has(e.to_mod_id) && !keep.has(e.from_mod_id)) {
+          keep.add(e.from_mod_id);
+          next.add(e.from_mod_id);
+        }
+      }
+      frontier = next;
+    }
+    return keep;
+  }
+
+  /** Which mods to draw: the focus neighbourhood, or `null` for everything. */
+  function visibleSet(g: GraphData): Set<number> | null {
+    if (focusId != null) return neighborhood(g, focusId, hops);
+    if (showAll || g.nodes.length <= BIG) return null;
+    return new Set(); // big and unfocused: draw nothing, prompt for a focus instead
+  }
+
+  function build(g: GraphData, keep: Set<number> | null): { ns: Node[]; es: Edge[] } {
     modidById = new Map();
     const ns: Node[] = [];
     const seen = new Set<string>();
+    const inScope = (modId: number) => keep === null || keep.has(modId);
     for (const n of g.nodes) {
+      if (!inScope(n.mod_id)) continue;
       const id = modNodeId(n.mod_id);
       seen.add(id);
       modidById.set(id, n.modid ?? undefined);
@@ -57,20 +118,31 @@
         id,
         position: { x: 0, y: 0 },
         data: { label: n.name },
-        class: n.modrinth ? 'gv-modrinth' : 'gv-mod',
+        // the focused mod wears the panel's one filled emphasis (the inverted
+        // white solid) -- no texture needed for it to read as the centre
+        class:
+          n.mod_id === focusId ? 'gv-focus' : n.modrinth ? 'gv-modrinth' : 'gv-mod',
         connectable: canDebug,
         deletable: false,
       });
     }
     const es: Edge[] = [];
     g.edges.forEach((e, i) => {
+      if (!inScope(e.from_mod_id)) return;
+      if (e.to_mod_id != null && !inScope(e.to_mod_id)) return;
       const source = modNodeId(e.from_mod_id);
       let target: string;
       if (e.to_mod_id != null) {
         target = modNodeId(e.to_mod_id);
       } else {
-        // an external / unresolved target (uncatalogued modid or a capability):
-        // render it as a labelled leaf so the dangling edge stays visible
+        // An external / unresolved target (uncatalogued modid or a capability):
+        // a labelled leaf, so the dangling requirement stays visible.
+        //
+        // While focused, only the focused mod's own external targets are drawn.
+        // Every mod in a pack requires forge, so letting each neighbour bring its
+        // own external edges rebuilds the whole hairball around a single leaf --
+        // the focus would limit the mods and then undo itself.
+        if (keep !== null && e.from_mod_id !== focusId) return;
         target = `x:${e.target}`;
         if (!seen.has(target)) {
           seen.add(target);
@@ -131,6 +203,53 @@
     }
   }
 
+  // bumped on every rebuild so the camera re-frames the new layout
+  let fitToken = $state(0);
+
+  /** Re-derive what is on screen from `raw` + the current focus, and lay it out. */
+  function rebuild() {
+    const g = raw;
+    if (!g) return;
+    const { ns, es } = build(g, visibleSet(g));
+    layout(ns, es);
+    nodes = ns;
+    edges = es;
+    fitToken++;
+  }
+
+  function setFocus(modId: number) {
+    focusId = modId;
+    err = '';
+    rebuild();
+  }
+  function setHops(n: number) {
+    hops = n;
+    rebuild();
+  }
+  function clearFocus() {
+    focusId = null;
+    showAll = false;
+    query = '';
+    rebuild();
+  }
+  function showEverything() {
+    showAll = true;
+    focusId = null;
+    rebuild();
+  }
+
+  // the picker: exact name first, then the first substring hit
+  function applyQuery() {
+    const g = raw;
+    const q = query.trim().toLowerCase();
+    if (!g || !q) return;
+    const hit =
+      g.nodes.find((n) => n.name.toLowerCase() === q) ??
+      g.nodes.find((n) => n.name.toLowerCase().includes(q));
+    if (hit) setFocus(hit.mod_id);
+    else err = t('graph.noSuchMod');
+  }
+
   async function load() {
     loading = true;
     err = '';
@@ -138,10 +257,10 @@
       const [me, g] = await Promise.all([api.me(), api.graph()]);
       canDebug = isDebug(me?.role);
       empty = g.nodes.length === 0;
-      const { ns, es } = build(g);
-      layout(ns, es);
-      nodes = ns;
-      edges = es;
+      raw = g;
+      // a focus that survived a refresh may no longer exist
+      if (focusId != null && !g.nodes.some((n) => n.mod_id === focusId)) focusId = null;
+      rebuild();
     } catch (e) {
       err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
     } finally {
@@ -164,10 +283,13 @@
     return kind;
   }
 
-  // clicking a mod node opens its page; external/unresolved leaves have no id
+  // Clicking a mod node re-centres the focus on it, so the graph is walked rather
+  // than left: navigating away on every click would lose your place. The focused
+  // mod's page is one explicit button away in the focus bar. External/unresolved
+  // leaves carry no mod id and are not focusable.
   function onnodeclick({ node }: { node: Node }) {
     const modId = idToMod(node.id);
-    if (Number.isFinite(modId)) route.openMod(modId);
+    if (Number.isFinite(modId)) setFocus(modId);
   }
 
   // debug: connecting two mod nodes authors a relation (target by the mod's modid)
@@ -212,7 +334,7 @@
 
 <div class="view">
   <div class="head">
-    <span class="faint">{t('graph.hint')}</span>
+    <span class="faint">{t('graph.hint')} {t('graph.clickHint')}</span>
     <div class="legend mono">
       <span class="lg" style="--c:var(--accent)">{t('graph.requires')}</span>
       <span class="lg" style="--c:var(--danger)">{t('graph.conflicts')}</span>
@@ -222,11 +344,53 @@
     <button class="sm" onclick={load} disabled={loading}>{t('graph.refresh')}</button>
   </div>
   {#if err}<div class="err mono">{err}</div>{/if}
+
+  <div class="focusbar">
+    <input
+      class="pick mono"
+      list="gv-mods"
+      bind:value={query}
+      placeholder={t('graph.focusPlaceholder')}
+      onchange={applyQuery}
+      onkeydown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          applyQuery();
+        }
+      }}
+    />
+    <datalist id="gv-mods">
+      {#each raw?.nodes ?? [] as n (n.mod_id)}<option value={n.name}></option>{/each}
+    </datalist>
+
+    {#if focusId != null}
+      <span class="fname">{focusedNode?.name}</span>
+      <div class="hops" role="group" aria-label={t('graph.hops')}>
+        {#each [1, 2] as h}
+          <button class="hop" class:active={hops === h} aria-pressed={hops === h} onclick={() => setHops(h)}>
+            {h}
+          </button>
+        {/each}
+      </div>
+      <span class="count faint mono">{t('graph.showingN', { n: nodes.length })}</span>
+      <button class="sm" onclick={() => route.openMod(focusId!)}>{t('graph.openPage')}</button>
+      <button class="sm" onclick={clearFocus}>{t('graph.clearFocus')}</button>
+    {:else if showAll}
+      <span class="count faint mono">{t('graph.showingN', { n: nodes.length })}</span>
+      <button class="sm" onclick={clearFocus}>{t('graph.clearFocus')}</button>
+    {/if}
+  </div>
+
   {#if canDebug}<div class="dbg faint mono">{t('graph.debugHint')}</div>{/if}
 
   <div class="flowwrap">
     {#if empty && !loading}
       <div class="empty muted">{t('graph.empty')}</div>
+    {:else if needsFocus}
+      <div class="empty prompt">
+        <div class="ptext muted">{t('graph.tooBig', { n: raw?.nodes.length ?? 0 })}</div>
+        <button class="sm" onclick={showEverything}>{t('graph.showAll')}</button>
+      </div>
     {:else}
       <SvelteFlow
         bind:nodes
@@ -241,6 +405,7 @@
       >
         <Background />
         <Controls />
+        <GraphFit token={fitToken} />
       </SvelteFlow>
     {/if}
   </div>
@@ -307,9 +472,62 @@
     place-items: center;
     font-size: 13px;
   }
+  .prompt {
+    align-content: center;
+    gap: var(--space-4);
+    text-align: center;
+    padding: var(--space-5);
+  }
+  .ptext {
+    max-width: 46ch;
+    line-height: 1.6;
+  }
   button.sm {
     padding: 4px 10px;
     font-size: 12px;
+  }
+
+  /* focus bar */
+  .focusbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+  .pick {
+    width: 260px;
+    font-size: 12px;
+    padding: 6px 10px;
+  }
+  .fname {
+    font-size: 13px;
+    font-weight: 600;
+    margin-left: var(--space-2);
+  }
+  .hops {
+    display: inline-flex;
+    border: 1px solid var(--seam-bright);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+  .hop {
+    border: none;
+    border-radius: 0;
+    padding: 4px 10px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--fg-dim);
+    background: transparent;
+  }
+  .hop:hover {
+    background: var(--panel-2);
+  }
+  .hop.active {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+  }
+  .count {
+    font-size: 11px;
   }
 
   /* node chrome, themed with the panel tokens rather than Svelte Flow defaults */
@@ -326,6 +544,15 @@
   }
   .flowwrap :global(.svelte-flow__node.gv-modrinth) {
     border-color: color-mix(in srgb, var(--info) 55%, var(--seam));
+  }
+  /* the focused mod: the panel's inverted solid, the same emphasis its one primary
+     button uses. Reads as the centre instantly on this field, with no texture to
+     light up the way a hand-drawn research web would. */
+  .flowwrap :global(.svelte-flow__node.gv-focus) {
+    background: var(--solid);
+    border-color: var(--solid);
+    color: var(--on-solid);
+    font-weight: 700;
   }
   .flowwrap :global(.svelte-flow__node.gv-ext) {
     border-style: dashed;
