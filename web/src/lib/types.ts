@@ -61,6 +61,7 @@ export type { JarDiff } from './bindings/JarDiff';
 export type { GraphData } from './bindings/GraphData';
 export type { GraphNode } from './bindings/GraphNode';
 export type { GraphEdge } from './bindings/GraphEdge';
+export type { GraphSlice } from './bindings/GraphSlice';
 export type { ModSummary } from './bindings/ModSummary';
 export type { ModDetail } from './bindings/ModDetail';
 export type { ModEdge } from './bindings/ModEdge';

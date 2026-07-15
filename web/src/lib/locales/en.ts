@@ -383,6 +383,7 @@ export const en = {
   'graph.tooBig':
     '{n} mods in the registry. The whole web at once is a hairball -- focus a mod to see what it actually touches, then click a neighbour to walk on.',
   'graph.clickHint': 'Click a node to focus it.',
+  'graph.world': 'World',
   'nav.moderation': 'Moderation',
   'nav.audit': 'Audit',
   'mod.approve': 'Approve',

@@ -13,8 +13,8 @@ use crate::authoring::harvest::{self, HarvestReport};
 use crate::authoring::{JarDiff, diff_jars, reconstruct_config};
 use crate::domain::DeclaredAsset;
 use crate::registry::model::{
-    BuildModRow, BuildSummary, EligibleArtifact, GraphData, ModSummary, ModUse, OrphanJar,
-    RegistryStats, RelKind, ReleaseRow, UnassignedJar, VersionRow,
+    BuildModRow, BuildSummary, EligibleArtifact, GraphData, GraphSlice, ModSummary, ModUse,
+    OrphanJar, RegistryStats, RelKind, ReleaseRow, UnassignedJar, VersionRow,
 };
 use crate::registry::{authored, queries};
 use crate::state::AppState;
@@ -61,6 +61,7 @@ fn operator_routes(state: AppState) -> Router {
         .route("/v1/registry/backup", post(post_backup))
         // dependency/conflict graph for the graph view (read-only)
         .route("/v1/registry/graph", get(get_graph))
+        .route("/v1/registry/graph/slices", get(get_graph_slices))
         // needs-identity door: jars with no identity yet (listing only; assigning
         // one asserts compat facts, so the write side is debug-gated below)
         .route("/v1/registry/unassigned", get(get_unassigned))
@@ -148,8 +149,43 @@ async fn get_orphans(State(state): State<AppState>) -> Result<Json<Vec<OrphanJar
 }
 
 /// The dependency/conflict graph (nodes + edges) for the graph view.
-async fn get_graph(State(state): State<AppState>) -> Result<Json<GraphData>, ApiError> {
-    Ok(Json(run_query(&state, queries::graph).await?))
+#[derive(Deserialize)]
+struct GraphQuery {
+    mc: Option<String>,
+    loader: Option<String>,
+}
+
+/// The relation graph, narrowed to one (Minecraft version, loader) world when
+/// asked (#49). Unnarrowed it is the union across every version of every mod,
+/// which is only readable while the registry holds a single world -- the panel
+/// picks a slice and this answers for it. The loader match is fork-aware, so a
+/// cleanroom slice sees the forge artifacts it can actually run.
+async fn get_graph(
+    State(state): State<AppState>,
+    Query(q): Query<GraphQuery>,
+) -> Result<Json<GraphData>, ApiError> {
+    // empty query params arrive as Some("") -- treat blank as "do not narrow"
+    let blank = |s: &Option<String>| {
+        s.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let (mc, loader) = (blank(&q.mc), blank(&q.loader));
+    Ok(Json(
+        run_query(&state, move |c| {
+            queries::graph_for_slice(c, mc.as_deref(), loader.as_deref())
+        })
+        .await?,
+    ))
+}
+
+/// The (Minecraft version, loader) worlds the registry holds, busiest first, so
+/// the panel offers real choices and opens on one that has something in it.
+async fn get_graph_slices(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<GraphSlice>>, ApiError> {
+    Ok(Json(run_query(&state, queries::graph_slices).await?))
 }
 
 #[derive(Deserialize)]

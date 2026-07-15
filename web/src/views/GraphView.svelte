@@ -16,7 +16,7 @@
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
   import { isDebug } from '../lib/roles';
-  import type { GraphData } from '../lib/types';
+  import type { GraphData, GraphSlice } from '../lib/types';
 
   // The dependency/conflict graph. Read-only for an operator; a debug user can
   // draw an edge (authors a relation) or delete an authored one (#33 phase 3-4).
@@ -27,6 +27,14 @@
   // the view is focus-first -- pick a mod, see its neighbourhood, walk outwards by
   // clicking. `raw` keeps the full graph; `nodes`/`edges` are only what is on
   // screen.
+  // The world on show. The registry holds every pack's mods at once, and mods from
+  // different Minecraft versions never meet in one pack -- so the graph answers for
+  // one (mc, loader) slice at a time (#49). Slice picks the world, focus picks the
+  // neighbourhood inside it.
+  let slices = $state<GraphSlice[]>([]);
+  let mc = $state<string | null>(null);
+  let loader = $state<string | null>(null);
+
   let raw = $state<GraphData | null>(null);
   let nodes = $state<Node[]>([]);
   let edges = $state<Edge[]>([]);
@@ -254,19 +262,48 @@
     loading = true;
     err = '';
     try {
-      const [me, g] = await Promise.all([api.me(), api.graph()]);
+      const [me, sl] = await Promise.all([api.me(), api.graphSlices()]);
       canDebug = isDebug(me?.role);
-      empty = g.nodes.length === 0;
-      raw = g;
-      // a focus that survived a refresh may no longer exist
-      if (focusId != null && !g.nodes.some((n) => n.mod_id === focusId)) focusId = null;
-      rebuild();
+      slices = sl;
+      // open on a world that has something in it -- the list arrives busiest first
+      if (mc == null && loader == null && sl.length) {
+        mc = sl[0].mc_version;
+        loader = sl[0].loader;
+      }
+      await loadGraph();
     } catch (e) {
       err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
     } finally {
       loading = false;
     }
   }
+
+  async function loadGraph() {
+    const g = await api.graph(mc ?? undefined, loader ?? undefined);
+    empty = g.nodes.length === 0;
+    raw = g;
+    // a focus that does not exist in this world (or survived a refresh) is dropped
+    if (focusId != null && !g.nodes.some((n) => n.mod_id === focusId)) focusId = null;
+    rebuild();
+  }
+
+  async function setSlice(s: GraphSlice) {
+    mc = s.mc_version;
+    loader = s.loader;
+    focusId = null; // a different world: the old focus means nothing here
+    showAll = false;
+    query = '';
+    loading = true;
+    err = '';
+    try {
+      await loadGraph();
+    } catch (e) {
+      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+    } finally {
+      loading = false;
+    }
+  }
+
   load();
 
   async function pickKind(): Promise<string | null> {
@@ -344,6 +381,22 @@
     <button class="sm" onclick={load} disabled={loading}>{t('graph.refresh')}</button>
   </div>
   {#if err}<div class="err mono">{err}</div>{/if}
+
+  {#if slices.length > 1}
+    <div class="slicebar">
+      <span class="slabel mono">{t('graph.world')}</span>
+      {#each slices as s (s.mc_version + s.loader)}
+        <button
+          class="slice mono"
+          class:active={s.mc_version === mc && s.loader === loader}
+          aria-pressed={s.mc_version === mc && s.loader === loader}
+          onclick={() => setSlice(s)}
+        >
+          {s.mc_version} / {s.loader}<span class="scount">{s.artifacts}</span>
+        </button>
+      {/each}
+    </div>
+  {/if}
 
   <div class="focusbar">
     <input
@@ -485,6 +538,41 @@
   button.sm {
     padding: 4px 10px;
     font-size: 12px;
+  }
+
+  /* slice bar: which world the graph is answering for */
+  .slicebar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+  .slabel {
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+  }
+  .slice {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 10px;
+    font-size: 11.5px;
+    color: var(--fg-dim);
+    background: transparent;
+  }
+  .slice:hover {
+    color: var(--fg);
+  }
+  .slice.active {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    border-color: var(--seam-bright);
+  }
+  .scount {
+    font-size: 10px;
+    color: var(--fg-faint);
   }
 
   /* focus bar */

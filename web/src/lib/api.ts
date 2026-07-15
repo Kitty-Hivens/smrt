@@ -11,6 +11,7 @@ import type {
   DeclaredAsset,
   CacheUsageListing,
   GraphData,
+  GraphSlice,
   Health,
   JarDiff,
   JobResult,
@@ -339,8 +340,18 @@ export const api = {
     send('POST', '/v1/registry/merge', { from_mod_id: fromModId, into_mod_id: intoModId }),
   // what a self-hosted jar changed vs its genuine Modrinth counterpart
   repackDiff: (sha1: string) => getJson<JarDiff>(`/v1/registry/files/${sha1}/repack-diff`),
-  // the dependency/conflict graph for the graph view
-  graph: () => getJson<GraphData>('/v1/registry/graph'),
+  // The dependency/conflict graph, narrowed to one (mc, loader) world. Unnarrowed
+  // it unions every version of every mod, which only reads once the registry holds
+  // a single world (#49).
+  graph: (mc?: string, loader?: string) => {
+    const p = new URLSearchParams();
+    if (mc) p.set('mc', mc);
+    if (loader) p.set('loader', loader);
+    const qs = p.toString();
+    return getJson<GraphData>(`/v1/registry/graph${qs ? `?${qs}` : ''}`);
+  },
+  // the (mc, loader) worlds the registry holds, busiest first
+  graphSlices: () => getJson<GraphSlice[]>('/v1/registry/graph/slices'),
   // author or remove one graph edge (node editor); debug-gated
   authorRelation: (body: {
     from_mod_id: number;

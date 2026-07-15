@@ -12,6 +12,7 @@ mod db;
 mod migrations;
 pub mod model;
 pub mod queries;
+pub(crate) mod semver;
 pub(crate) mod upsert;
 
 pub use db::Registry;
@@ -562,6 +563,137 @@ mod tests {
 
             // never harvested: mod-level facts only, no borrowed dependencies
             assert_eq!(targets(-1)?, vec!["always".to_string()]);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // #49: the point of a slice. One mod with a 1.12.2 build and a 1.19.2 build,
+    // each depending on something different, must not bleed across worlds -- which
+    // is exactly what the unsliced union did.
+    #[test]
+    fn graph_slice_keeps_minecraft_worlds_apart() {
+        let r = Registry::open_in_memory().unwrap();
+        r.with_conn_mut(|c| {
+            let jei = upsert::upsert_mod_by_alias(c, &[("modid", "jei")], NOW)?;
+            let old = upsert::upsert_mod_version(
+                c,
+                jei,
+                "4.15",
+                &["forge"],
+                "sha_old",
+                1,
+                None,
+                Some(r#"["1.12.2"]"#),
+                NOW,
+            )?;
+            let new = upsert::upsert_mod_version(
+                c,
+                jei,
+                "9.0",
+                &["forge"],
+                "sha_new",
+                1,
+                None,
+                Some(r#"["1.19.2"]"#),
+                NOW,
+            )?;
+            // each world's target exists as its own mod, in that world only
+            for (modid, sha, mc) in [
+                ("oldlib", "sha_oldlib", r#"["1.12.2"]"#),
+                ("newlib", "sha_newlib", r#"["1.19.2"]"#),
+            ] {
+                let m = upsert::upsert_mod_by_alias(c, &[("modid", modid)], NOW)?;
+                upsert::upsert_mod_version(c, m, "1.0", &["forge"], sha, 1, None, Some(mc), NOW)?;
+            }
+            upsert::upsert_relation(
+                c,
+                jei,
+                Some(old),
+                "oldlib",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+            upsert::upsert_relation(
+                c,
+                jei,
+                Some(new),
+                "newlib",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+
+            let targets = |mc: &str| -> anyhow::Result<Vec<String>> {
+                Ok(queries::graph_for_slice(c, Some(mc), Some("forge"))?
+                    .edges
+                    .into_iter()
+                    .map(|e| e.target)
+                    .collect())
+            };
+            assert_eq!(targets("1.12.2")?, vec!["oldlib".to_string()]);
+            assert_eq!(targets("1.19.2")?, vec!["newlib".to_string()]);
+
+            // unsliced, both worlds' edges land in one picture -- which is the
+            // union the slice exists to replace
+            let all = queries::graph_for_slice(c, None, None)?;
+            assert_eq!(all.edges.len(), 1, "one artifact per mod is still picked");
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // A fork sees what it can actually run: a cleanroom slice reaches forge
+    // artifacts through loader_parent, the same way eligibility does (#37).
+    #[test]
+    fn graph_slice_loader_match_follows_forks() {
+        let r = Registry::open_in_memory().unwrap();
+        r.with_conn_mut(|c| {
+            let a = upsert::upsert_mod_by_alias(c, &[("modid", "aaa")], NOW)?;
+            let av = upsert::upsert_mod_version(
+                c,
+                a,
+                "1.0",
+                &["forge"],
+                "sha_a",
+                1,
+                None,
+                Some(r#"["1.12.2"]"#),
+                NOW,
+            )?;
+            let b = upsert::upsert_mod_by_alias(c, &[("modid", "bbb")], NOW)?;
+            upsert::upsert_mod_version(
+                c,
+                b,
+                "1.0",
+                &["forge"],
+                "sha_b",
+                1,
+                None,
+                Some(r#"["1.12.2"]"#),
+                NOW,
+            )?;
+            upsert::upsert_relation(
+                c,
+                a,
+                Some(av),
+                "bbb",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+            let edges = |loader: &str| -> anyhow::Result<usize> {
+                Ok(queries::graph_for_slice(c, Some("1.12.2"), Some(loader))?
+                    .edges
+                    .len())
+            };
+            assert_eq!(edges("forge")?, 1);
+            assert_eq!(edges("cleanroom")?, 1, "cleanroom inherits forge artifacts");
+            assert_eq!(edges("fabric")?, 0, "fabric is not downstream of forge");
             Ok(())
         })
         .unwrap();

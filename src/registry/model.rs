@@ -282,6 +282,18 @@ pub struct GraphData {
     pub edges: Vec<GraphEdge>,
 }
 
+/// One (Minecraft version, loader) world the registry actually holds, and how many
+/// artifacts sit in it. The panel offers these as the graph's slice choices and
+/// opens on the busiest, rather than inventing a combination nothing matches (#49).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct GraphSlice {
+    pub mc_version: String,
+    pub loader: String,
+    #[ts(type = "number")]
+    pub artifacts: i64,
+}
+
 /// One relation touching a mod, from that mod's page perspective. `dir` is "out"
 /// (this mod -> other) or "in" (other -> this mod). `other_mod_id` is the
 /// catalogued counterpart when the selector resolves; `None` marks an external

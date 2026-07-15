@@ -2,6 +2,7 @@
 //! them inside `spawn_blocking` via `Registry::with_conn`.
 
 use super::model::*;
+use super::semver;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -295,23 +296,195 @@ pub fn graph(conn: &Connection) -> Result<GraphData> {
 
     let mut nodes = Vec::with_capacity(node_ids.len());
     for id in node_ids {
-        let (canonical, slug): (Option<String>, Option<String>) = conn.query_row(
-            "SELECT canonical_name, slug FROM mods WHERE id = ?1",
-            params![id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        let modid = modid_for_mod(conn, id)?;
-        let modrinth = modrinth_id_for_mod(conn, id)?.is_some();
-        let name = canonical
-            .or(slug)
-            .or_else(|| modid.clone())
-            .unwrap_or_else(|| format!("#{id}"));
-        nodes.push(GraphNode {
-            mod_id: id,
-            name,
-            modid,
-            modrinth,
-        });
+        nodes.push(graph_node(conn, id)?);
+    }
+    Ok(GraphData { nodes, edges })
+}
+
+/// One mod as a graph node: the name resolved server-side (canonical -> slug ->
+/// modid -> `#id`) and whether it carries a Modrinth identity, so the view can
+/// mark a genuine identity apart from a bare-modid one.
+fn graph_node(conn: &Connection, id: i64) -> Result<GraphNode> {
+    let (canonical, slug): (Option<String>, Option<String>) = conn.query_row(
+        "SELECT canonical_name, slug FROM mods WHERE id = ?1",
+        params![id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let modid = modid_for_mod(conn, id)?;
+    let modrinth = modrinth_id_for_mod(conn, id)?.is_some();
+    let name = canonical
+        .or(slug)
+        .or_else(|| modid.clone())
+        .unwrap_or_else(|| format!("#{id}"));
+    Ok(GraphNode {
+        mod_id: id,
+        name,
+        modid,
+        modrinth,
+    })
+}
+
+/// Channel preference when picking which artifact represents a mod in a slice: a
+/// stable release outranks a prerelease, which outranks a dev build.
+fn channel_rank(channel: &str) -> i32 {
+    match channel {
+        "release" => 3,
+        "beta" => 2,
+        "dev" => 1,
+        _ => 0,
+    }
+}
+
+/// The (Minecraft version, loader) worlds the registry actually holds, busiest
+/// first, so the graph can offer real choices and open on one that has something
+/// in it (#49). Only concrete loader targets make a world -- a loader-agnostic
+/// `any` artifact belongs to whichever loader is picked, so it never invents one.
+pub fn graph_slices(conn: &Connection) -> Result<Vec<GraphSlice>> {
+    let mut stmt = conn.prepare(
+        "SELECT mv.mc_versions, t.target
+         FROM mod_version mv
+         JOIN mod_version_target t ON t.mod_version_id = mv.id
+         WHERE mv.mc_versions IS NOT NULL AND t.target <> 'any'",
+    )?;
+    let mut counts: HashMap<(String, String), i64> = HashMap::new();
+    let mut rows = stmt.query([])?;
+    while let Some(r) = rows.next()? {
+        let target: String = r.get(1)?;
+        for mc in decode_mc(r.get(0)?) {
+            *counts.entry((mc, target.to_lowercase())).or_default() += 1;
+        }
+    }
+    let mut out: Vec<GraphSlice> = counts
+        .into_iter()
+        .map(|((mc_version, loader), artifacts)| GraphSlice {
+            mc_version,
+            loader,
+            artifacts,
+        })
+        .collect();
+    // busiest first; ties settle on the newer Minecraft version, then the name, so
+    // the default the panel picks is stable across calls
+    out.sort_by(|a, b| {
+        b.artifacts
+            .cmp(&a.artifacts)
+            .then_with(|| mc_version_key(&b.mc_version).cmp(&mc_version_key(&a.mc_version)))
+            .then_with(|| a.loader.cmp(&b.loader))
+    });
+    Ok(out)
+}
+
+/// The one artifact that represents each mod in a (Minecraft version, loader)
+/// slice: the mod's latest build that suits this world.
+///
+/// "Latest" is decided conservatively: a better channel wins first, then the
+/// version where both are plainly comparable. Mod version strings routinely are
+/// not (`rv6-stable-8`, `1.12.2-4.1.0`), so where they cannot be read the newest
+/// harvested row wins -- a proxy, but a deterministic one, and it never pretends
+/// to have understood a version it could not parse.
+///
+/// The loader match is fork-aware: cleanroom reaches forge through `loader_parent`
+/// exactly as `eligible_for_loader` does, so selecting a fork sees the artifacts it
+/// can actually run (#37). A `None` axis means "do not narrow on it".
+fn slice_artifacts(
+    conn: &Connection,
+    mc: Option<&str>,
+    loader: Option<&str>,
+) -> Result<HashMap<i64, i64>> {
+    let mc_like = mc.map(|s| format!("%\"{}\"%", like_escape(s)));
+    let mut stmt = conn.prepare(
+        "WITH RECURSIVE ancestors(id) AS (
+            SELECT lower(?1) WHERE ?1 IS NOT NULL
+            UNION
+            SELECT lp.parent_id FROM loader_parent lp JOIN ancestors a ON lp.child_id = a.id
+         )
+         SELECT mv.mod_id, mv.id, mv.version, COALESCE(r.channel, 'unknown')
+         FROM mod_version mv
+         LEFT JOIN mod_release r ON r.id = mv.release_id
+         WHERE (?1 IS NULL OR EXISTS (
+                 SELECT 1 FROM mod_version_target t
+                 WHERE t.mod_version_id = mv.id
+                   AND (t.target = 'any' OR lower(t.target) IN (SELECT id FROM ancestors))))
+           AND (?2 IS NULL OR mv.mc_versions LIKE ?3 ESCAPE '\\')
+         ORDER BY mv.mod_id, mv.id",
+    )?;
+    // mod_id -> the winning (artifact id, version, channel rank)
+    let mut best: HashMap<i64, (i64, String, i32)> = HashMap::new();
+    let mut rows = stmt.query(params![loader, mc, mc_like])?;
+    while let Some(r) = rows.next()? {
+        let mod_id: i64 = r.get(0)?;
+        let mv_id: i64 = r.get(1)?;
+        let version: String = r.get(2)?;
+        let rank = channel_rank(&r.get::<_, String>(3)?);
+        match best.get(&mod_id) {
+            None => {
+                best.insert(mod_id, (mv_id, version, rank));
+            }
+            Some((cur_id, cur_ver, cur_rank)) => {
+                let wins = match rank.cmp(cur_rank) {
+                    std::cmp::Ordering::Greater => true,
+                    std::cmp::Ordering::Less => false,
+                    std::cmp::Ordering::Equal => match semver::cmp(&version, cur_ver) {
+                        Some(std::cmp::Ordering::Greater) => true,
+                        Some(_) => false,
+                        // unreadable on either side: fall back to harvest order
+                        None => mv_id > *cur_id,
+                    },
+                };
+                if wins {
+                    best.insert(mod_id, (mv_id, version, rank));
+                }
+            }
+        }
+    }
+    Ok(best.into_iter().map(|(m, (mv, _, _))| (m, mv)).collect())
+}
+
+/// The relation graph for one (Minecraft version, loader) world (#49).
+///
+/// The unsliced graph is a union over every version of every mod, which stops
+/// meaning anything once the registry holds more than one world: a pack's mods
+/// never meet mods from another Minecraft version, and their edges have nothing to
+/// do with each other. Here each mod contributes the one artifact that suits the
+/// slice, and the edges drawn are that artifact's -- a statement that can be
+/// defended.
+///
+/// A target that resolves to a mod with nothing in this slice stays unresolved, so
+/// it renders as an external leaf: within this world, that requirement is not met
+/// by anything the registry holds.
+pub fn graph_for_slice(
+    conn: &Connection,
+    mc: Option<&str>,
+    loader: Option<&str>,
+) -> Result<GraphData> {
+    let in_slice = slice_artifacts(conn, mc, loader)?;
+
+    let mut edges: Vec<GraphEdge> = Vec::new();
+    let mut endpoints: BTreeSet<i64> = BTreeSet::new();
+    // deterministic output: walk the mods in id order, not hash order
+    let mut mods: Vec<(&i64, &i64)> = in_slice.iter().collect();
+    mods.sort();
+    for (&mod_id, &mv_id) in mods {
+        for e in relations_for_artifact(conn, mv_id, mod_id)? {
+            let to = mod_id_for_selector(conn, &e.target)?.filter(|t| in_slice.contains_key(t));
+            endpoints.insert(mod_id);
+            if let Some(t) = to {
+                endpoints.insert(t);
+            }
+            edges.push(GraphEdge {
+                from_mod_id: mod_id,
+                to_mod_id: to,
+                target: e.target,
+                kind: e.kind.as_str().to_string(),
+                source: e.source.as_str().to_string(),
+            });
+        }
+    }
+
+    // like `graph`, this is the relation graph: a mod with no edge in this slice is
+    // not drawn as a lone node
+    let mut nodes = Vec::with_capacity(endpoints.len());
+    for id in endpoints {
+        nodes.push(graph_node(conn, id)?);
     }
     Ok(GraphData { nodes, edges })
 }
