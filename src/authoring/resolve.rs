@@ -55,10 +55,11 @@ pub struct ResolveReport {
     /// Declared artifacts this pack's loader cannot run, with nothing present to
     /// bridge them -- they will not load at all (#50).
     pub loader_mismatch: Vec<LoaderMismatch>,
-    /// Foreign-loader artifacts a present bridge may carry. Left unjudged on
-    /// purpose: a connector runs some of another loader's mods and not others, so
-    /// neither "fine" nor "broken" is a claim that can be made here.
-    pub loader_unverified: Vec<LoaderMismatch>,
+    /// Foreign-loader artifacts a present connector carries. Not a problem: they
+    /// load. Listed because it is worth knowing which mods in a forge pack are
+    /// actually fabric mods riding the bridge -- pull the connector and they all
+    /// go at once.
+    pub loader_bridged: Vec<LoaderMismatch>,
     /// Declared jar mods with no registry identity yet (an un-harvested upload,
     /// or a Modrinth pin the mirror has not seen). Left unjudged, listed so the
     /// operator knows coverage was partial.
@@ -127,8 +128,9 @@ pub struct LoaderMismatch {
     pub artifact_loaders: Vec<String>,
     pub pack_loader: String,
     /// The present mod bridging one of those loaders, when there is one. A bridge
-    /// is never a guarantee: it carries some of the other loader's mods and not
-    /// others, so a bridged artifact is reported as unverified and never as fine.
+    /// carries the mod -- what it does not promise is how stable the result is,
+    /// and that rides on the connector rather than on any one mod, so it is not
+    /// something this pass can judge per mod (and does not try to).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub bridged_by: Option<String>,
@@ -357,14 +359,14 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
     // that loader inherits from; anything else needs a bridge. A bridge is a
     // present mod that `provides` the `loader:<name>` capability -- a connector.
     //
-    // A bridge is deliberately not treated as a pass. Connectors carry some of the
-    // other loader's mods and not others, so claiming a bridged artifact works
-    // would be inventing a fact; claiming it is broken would be inventing the
-    // opposite. It is reported as unverified, which is the only honest reading and
-    // the same tier this pass already uses for a version window it cannot compare.
+    // A connector carries the mod: bridged is not a warning, and does not spoil a
+    // clean report. What a bridge does not promise is stability, and that depends
+    // on the connector rather than on any one mod -- there is nothing to derive per
+    // mod, so nothing is claimed. Listing them is still worth it: these are the
+    // mods that all go at once if the connector leaves the pack.
     let chain = queries::loader_chain(conn, &cfg.loader.name)?;
     let mut loader_mismatch: Vec<LoaderMismatch> = Vec::new();
-    let mut loader_unverified: Vec<LoaderMismatch> = Vec::new();
+    let mut loader_bridged: Vec<LoaderMismatch> = Vec::new();
     for a in &present {
         // never read the jar -> its loaders are unknown, so there is nothing to judge
         let Some(mv) = a.mod_version_id else { continue };
@@ -390,13 +392,13 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
             bridged_by: bridged_by.clone(),
         };
         if bridged_by.is_some() {
-            loader_unverified.push(row);
+            loader_bridged.push(row);
         } else {
             loader_mismatch.push(row);
         }
     }
     loader_mismatch.sort_by(|a, b| a.filename.cmp(&b.filename));
-    loader_unverified.sort_by(|a, b| a.filename.cmp(&b.filename));
+    loader_bridged.sort_by(|a, b| a.filename.cmp(&b.filename));
 
     let overlaps: Vec<CapabilityOverlap> = provides
         .into_iter()
@@ -445,7 +447,7 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
         version_issues,
         required_hints,
         loader_mismatch,
-        loader_unverified,
+        loader_bridged,
         unresolved,
         version_windows_unchecked: unchecked,
     })
@@ -550,7 +552,7 @@ mod tests {
         assert_eq!(rep.loader_mismatch.len(), 1);
         assert_eq!(rep.loader_mismatch[0].filename, "fab.jar");
         assert_eq!(rep.loader_mismatch[0].artifact_loaders, vec!["fabric"]);
-        assert!(rep.loader_unverified.is_empty());
+        assert!(rep.loader_bridged.is_empty());
     }
 
     // A fork runs its parent's artifacts by construction, so a forge jar on a
@@ -572,11 +574,10 @@ mod tests {
         );
     }
 
-    // A connector present in the pack bridges the loader -- but a bridge carries
-    // some of the other loader's mods and not others, so the honest answer is
-    // "unverified", never "fine". Claiming it works would invent a fact.
+    // A connector present in the pack carries the mod: not a finding, just a fact
+    // worth listing -- pull the connector and every one of them goes at once.
     #[test]
-    fn a_bridge_moves_a_foreign_artifact_to_unverified_not_to_fine() {
+    fn a_bridge_carries_a_foreign_artifact_and_is_not_a_finding() {
         use crate::registry::model::Source;
         let r = Registry::open_in_memory().unwrap();
         add_mod_for(&r, "fab", "sha_fab", &["fabric"]);
@@ -598,16 +599,12 @@ mod tests {
 
         assert!(
             rep.loader_mismatch.is_empty(),
-            "with a bridge present we no longer claim it is broken"
+            "a connector carries it: not a problem"
         );
+        assert_eq!(rep.loader_bridged.len(), 1, "still worth listing");
+        assert_eq!(rep.loader_bridged[0].filename, "fab.jar");
         assert_eq!(
-            rep.loader_unverified.len(),
-            1,
-            "but we do not claim it works"
-        );
-        assert_eq!(rep.loader_unverified[0].filename, "fab.jar");
-        assert_eq!(
-            rep.loader_unverified[0].bridged_by.as_deref(),
+            rep.loader_bridged[0].bridged_by.as_deref(),
             Some("connector.jar")
         );
     }

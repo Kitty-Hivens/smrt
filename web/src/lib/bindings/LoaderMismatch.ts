@@ -15,7 +15,8 @@ export type LoaderMismatch = { filename: string,
 artifact_loaders: Array<string>, pack_loader: string, 
 /**
  * The present mod bridging one of those loaders, when there is one. A bridge
- * is never a guarantee: it carries some of the other loader's mods and not
- * others, so a bridged artifact is reported as unverified and never as fine.
+ * carries the mod -- what it does not promise is how stable the result is,
+ * and that rides on the connector rather than on any one mod, so it is not
+ * something this pass can judge per mod (and does not try to).
  */
 bridged_by?: string, };

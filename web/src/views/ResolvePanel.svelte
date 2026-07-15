@@ -12,7 +12,6 @@
       report.overlaps.length === 0 &&
       report.required_hints.length === 0 &&
       report.loader_mismatch.length === 0 &&
-      report.loader_unverified.length === 0 &&
       report.unresolved.length === 0,
   );
 </script>
@@ -25,7 +24,7 @@
     {#if report.version_issues.length}<span class="pill warn">{t('resolve.versionIssues', { n: report.version_issues.length })}</span>{/if}
     {#if report.overlaps.length}<span class="pill warn">{t('resolve.overlaps', { n: report.overlaps.length })}</span>{/if}
     {#if report.loader_mismatch.length}<span class="pill danger">{t('resolve.loaderMismatch', { n: report.loader_mismatch.length })}</span>{/if}
-    {#if report.loader_unverified.length}<span class="pill faint">{t('resolve.loaderUnverified', { n: report.loader_unverified.length })}</span>{/if}
+    {#if report.loader_bridged.length}<span class="pill faint">{t('resolve.loaderBridged', { n: report.loader_bridged.length })}</span>{/if}
     {#if report.required_hints.length}<span class="pill info">{t('resolve.hints', { n: report.required_hints.length })}</span>{/if}
     {#if report.unresolved.length}<span class="pill faint">{t('resolve.unresolved', { n: report.unresolved.length })}</span>{/if}
     {#if clean}<span class="pill ok">{t('resolve.clean')}</span>{/if}
@@ -71,10 +70,10 @@
     </div>
   {/if}
 
-  {#if report.loader_unverified.length}
+  {#if report.loader_bridged.length}
     <div class="rlist">
-      <div class="rl-h faint">{t('resolve.loaderUnverifiedH')}</div>
-      {#each report.loader_unverified as l}
+      <div class="rl-h faint">{t('resolve.loaderBridgedH')}</div>
+      {#each report.loader_bridged as l}
         <div class="rl-row">
           <span class="mono strong">{l.filename}</span>
           <span class="faint">{t('resolve.bridgedBy', { loaders: l.artifact_loaders.join(', '), by: l.bridged_by ?? '' })}</span>

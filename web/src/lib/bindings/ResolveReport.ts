@@ -46,11 +46,12 @@ required_hints: Array<RequiredHint>,
  */
 loader_mismatch: Array<LoaderMismatch>, 
 /**
- * Foreign-loader artifacts a present bridge may carry. Left unjudged on
- * purpose: a connector runs some of another loader's mods and not others, so
- * neither "fine" nor "broken" is a claim that can be made here.
+ * Foreign-loader artifacts a present connector carries. Not a problem: they
+ * load. Listed because it is worth knowing which mods in a forge pack are
+ * actually fabric mods riding the bridge -- pull the connector and they all
+ * go at once.
  */
-loader_unverified: Array<LoaderMismatch>, 
+loader_bridged: Array<LoaderMismatch>, 
 /**
  * Declared jar mods with no registry identity yet (an un-harvested upload,
  * or a Modrinth pin the mirror has not seen). Left unjudged, listed so the
