@@ -52,6 +52,13 @@ pub struct ResolveReport {
     /// A present mod that another present mod requires but that the pack marks
     /// optional -- it should be required.
     pub required_hints: Vec<RequiredHint>,
+    /// Declared artifacts this pack's loader cannot run, with nothing present to
+    /// bridge them -- they will not load at all (#50).
+    pub loader_mismatch: Vec<LoaderMismatch>,
+    /// Foreign-loader artifacts a present bridge may carry. Left unjudged on
+    /// purpose: a connector runs some of another loader's mods and not others, so
+    /// neither "fine" nor "broken" is a claim that can be made here.
+    pub loader_unverified: Vec<LoaderMismatch>,
     /// Declared jar mods with no registry identity yet (an un-harvested upload,
     /// or a Modrinth pin the mirror has not seen). Left unjudged, listed so the
     /// operator knows coverage was partial.
@@ -104,6 +111,27 @@ pub struct VersionIssue {
     pub present_version: String,
     pub required_range: String,
     pub needed_by: Vec<String>,
+}
+
+/// A declared artifact built for loaders this pack does not run.
+///
+/// A pack natively runs its own loader and everything that loader inherits from
+/// (cleanroom runs forge's artifacts, quilt runs fabric's). Anything else needs a
+/// bridge -- a connector mod that carries another loader's mods at runtime, which
+/// the registry records as a `provides` of the `loader:<name>` capability.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct LoaderMismatch {
+    pub filename: String,
+    /// the loaders the artifact was actually published for
+    pub artifact_loaders: Vec<String>,
+    pub pack_loader: String,
+    /// The present mod bridging one of those loaders, when there is one. A bridge
+    /// is never a guarantee: it carries some of the other loader's mods and not
+    /// others, so a bridged artifact is reported as unverified and never as fine.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub bridged_by: Option<String>,
 }
 
 /// A present mod that is depended-on but marked optional.
@@ -325,6 +353,51 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
     // A required target a present mod `provides` as a capability is satisfied.
     missing.retain(|target, _| !provides.contains_key(target));
 
+    // Loader eligibility (#50). A pack natively runs its own loader and whatever
+    // that loader inherits from; anything else needs a bridge. A bridge is a
+    // present mod that `provides` the `loader:<name>` capability -- a connector.
+    //
+    // A bridge is deliberately not treated as a pass. Connectors carry some of the
+    // other loader's mods and not others, so claiming a bridged artifact works
+    // would be inventing a fact; claiming it is broken would be inventing the
+    // opposite. It is reported as unverified, which is the only honest reading and
+    // the same tier this pass already uses for a version window it cannot compare.
+    let chain = queries::loader_chain(conn, &cfg.loader.name)?;
+    let mut loader_mismatch: Vec<LoaderMismatch> = Vec::new();
+    let mut loader_unverified: Vec<LoaderMismatch> = Vec::new();
+    for a in &present {
+        // never read the jar -> its loaders are unknown, so there is nothing to judge
+        let Some(mv) = a.mod_version_id else { continue };
+        let targets = queries::targets_for_artifact(conn, mv)?;
+        if targets.is_empty() {
+            continue;
+        }
+        let native = targets
+            .iter()
+            .any(|t| t == "any" || chain.contains(&t.to_lowercase()));
+        if native {
+            continue;
+        }
+        let bridged_by = targets.iter().find_map(|t| {
+            provides
+                .get(&format!("loader:{}", t.to_lowercase()))
+                .and_then(|by| by.iter().next().cloned())
+        });
+        let row = LoaderMismatch {
+            filename: a.filename.clone(),
+            artifact_loaders: targets,
+            pack_loader: cfg.loader.name.clone(),
+            bridged_by: bridged_by.clone(),
+        };
+        if bridged_by.is_some() {
+            loader_unverified.push(row);
+        } else {
+            loader_mismatch.push(row);
+        }
+    }
+    loader_mismatch.sort_by(|a, b| a.filename.cmp(&b.filename));
+    loader_unverified.sort_by(|a, b| a.filename.cmp(&b.filename));
+
     let overlaps: Vec<CapabilityOverlap> = provides
         .into_iter()
         .filter(|(_, fns)| fns.len() >= 2)
@@ -371,6 +444,8 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
         overlaps,
         version_issues,
         required_hints,
+        loader_mismatch,
+        loader_unverified,
         unresolved,
         version_windows_unchecked: unchecked,
     })
@@ -451,6 +526,90 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    /// Register a mod whose artifact targets specific loaders.
+    fn add_mod_for(r: &Registry, modid: &str, sha1: &str, loaders: &[&str]) -> i64 {
+        r.with_conn_mut(|c| {
+            let id = upsert::upsert_mod_by_alias(c, &[("modid", modid)], NOW)?;
+            upsert::upsert_mod_version(c, id, "1.0", loaders, sha1, 10, None, None, NOW)?;
+            Ok(id)
+        })
+        .unwrap()
+    }
+
+    // #50: a fabric jar in a forge pack will not load, and nothing in the pack says
+    // otherwise -- that is a fact worth flagging.
+    #[test]
+    fn foreign_loader_artifact_without_a_bridge_is_flagged() {
+        let r = Registry::open_in_memory().unwrap();
+        add_mod_for(&r, "fab", "sha_fab", &["fabric"]);
+        let cfg = config(vec![declared("fab.jar", true, cache("sha_fab"))]); // config() is forge
+        let rep = r.with_conn(|c| resolve_pack(c, &cfg)).unwrap();
+
+        assert_eq!(rep.loader_mismatch.len(), 1);
+        assert_eq!(rep.loader_mismatch[0].filename, "fab.jar");
+        assert_eq!(rep.loader_mismatch[0].artifact_loaders, vec!["fabric"]);
+        assert!(rep.loader_unverified.is_empty());
+    }
+
+    // A fork runs its parent's artifacts by construction, so a forge jar on a
+    // cleanroom pack is not a mismatch at all (#37) -- and neither is an `any` jar.
+    #[test]
+    fn a_fork_runs_its_parents_artifacts_and_any_suits_everything() {
+        let r = Registry::open_in_memory().unwrap();
+        add_mod_for(&r, "fj", "sha_forge", &["forge"]);
+        add_mod_for(&r, "tw", "sha_any", &["any"]);
+        let mut cfg = config(vec![
+            declared("forge.jar", true, cache("sha_forge")),
+            declared("tweak.jar", true, cache("sha_any")),
+        ]);
+        cfg.loader.name = "cleanroom".into();
+        let rep = r.with_conn(|c| resolve_pack(c, &cfg)).unwrap();
+        assert!(
+            rep.loader_mismatch.is_empty(),
+            "cleanroom inherits forge, and `any` suits any loader"
+        );
+    }
+
+    // A connector present in the pack bridges the loader -- but a bridge carries
+    // some of the other loader's mods and not others, so the honest answer is
+    // "unverified", never "fine". Claiming it works would invent a fact.
+    #[test]
+    fn a_bridge_moves_a_foreign_artifact_to_unverified_not_to_fine() {
+        use crate::registry::model::Source;
+        let r = Registry::open_in_memory().unwrap();
+        add_mod_for(&r, "fab", "sha_fab", &["fabric"]);
+        let conn_mod = add_mod_for(&r, "connector", "sha_conn", &["forge"]);
+        // the connector declares that it carries fabric's runtime
+        relate(
+            &r,
+            conn_mod,
+            "loader:fabric",
+            None,
+            RelKind::Provides,
+            Source::Authored,
+        );
+        let cfg = config(vec![
+            declared("fab.jar", true, cache("sha_fab")),
+            declared("connector.jar", true, cache("sha_conn")),
+        ]);
+        let rep = r.with_conn(|c| resolve_pack(c, &cfg)).unwrap();
+
+        assert!(
+            rep.loader_mismatch.is_empty(),
+            "with a bridge present we no longer claim it is broken"
+        );
+        assert_eq!(
+            rep.loader_unverified.len(),
+            1,
+            "but we do not claim it works"
+        );
+        assert_eq!(rep.loader_unverified[0].filename, "fab.jar");
+        assert_eq!(
+            rep.loader_unverified[0].bridged_by.as_deref(),
+            Some("connector.jar")
+        );
     }
 
     // The pack graph is the same shape as the registry graph, but read against the

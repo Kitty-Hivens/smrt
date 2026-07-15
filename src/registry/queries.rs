@@ -105,6 +105,36 @@ pub fn modrinth_id_for_mod(conn: &Connection, mod_id: i64) -> Result<Option<Stri
         .optional()?)
 }
 
+/// The loaders a pack on `loader` natively runs: the loader itself plus every one
+/// it inherits from, lowercased. cleanroom reaches forge and quilt reaches fabric
+/// through the same `loader_parent` DAG eligibility uses -- a fork runs its
+/// parent's artifacts by construction (#37).
+pub fn loader_chain(conn: &Connection, loader: &str) -> Result<HashSet<String>> {
+    let mut stmt = conn.prepare(
+        "WITH RECURSIVE ancestors(id) AS (
+            SELECT lower(?1)
+            UNION
+            SELECT lp.parent_id FROM loader_parent lp JOIN ancestors a ON lp.child_id = a.id
+         )
+         SELECT id FROM ancestors",
+    )?;
+    Ok(stmt
+        .query_map(params![loader], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?)
+}
+
+/// The loaders one artifact suits. `any` marks a loader-agnostic jar; the harvest
+/// guarantees at least one row, so an empty result means the artifact was never
+/// read rather than that it suits nothing.
+pub fn targets_for_artifact(conn: &Connection, mod_version_id: i64) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT target FROM mod_version_target WHERE mod_version_id = ?1 ORDER BY target",
+    )?;
+    Ok(stmt
+        .query_map(params![mod_version_id], |r| r.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
 /// The single mod that owns a package prefix, or `None` when no mod or more than
 /// one owns it. A multiply-owned prefix is an ambiguous shaded library, so it is
 /// deliberately not resolved to an edge.
