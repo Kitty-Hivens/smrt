@@ -208,6 +208,7 @@
         bind:edges
         fitView
         nodesConnectable={canDebug}
+        deleteKeyCode={['Delete', 'Backspace']}
         {onconnect}
         {ondelete}
       >
