@@ -104,6 +104,27 @@ impl Registry {
         self.with_txn(|c| authored::merge_mods(c, from_mod_id, into_mod_id, &now))
     }
 
+    /// Author or remove a single graph edge (the node editor). Add writes an
+    /// `authored` relation; remove drops only the authored row (a harvested fact
+    /// reappears on the next harvest, so there is nothing to "un-assert").
+    pub fn author_relation(
+        &self,
+        from_mod_id: i64,
+        target_modid: &str,
+        kind: super::model::RelKind,
+        remove: bool,
+    ) -> Result<()> {
+        let now = upsert::now_rfc3339();
+        self.with_txn(|c| {
+            if remove {
+                authored::remove_authored_relation(c, from_mod_id, target_modid, kind)?;
+            } else {
+                authored::add_authored_relation(c, from_mod_id, target_modid, kind, &now)?;
+            }
+            Ok(())
+        })
+    }
+
     /// Edit a release's version number and/or channel (authored).
     pub fn edit_release(
         &self,

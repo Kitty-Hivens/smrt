@@ -145,6 +145,37 @@ mod tests {
     }
 
     #[test]
+    fn graph_returns_relation_endpoints_and_edges() {
+        let r = fixture();
+        let g = r.with_conn(queries::graph).unwrap();
+
+        // only the two endpoints of the one relation are nodes; the isolated
+        // tweak mod (no relation) is omitted -- this is the relation graph
+        assert_eq!(g.nodes.len(), 2);
+        let apple = g
+            .nodes
+            .iter()
+            .find(|n| n.modid.as_deref() == Some("appleskin"))
+            .expect("appleskin node");
+        let jei = g
+            .nodes
+            .iter()
+            .find(|n| n.modid.as_deref() == Some("jei"))
+            .expect("jei node");
+        // appleskin carries a Modrinth id, jei is modid-only
+        assert!(apple.modrinth);
+        assert!(!jei.modrinth);
+
+        // one edge jei -> appleskin, target resolved to the mod id
+        assert_eq!(g.edges.len(), 1);
+        let e = &g.edges[0];
+        assert_eq!(e.from_mod_id, jei.mod_id);
+        assert_eq!(e.to_mod_id, Some(apple.mod_id));
+        assert_eq!(e.kind, "requires");
+        assert_eq!(e.source, "jar-meta");
+    }
+
+    #[test]
     fn alias_collapse_one_identity() {
         let r = fixture();
         r.with_conn(|c| {

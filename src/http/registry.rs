@@ -13,8 +13,8 @@ use crate::authoring::harvest::{self, HarvestReport};
 use crate::authoring::{JarDiff, diff_jars, reconstruct_config};
 use crate::domain::DeclaredAsset;
 use crate::registry::model::{
-    BuildModRow, BuildSummary, EligibleArtifact, ModSummary, ModUse, OrphanJar, RegistryStats,
-    ReleaseRow, UnassignedJar, VersionRow,
+    BuildModRow, BuildSummary, EligibleArtifact, GraphData, ModSummary, ModUse, OrphanJar,
+    RegistryStats, RelKind, ReleaseRow, UnassignedJar, VersionRow,
 };
 use crate::registry::{authored, queries};
 use crate::state::AppState;
@@ -59,6 +59,8 @@ fn operator_routes(state: AppState) -> Router {
             get(get_mod_uses),
         )
         .route("/v1/registry/backup", post(post_backup))
+        // dependency/conflict graph for the graph view (read-only)
+        .route("/v1/registry/graph", get(get_graph))
         // needs-identity door: jars with no identity yet (listing only; assigning
         // one asserts compat facts, so the write side is debug-gated below)
         .route("/v1/registry/unassigned", get(get_unassigned))
@@ -81,6 +83,7 @@ fn debug_routes(state: AppState) -> Router {
         .route("/v1/registry/files/:sha1/identity", put(put_file_identity))
         .route("/v1/registry/releases/:release_id", put(put_release_edit))
         .route("/v1/registry/merge", post(post_merge))
+        .route("/v1/registry/relations", post(post_relation))
         .layer(from_fn_with_state(
             state.clone(),
             super::auth::require_debug,
@@ -142,6 +145,11 @@ async fn get_stats(State(state): State<AppState>) -> Result<Json<RegistryStats>,
 
 async fn get_orphans(State(state): State<AppState>) -> Result<Json<Vec<OrphanJar>>, ApiError> {
     Ok(Json(run_query(&state, queries::orphan_jars).await?))
+}
+
+/// The dependency/conflict graph (nodes + edges) for the graph view.
+async fn get_graph(State(state): State<AppState>) -> Result<Json<GraphData>, ApiError> {
+    Ok(Json(run_query(&state, queries::graph).await?))
 }
 
 #[derive(Deserialize)]
@@ -343,6 +351,47 @@ async fn post_merge(
         "registry.merge",
         Some(&into.to_string()),
         Some(&format!("from {from}")),
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct RelationBody {
+    from_mod_id: i64,
+    target_modid: String,
+    kind: String,
+    #[serde(default)]
+    remove: bool,
+}
+
+/// Author or remove a single graph edge -- the node editor's write. An added
+/// edge is `authored` (it survives re-harvest and outranks a bytecode inference
+/// for the same target); a remove drops only the authored row. Compat-affecting,
+/// so debug-gated and audited.
+async fn post_relation(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Json(b): Json<RelationBody>,
+) -> Result<StatusCode, ApiError> {
+    let kind = RelKind::parse(&b.kind)
+        .ok_or_else(|| ApiError::BadRequest(format!("unknown relation kind {:?}", b.kind)))?;
+    let (from, target, remove) = (b.from_mod_id, b.target_modid.clone(), b.remove);
+    run_write(&state, move |reg| {
+        reg.author_relation(b.from_mod_id, &b.target_modid, kind, b.remove)
+    })
+    .await?;
+    let action = if remove {
+        "registry.relation.remove"
+    } else {
+        "registry.relation.add"
+    };
+    audit(
+        &state,
+        &identity,
+        action,
+        Some(&from.to_string()),
+        Some(&format!("{} {target}", kind.as_str())),
     )
     .await;
     Ok(StatusCode::NO_CONTENT)

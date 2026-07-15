@@ -240,6 +240,48 @@ pub struct UnassignedJar {
     pub size_bytes: i64,
 }
 
+/// One node in the dependency/conflict graph view: a mod that is an endpoint of
+/// at least one relation. `name` is resolved server-side (canonical -> slug ->
+/// modid -> `#id`); `modrinth` flags a Modrinth-identified mod so the view can
+/// mark genuine identities apart from bare-modid ones.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct GraphNode {
+    #[ts(type = "number")]
+    pub mod_id: i64,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub modid: Option<String>,
+    pub modrinth: bool,
+}
+
+/// One edge in the graph. `to_mod_id` is the resolved target when the selector
+/// names a mod the registry knows; `None` marks an external/unresolved target
+/// (a modid not harvested, or a `provides` capability), which the view renders
+/// as a labelled leaf so the dangling requirement is still visible. `kind` and
+/// `source` are the relation vocab strings.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct GraphEdge {
+    #[ts(type = "number")]
+    pub from_mod_id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub to_mod_id: Option<i64>,
+    pub target: String,
+    pub kind: String,
+    pub source: String,
+}
+
+/// The whole relation graph for the read-only view + node editor.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct GraphData {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+}
+
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct RegistryStats {
     pub mods: i64,

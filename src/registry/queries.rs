@@ -205,6 +205,61 @@ pub fn repack_counterpart(conn: &Connection, sha1: &str) -> Result<Option<(Strin
         .optional()?)
 }
 
+/// The whole relation graph for the graph view: every relation as an edge (its
+/// target resolved to a mod id when known), and every mod that is an endpoint of
+/// one as a node. Isolated mods (no relation) are deliberately omitted -- the
+/// view is of the dependency/conflict graph, not the full mod list. The registry
+/// is single-operator-sized, so building it in Rust is fine.
+pub fn graph(conn: &Connection) -> Result<GraphData> {
+    let raw: Vec<(i64, String, String, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT from_mod_id, target_modid, kind, source FROM relation
+             ORDER BY from_mod_id, target_modid, kind",
+        )?;
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    let mut node_ids: BTreeSet<i64> = BTreeSet::new();
+    let mut edges = Vec::with_capacity(raw.len());
+    for (from, target, kind, source) in raw {
+        let to = mod_id_for_selector(conn, &target)?;
+        node_ids.insert(from);
+        if let Some(t) = to {
+            node_ids.insert(t);
+        }
+        edges.push(GraphEdge {
+            from_mod_id: from,
+            to_mod_id: to,
+            target,
+            kind,
+            source,
+        });
+    }
+
+    let mut nodes = Vec::with_capacity(node_ids.len());
+    for id in node_ids {
+        let (canonical, slug): (Option<String>, Option<String>) = conn.query_row(
+            "SELECT canonical_name, slug FROM mods WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let modid = modid_for_mod(conn, id)?;
+        let modrinth = modrinth_id_for_mod(conn, id)?.is_some();
+        let name = canonical
+            .or(slug)
+            .or_else(|| modid.clone())
+            .unwrap_or_else(|| format!("#{id}"));
+        nodes.push(GraphNode {
+            mod_id: id,
+            name,
+            modid,
+            modrinth,
+        });
+    }
+    Ok(GraphData { nodes, edges })
+}
+
 /// Q1 -- which pack builds ship the mod identified by `(alias_source, key)`.
 pub fn packs_using_mod(
     conn: &Connection,
