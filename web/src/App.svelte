@@ -8,6 +8,7 @@
   import AppShell from './views/AppShell.svelte';
   import Browse from './views/Browse.svelte';
   import PublicBrowse from './views/PublicBrowse.svelte';
+  import ModPage from './views/ModPage.svelte';
   import Profile from './views/Profile.svelte';
   import MyPacks from './views/MyPacks.svelte';
   import DialogHost from './views/DialogHost.svelte';
@@ -41,7 +42,9 @@
   <Login onClose={() => (showLogin = false)} />
 {:else}
   <AppShell me={me ?? null} onSignIn={() => (showLogin = true)} onLogout={logout}>
-    {#if route.section === 'profile' && me}
+    {#if route.mod != null}
+      <ModPage modRef={route.mod} me={me ?? null} onBack={() => route.closeMod()} />
+    {:else if route.section === 'profile' && me}
       <Profile {me} />
     {:else if route.section === 'mypacks' && me}
       <MyPacks {me} />

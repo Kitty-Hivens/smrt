@@ -282,6 +282,51 @@ pub struct GraphData {
     pub edges: Vec<GraphEdge>,
 }
 
+/// One relation touching a mod, from that mod's page perspective. `dir` is "out"
+/// (this mod -> other) or "in" (other -> this mod). `other_mod_id` is the
+/// catalogued counterpart when the selector resolves; `None` marks an external
+/// target (an uncatalogued modid or a `provides` capability), so the page can
+/// render it as a plain label rather than a link.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct ModEdge {
+    pub dir: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub other_mod_id: Option<i64>,
+    pub other_name: String,
+    pub kind: String,
+    pub source: String,
+}
+
+/// The aggregated read model behind one mod's page: identity, the facets across
+/// its artifacts, its releases (files), the relations that touch it, and the pack
+/// builds that ship it. Backs the public `GET /v1/mods/:id`; the same view serves
+/// operators, who additionally reach the gated edit/diff endpoints.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct ModDetail {
+    #[ts(type = "number")]
+    pub mod_id: i64,
+    /// canonical_name -> slug -> modid -> `#<id>`, resolved server-side.
+    pub name: String,
+    pub slug: Option<String>,
+    pub author: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub modid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub modrinth_project_id: Option<String>,
+    pub loaders: Vec<String>,
+    pub mc_versions: Vec<String>,
+    pub releases: Vec<ReleaseRow>,
+    pub edges: Vec<ModEdge>,
+    /// Pack builds that ship this mod. Filtered to official + published on the
+    /// public endpoint so a guest never learns a draft's name from it.
+    pub used_by: Vec<ModUse>,
+}
+
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct RegistryStats {
     pub mods: i64,

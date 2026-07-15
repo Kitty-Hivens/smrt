@@ -1,5 +1,7 @@
 use super::ApiError;
 use crate::domain::*;
+use crate::registry::model::ModDetail;
+use crate::registry::queries;
 use crate::state::AppState;
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -7,7 +9,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio_util::io::ReaderStream;
 
 pub fn router(state: AppState) -> Router {
@@ -34,8 +36,76 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/cache/:prefix/:filename", get(get_cache_jar))
         .route("/v1/cache/inventory", get(get_cache_inventory))
         .route("/v1/community", get(list_community))
+        .route("/v1/mods/:key", get(get_mod_detail))
         .route("/v1/users/:uid/avatar", get(get_user_avatar))
         .with_state(state)
+}
+
+// ── /v1/mods/:id ─────────────────────────────────────────────────────────────
+
+/// The public read model behind a single mod's page: identity, releases (files),
+/// the relations that touch it, and the packs that ship it. Read-only and
+/// unauthenticated -- mod metadata is not sensitive, and the mirror already
+/// serves the jars themselves. `used_by` is narrowed to official + published
+/// packs so a guest cannot learn a draft's name from it; file `cached` flags are
+/// set here against the live cache. Operators reuse this view and reach the gated
+/// edit/diff endpoints separately.
+///
+/// `key` is either a numeric mod id (the graph and registry navigate by id) or a
+/// `sha1:<hash>` artifact reference (a pack's mod list has the jar's sha1, not the
+/// mod id) -- both resolve to the same page.
+async fn get_mod_detail(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+) -> Result<Json<ModDetail>, ApiError> {
+    let reg = state.registry.clone();
+    let detail = tokio::task::spawn_blocking(move || {
+        reg.with_conn(|c| {
+            let mod_id = if let Ok(id) = key.parse::<i64>() {
+                Some(id)
+            } else if let Some(sha1) = key.strip_prefix("sha1:") {
+                queries::mod_id_for_sha1(c, sha1)?
+            } else {
+                None
+            };
+            match mod_id {
+                Some(id) => queries::mod_detail(c, id),
+                None => Ok(None),
+            }
+        })
+    })
+    .await
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("mod detail task: {e}")))??;
+    let Some(mut detail) = detail else {
+        return Err(ApiError::NotFound);
+    };
+
+    let cached: HashSet<String> = state
+        .storage
+        .list_cache_inventory()
+        .await?
+        .into_iter()
+        .map(|e| e.sha1)
+        .collect();
+    for rel in &mut detail.releases {
+        for f in &mut rel.files {
+            f.cached = cached.contains(&f.sha1);
+        }
+    }
+
+    // never surface a draft/unlisted/community pack name to a guest through the
+    // "used by" list -- keep it to the same set the launcher's catalog exposes.
+    let public_packs: HashSet<String> = state
+        .storage
+        .list_pack_summaries()
+        .await?
+        .into_iter()
+        .filter(|p| p.tier == PackTier::Official && p.visibility == Visibility::Published)
+        .map(|p| p.pack_id)
+        .collect();
+    detail.used_by.retain(|u| public_packs.contains(&u.pack_id));
+
+    Ok(Json(detail))
 }
 
 // ── /v1/health ─────────────────────────────────────────────────────────────

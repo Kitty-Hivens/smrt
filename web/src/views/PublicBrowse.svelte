@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
+  import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
   import { terms } from '../lib/terms.svelte';
   import { renderMarkdown } from '../lib/markdown';
@@ -135,7 +136,7 @@
               <div class="modhead mono faint">{t('browse.modsN', { n: manifest.mods.length })}</div>
               <div class="mods">
                 {#each manifest.mods as m (m.sha1)}
-                  <div class="mrow">
+                  <button class="mrow" onclick={() => route.openMod(`sha1:${m.sha1}`)}>
                     <ModIcon
                       name={modName(m)}
                       source={m.source}
@@ -145,7 +146,7 @@
                     />
                     <span class="mn">{modName(m)}</span>
                     {#if !m.required}<span class="opt mono">{t('browse.optional')}</span>{/if}
-                  </div>
+                  </button>
                 {/each}
               </div>
             {/if}
@@ -314,6 +315,23 @@
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 3px 6px;
+    margin: 0 -6px;
+    cursor: pointer;
+    color: inherit;
+  }
+  .mrow:hover {
+    background: var(--panel-2);
+  }
+  .mrow:hover .mn {
+    text-decoration: underline;
+    text-decoration-color: var(--seam-bright);
+    text-underline-offset: 2px;
   }
   .mn {
     font-size: 12.5px;

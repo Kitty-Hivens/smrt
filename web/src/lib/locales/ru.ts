@@ -450,4 +450,14 @@ export const ru: Dict = {
   'id.filename': 'Имя файла',
   'id.save': 'Сохранить',
   'id.saving': 'сохранение...',
+
+  // mod page
+  'mod.back': 'Назад',
+  'mod.releases': 'Релизы',
+  'mod.deps': 'Зависимости и конфликты',
+  'mod.usedBy': 'Используется в паках',
+  'mod.noDeps': 'Связей не найдено.',
+  'mod.noUsedBy': 'Пока не входит ни в один опубликованный пак.',
+  'mod.notFound': 'Мод не найден.',
+  'mod.external': 'Внешняя / некаталогизированная цель',
 };

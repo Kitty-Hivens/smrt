@@ -260,6 +260,150 @@ pub fn graph(conn: &Connection) -> Result<GraphData> {
     Ok(GraphData { nodes, edges })
 }
 
+/// A mod's display name, resolved the same way everywhere: canonical_name ->
+/// slug -> modid -> `#<id>`.
+fn mod_name(conn: &Connection, mod_id: i64) -> Result<String> {
+    let (canonical, slug): (Option<String>, Option<String>) = conn.query_row(
+        "SELECT canonical_name, slug FROM mods WHERE id = ?1",
+        params![mod_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let modid = modid_for_mod(conn, mod_id)?;
+    Ok(canonical
+        .or(slug)
+        .or(modid)
+        .unwrap_or_else(|| format!("#{mod_id}")))
+}
+
+/// Every relation touching `mod_id`, in both directions, resolved for the mod
+/// page. Outgoing edges name the target (resolved to a mod when catalogued);
+/// incoming edges are relations whose selector resolves to this mod (matched on
+/// its `modid`/`modrinth` alias keys), naming the referencing mod.
+pub fn edges_for_mod(conn: &Connection, mod_id: i64) -> Result<Vec<ModEdge>> {
+    let mut out = Vec::new();
+
+    // outgoing: this mod -> target
+    {
+        let mut stmt = conn.prepare(
+            "SELECT target_modid, kind, source FROM relation
+             WHERE from_mod_id = ?1 ORDER BY kind, target_modid",
+        )?;
+        let rows: Vec<(String, String, String)> = stmt
+            .query_map(params![mod_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (target, kind, source) in rows {
+            let other_mod_id = mod_id_for_selector(conn, &target)?;
+            let other_name = match other_mod_id {
+                Some(id) => mod_name(conn, id)?,
+                None => target.clone(),
+            };
+            out.push(ModEdge {
+                dir: "out".into(),
+                other_mod_id,
+                other_name,
+                kind,
+                source,
+            });
+        }
+    }
+
+    // incoming: other -> this mod. Match on the selectors that resolve here: each
+    // `modid` alias verbatim, and each `modrinth` alias as `modrinth:<id>`.
+    let mut selectors: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT external_key FROM mod_alias WHERE mod_id = ?1 AND source = 'modid'")?;
+        stmt.query_map(params![mod_id], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?
+    };
+    if let Some(pid) = modrinth_id_for_mod(conn, mod_id)? {
+        selectors.push(format!("modrinth:{pid}"));
+    }
+    for sel in selectors {
+        let mut stmt = conn.prepare(
+            "SELECT from_mod_id, kind, source FROM relation
+             WHERE target_modid = ?1 AND from_mod_id <> ?2 ORDER BY kind, from_mod_id",
+        )?;
+        let rows: Vec<(i64, String, String)> = stmt
+            .query_map(params![sel, mod_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (from, kind, source) in rows {
+            out.push(ModEdge {
+                dir: "in".into(),
+                other_mod_id: Some(from),
+                other_name: mod_name(conn, from)?,
+                kind,
+                source,
+            });
+        }
+    }
+
+    Ok(out)
+}
+
+/// The aggregated read model for one mod's page (`None` if the id is unknown).
+/// `used_by` is returned unfiltered here; the public endpoint narrows it to
+/// official + published packs. File `cached` flags are set by the handler against
+/// the live cache, as elsewhere.
+pub fn mod_detail(conn: &Connection, mod_id: i64) -> Result<Option<ModDetail>> {
+    let identity: Option<(Option<String>, Option<String>, Option<String>)> = conn
+        .query_row(
+            "SELECT canonical_name, slug, author FROM mods WHERE id = ?1",
+            params![mod_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let Some((canonical, slug, author)) = identity else {
+        return Ok(None);
+    };
+
+    let modid = modid_for_mod(conn, mod_id)?;
+    let modrinth_project_id = modrinth_id_for_mod(conn, mod_id)?;
+    let name = canonical
+        .or_else(|| slug.clone())
+        .or_else(|| modid.clone())
+        .unwrap_or_else(|| format!("#{mod_id}"));
+
+    let releases = releases_of_mod_by_id(conn, mod_id)?;
+
+    // facets folded across every file rather than re-queried
+    let mut loaders: BTreeSet<String> = BTreeSet::new();
+    let mut mc: BTreeSet<String> = BTreeSet::new();
+    for rel in &releases {
+        for f in &rel.files {
+            for t in &f.targets {
+                loaders.insert(t.clone());
+            }
+            for v in &f.mc_versions {
+                mc.insert(v.clone());
+            }
+        }
+    }
+    let mut mc_versions: Vec<String> = mc.into_iter().collect();
+    sort_mc(&mut mc_versions);
+
+    let edges = edges_for_mod(conn, mod_id)?;
+    let used_by = match &modid {
+        Some(m) => packs_using_mod(conn, "modid", m)?,
+        None => Vec::new(),
+    };
+
+    Ok(Some(ModDetail {
+        mod_id,
+        name,
+        slug,
+        author,
+        modid,
+        modrinth_project_id,
+        loaders: loaders.into_iter().collect(),
+        mc_versions,
+        releases,
+        edges,
+        used_by,
+    }))
+}
+
 /// Q1 -- which pack builds ship the mod identified by `(alias_source, key)`.
 pub fn packs_using_mod(
     conn: &Connection,

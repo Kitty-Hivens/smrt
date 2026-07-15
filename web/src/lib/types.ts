@@ -62,6 +62,8 @@ export type { GraphData } from './bindings/GraphData';
 export type { GraphNode } from './bindings/GraphNode';
 export type { GraphEdge } from './bindings/GraphEdge';
 export type { ModSummary } from './bindings/ModSummary';
+export type { ModDetail } from './bindings/ModDetail';
+export type { ModEdge } from './bindings/ModEdge';
 export type { VersionRow } from './bindings/VersionRow';
 export type { ReleaseRow } from './bindings/ReleaseRow';
 export type { UnassignedJar } from './bindings/UnassignedJar';

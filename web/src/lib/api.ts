@@ -15,6 +15,7 @@ import type {
   JarDiff,
   JobResult,
   ManifestVersionsListing,
+  ModDetail,
   ModrinthHit,
   ModrinthVersion,
   ModSummary,
@@ -320,6 +321,10 @@ export const api = {
   // a mod's files grouped by release (version node) for the management view
   modReleases: (modId: number) =>
     getJson<ReleaseRow[]>(`/v1/registry/mod-releases/${modId}`),
+  // public per-mod read model behind the mod page (guest-accessible). `ref` is a
+  // numeric mod id or a `sha1:<hash>` artifact reference.
+  modDetail: (ref: number | string) =>
+    getJson<ModDetail>(`/v1/mods/${encodeURIComponent(ref)}`),
   // jars on disk with no identity yet -- the "needs identity" bucket
   unassigned: () => getJson<UnassignedJar[]>('/v1/registry/unassigned'),
   // set a cached jar's mod + release + facets (authored, survives re-harvest)

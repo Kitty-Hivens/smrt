@@ -56,17 +56,37 @@ function initial(): Section {
 }
 
 let section = $state<Section>(initial());
+// A focused mod page overlays whatever section is active: set, the content area
+// renders the mod page instead of the section; cleared, it returns to `section`.
+// Reachable from the registry, a pack's mod list, and the graph, so it lives here
+// rather than as one view's local state. Not persisted -- a refresh lands on the
+// underlying section, not a deep mod link (the store has no URL to restore from).
+// The value is a mod ref the API accepts: a numeric id (graph / registry) or
+// `sha1:<hash>` (a pack's mod list has the jar's sha1, not the id).
+let focusMod = $state<string | null>(null);
 
 export const route = {
   get section(): Section {
     return section;
   },
+  get mod(): string | null {
+    return focusMod;
+  },
   go(s: Section) {
+    focusMod = null; // picking a section leaves any open mod page
     section = s;
     try {
       localStorage.setItem(STORAGE_KEY, s);
     } catch {
       // session-only navigation still works
     }
+  },
+  // Open a mod's page over the current section; `closeMod` returns to it. `ref`
+  // is a numeric mod id or a `sha1:<hash>` artifact reference.
+  openMod(ref: number | string) {
+    focusMod = String(ref);
+  },
+  closeMod() {
+    focusMod = null;
   },
 };

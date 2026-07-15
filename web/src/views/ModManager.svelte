@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
+  import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
   import { isDebug } from '../lib/roles';
   import type { JarDiff, ModSummary, ReleaseRow, UnassignedJar, VersionRow } from '../lib/types';
@@ -309,7 +310,12 @@
           <ModIcon name={m.name} source={{ type: 'smrt_static', rel_path: '' }} size={32} mono />
           <div class="minfo">
             <div class="mname">
-              {m.name}{#if m.author}<span class="mby">{t('mm.by', { author: m.author })}</span>{/if}
+              <button
+                class="namelink"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  route.openMod(m.mod_id);
+                }}>{m.name}</button>{#if m.author}<span class="mby">{t('mm.by', { author: m.author })}</span>{/if}
             </div>
             {#if m.loaders.length || m.mc_versions.length}
               <div class="mtags">
@@ -547,6 +553,22 @@
   .mname {
     font-size: 14px;
     font-weight: 600;
+  }
+  .namelink {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--fg);
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-color: transparent;
+    text-underline-offset: 2px;
+  }
+  .namelink:hover {
+    text-decoration-color: var(--seam-bright);
   }
   .mby {
     color: var(--fg-faint);

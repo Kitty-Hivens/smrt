@@ -11,6 +11,7 @@
   import dagre from '@dagrejs/dagre';
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
+  import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
   import { isDebug } from '../lib/roles';
   import type { GraphData } from '../lib/types';
@@ -145,6 +146,12 @@
     return kind;
   }
 
+  // clicking a mod node opens its page; external/unresolved leaves have no id
+  function onnodeclick({ node }: { node: Node }) {
+    const modId = idToMod(node.id);
+    if (Number.isFinite(modId)) route.openMod(modId);
+  }
+
   // debug: connecting two mod nodes authors a relation (target by the mod's modid)
   async function onconnect(conn: Connection) {
     if (!canDebug) return;
@@ -209,6 +216,7 @@
         fitView
         nodesConnectable={canDebug}
         deleteKey={['Delete', 'Backspace']}
+        {onnodeclick}
         {onconnect}
         {ondelete}
       >

@@ -451,6 +451,16 @@ export const en = {
   'id.filename': 'Filename',
   'id.save': 'Save',
   'id.saving': 'saving...',
+
+  // mod page
+  'mod.back': 'Back',
+  'mod.releases': 'Releases',
+  'mod.deps': 'Dependencies & conflicts',
+  'mod.usedBy': 'Used in packs',
+  'mod.noDeps': 'No relations recorded.',
+  'mod.noUsedBy': 'Not shipped by any published pack yet.',
+  'mod.notFound': 'Mod not found.',
+  'mod.external': 'External / uncatalogued target',
 } as const;
 
 export type Dict = Record<keyof typeof en, string>;
