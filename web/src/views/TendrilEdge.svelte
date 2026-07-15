@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { EdgeProps } from '@xyflow/svelte';
+  import { useSvelteFlow, type EdgeProps } from '@xyflow/svelte';
   import { clock, useClock } from '../lib/anim.svelte';
   import { hover } from '../lib/graphhover.svelte';
 
@@ -28,6 +28,13 @@
   // and a still tendril is a straight line, so it costs almost nothing to draw.
   const lit = $derived(hover.id == null || source === hover.id || target === hover.id);
 
+  // The wave is sampled per screen pixel, not per graph unit. Zoomed out to fit a
+  // whole registry, an edge 300 units long is twenty pixels of screen -- sampling
+  // it by graph length spent seventy-odd vertices drawing a wave finer than a
+  // pixel, on every edge, every frame. Nobody could see it and everybody paid for
+  // it. At reading zoom this changes nothing.
+  const { getViewport } = useSvelteFlow();
+
   const color = $derived((data?.color as string) ?? 'var(--fg-dim)');
   // per-edge phase offset so the whole graph does not pulse in lockstep
   const phase = $derived((data?.phase as number) ?? 0);
@@ -37,8 +44,10 @@
     const dx = targetX - sourceX;
     const dy = targetY - sourceY;
     const dist = Math.hypot(dx, dy) || 1;
-    // a vertex every ~4px, as in the original (which steps every 2 at GUI scale)
-    const n = lit ? Math.max(8, Math.min(160, Math.round(dist / 4))) : 1;
+    // a vertex every ~4 screen px, as in the original (which steps every 2 at GUI
+    // scale); an unlit tendril is a straight line and needs none
+    const onScreen = dist * getViewport().zoom;
+    const n = lit ? Math.max(6, Math.min(160, Math.round(onScreen / 4))) : 1;
     const amp = lit ? 5 : 0;
     let out = '';
     for (let i = 0; i <= n; i++) {
@@ -115,10 +124,16 @@
       transition: none;
     }
   }
+  /* The halo is a wide soft stroke, not a blur filter. A `filter: blur()` on a
+     path whose geometry changes every frame makes the browser re-rasterize it
+     every frame, per edge: on a hub's fan of fifty that measured 50ms of a 66ms
+     frame -- the entire cost of the view. Grouping the blur into one pass is not
+     available either, since Svelte Flow gives every edge its own <g>. A wide,
+     low-opacity stroke under the bright core reads as the same halo on this field
+     and costs nothing to move. */
   .glow {
-    stroke-width: 6;
-    opacity: 0.3;
-    filter: blur(3px);
+    stroke-width: 7;
+    opacity: 0.22;
   }
   .core {
     stroke-width: 1.6;
