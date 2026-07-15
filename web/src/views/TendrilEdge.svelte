@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { EdgeProps } from '@xyflow/svelte';
   import { clock, useClock } from '../lib/anim.svelte';
+  import { hover } from '../lib/graphhover.svelte';
 
   // A living relation line, ported from the Thaumcraft 4 Thaumonomicon's research
   // links. The original draws a GL line strip sampled every couple of pixels and
@@ -16,10 +17,16 @@
   //     floats between the two nodes rather than touching them. The gradient below
   //     traces that same parabola (4p(1-p)), and `screen` blending stands in for
   //     the GL additive blend so crossings brighten the way they do in-game.
-  let { id, sourceX, sourceY, targetX, targetY, data }: EdgeProps = $props();
+  let { id, source, target, sourceX, sourceY, targetX, targetY, data }: EdgeProps = $props();
 
   // one shared rAF for every tendril on screen; stops when the last one unmounts
   $effect(() => useClock());
+
+  // On a mod's path, or nothing is hovered at all. An unlit tendril stops
+  // travelling and drops to a whisper: on a hub's fan of fifty, the one path you
+  // are pointing at is the only thing still alive, which is the whole point --
+  // and a still tendril is a straight line, so it costs almost nothing to draw.
+  const lit = $derived(hover.id == null || source === hover.id || target === hover.id);
 
   const color = $derived((data?.color as string) ?? 'var(--fg-dim)');
   // per-edge phase offset so the whole graph does not pulse in lockstep
@@ -31,8 +38,8 @@
     const dy = targetY - sourceY;
     const dist = Math.hypot(dx, dy) || 1;
     // a vertex every ~4px, as in the original (which steps every 2 at GUI scale)
-    const n = Math.max(8, Math.min(160, Math.round(dist / 4)));
-    const amp = 5;
+    const n = lit ? Math.max(8, Math.min(160, Math.round(dist / 4))) : 1;
+    const amp = lit ? 5 : 0;
     let out = '';
     for (let i = 0; i <= n; i++) {
       const p = i / n; // 0 at the source, 1 at the target
@@ -67,8 +74,8 @@
 
 <!-- invisible fat stroke so the edge stays clickable (debug selects it to delete) -->
 <path class="hit" {d} />
-<path class="glow" {d} stroke="url(#{gid})" />
-<path class="core" {d} stroke="url(#{gid})" />
+<path class="glow" class:unlit={!lit} {d} stroke="url(#{gid})" />
+<path class="core" class:unlit={!lit} class:hot={lit && hover.id != null} {d} stroke="url(#{gid})" />
 
 <style>
   path {
@@ -86,6 +93,27 @@
     pointer-events: none;
     /* stands in for the original's additive blend: overlapping tendrils brighten */
     mix-blend-mode: screen;
+    transition: opacity 0.18s ease;
+  }
+  /* Off the hovered mod's path: recede to a whisper so the live path is the only
+     thing left to read. These go low: `screen` blending adds, so on a hub's fan
+     fifty faint lines converging on one node still pile up into a glow. */
+  .glow.unlit {
+    opacity: 0;
+  }
+  .core.unlit {
+    opacity: 0.05;
+  }
+  /* the path under the cursor, with the rest receding: give it a little more body
+     so it reads as the one live thing rather than merely the last one standing */
+  .core.hot {
+    stroke-width: 2.4;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .glow,
+    .core {
+      transition: none;
+    }
   }
   .glow {
     stroke-width: 6;

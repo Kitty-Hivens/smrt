@@ -23,6 +23,7 @@
   import TendrilEdge from './TendrilEdge.svelte';
   import GraphFit from './GraphFit.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { hover } from '../lib/graphhover.svelte';
   import type { GraphData } from '../lib/types';
 
   // Draws a relation graph and lets you walk it. Owns the focus, the layout and
@@ -136,13 +137,15 @@
       const id = modNodeId(n.mod_id);
       seen.add(id);
       modidById.set(id, n.modid ?? undefined);
+      // the focused mod wears the panel's one filled emphasis (the inverted
+      // white solid) -- no texture needed for it to read as the centre
+      const base = n.mod_id === focusId ? 'gv-focus' : n.modrinth ? 'gv-modrinth' : 'gv-mod';
       ns.push({
         id,
         position: { x: 0, y: 0 },
-        data: { label: n.name },
-        // the focused mod wears the panel's one filled emphasis (the inverted
-        // white solid) -- no texture needed for it to read as the centre
-        class: n.mod_id === focusId ? 'gv-focus' : n.modrinth ? 'gv-modrinth' : 'gv-mod',
+        // `base` is kept so a hover can re-dress the node without a rebuild
+        data: { label: n.name, base },
+        class: base,
         connectable: canDebug,
         deletable: false,
       });
@@ -172,7 +175,7 @@
           ns.push({
             id: target,
             position: { x: 0, y: 0 },
-            data: { label: e.target },
+            data: { label: e.target, base: 'gv-ext' },
             class: 'gv-ext',
             connectable: false,
             deletable: false,
@@ -231,6 +234,9 @@
 
   /** Re-derive what is on screen from `raw` + the current focus, and lay it out. */
   function rebuild() {
+    // the node under the cursor is about to stop existing; a stale hover would
+    // leave the whole graph muted against a mod that is no longer drawn
+    hover.set(null);
     const g = raw;
     if (!g) {
       nodes = [];
@@ -294,6 +300,28 @@
     const modId = idToMod(node.id);
     if (Number.isFinite(modId)) setFocus(modId);
   }
+
+  // Hovering a mod lights its own path and lets everything else recede. The edges
+  // read the hovered id straight from the shared store, so only the nodes are
+  // re-dressed here -- and only their class, never their position, so the layout
+  // is not re-run under the cursor.
+  function markHover(nodeId: string | null) {
+    hover.set(nodeId);
+    const near = new Set<string>();
+    if (nodeId != null) {
+      near.add(nodeId);
+      for (const e of edges) {
+        if (e.source === nodeId) near.add(e.target);
+        if (e.target === nodeId) near.add(e.source);
+      }
+    }
+    nodes = nodes.map((n) => {
+      const base = (n.data as { base?: string }).base ?? 'gv-mod';
+      return { ...n, class: nodeId == null || near.has(n.id) ? base : `${base} gv-mute` };
+    });
+  }
+  const onnodepointerenter = ({ node }: { node: Node }) => markHover(node.id);
+  const onnodepointerleave = () => markHover(null);
 
   function onconnect(conn: Connection) {
     if (!canDebug) return;
@@ -364,6 +392,8 @@
       nodesConnectable={canDebug}
       deleteKey={['Delete', 'Backspace']}
       {onnodeclick}
+      {onnodepointerenter}
+      {onnodepointerleave}
       {onconnect}
       {ondelete}
     >
@@ -477,6 +507,19 @@
     border-style: dashed;
     color: var(--fg-dim);
     background: transparent;
+  }
+  /* not on the hovered mod's path: recede, so what is left standing is exactly
+     what that mod touches */
+  .flowwrap :global(.svelte-flow__node.gv-mute) {
+    opacity: 0.12;
+  }
+  .flowwrap :global(.svelte-flow__node) {
+    transition: opacity 0.18s ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .flowwrap :global(.svelte-flow__node) {
+      transition: none;
+    }
   }
 
   /* zoom / fit / lock controls: the library ships them white, which on this field
