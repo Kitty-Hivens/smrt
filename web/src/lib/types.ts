@@ -58,6 +58,9 @@ export type { AuditRow } from './bindings/AuditRow';
 
 // registry browser (mods + builds, faceted)
 export type { JarDiff } from './bindings/JarDiff';
+export type { GraphData } from './bindings/GraphData';
+export type { GraphNode } from './bindings/GraphNode';
+export type { GraphEdge } from './bindings/GraphEdge';
 export type { ModSummary } from './bindings/ModSummary';
 export type { VersionRow } from './bindings/VersionRow';
 export type { ReleaseRow } from './bindings/ReleaseRow';

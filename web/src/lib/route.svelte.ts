@@ -10,6 +10,7 @@ export type Section =
   | 'packs'
   | 'servers'
   | 'mods'
+  | 'graph'
   | 'users'
   | 'moderation'
   | 'audit'
@@ -23,6 +24,7 @@ export const SECTIONS: Section[] = [
   'packs',
   'servers',
   'mods',
+  'graph',
   'users',
   'moderation',
   'audit',

@@ -10,6 +10,7 @@ import type {
   CommunityPack,
   DeclaredAsset,
   CacheUsageListing,
+  GraphData,
   Health,
   JarDiff,
   JobResult,
@@ -333,6 +334,15 @@ export const api = {
     send('POST', '/v1/registry/merge', { from_mod_id: fromModId, into_mod_id: intoModId }),
   // what a self-hosted jar changed vs its genuine Modrinth counterpart
   repackDiff: (sha1: string) => getJson<JarDiff>(`/v1/registry/files/${sha1}/repack-diff`),
+  // the dependency/conflict graph for the graph view
+  graph: () => getJson<GraphData>('/v1/registry/graph'),
+  // author or remove one graph edge (node editor); debug-gated
+  authorRelation: (body: {
+    from_mod_id: number;
+    target_modid: string;
+    kind: string;
+    remove?: boolean;
+  }) => send('POST', '/v1/registry/relations', body),
   registryBuilds: () => getJson<BuildSummary[]>('/v1/registry/builds'),
   registryBuildMods: (packId: string, packVersion: string) =>
     getJson<BuildModRow[]>(

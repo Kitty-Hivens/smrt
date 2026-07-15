@@ -56,6 +56,7 @@
     packs: 'nav.packs',
     servers: 'nav.servers',
     mods: 'nav.mods',
+    graph: 'nav.graph',
     users: 'nav.users',
     moderation: 'nav.moderation',
     audit: 'nav.audit',
