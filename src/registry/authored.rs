@@ -455,6 +455,7 @@ mod tests {
                 upsert::upsert_relation(
                     c,
                     a,
+                    None,
                     "bar",
                     None,
                     RelKind::Requires,

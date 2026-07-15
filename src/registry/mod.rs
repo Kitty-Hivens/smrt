@@ -132,6 +132,7 @@ mod tests {
             upsert::upsert_relation(
                 c,
                 jei,
+                None,
                 "appleskin",
                 None,
                 RelKind::Requires,
@@ -462,13 +463,143 @@ mod tests {
         r.with_conn_mut(|c| {
             let jei = queries::mod_id_for_alias(c, "modid", "jei")?.unwrap();
             // same sourced assertion again -> ignored
-            upsert::upsert_relation(c, jei, "appleskin", None, RelKind::Requires, Source::JarMeta, NOW)?;
+            upsert::upsert_relation(c, jei, None, "appleskin", None, RelKind::Requires, Source::JarMeta, NOW)?;
             let n: i64 = c.query_row(
                 "SELECT count(*) FROM relation WHERE from_mod_id = ?1 AND target_modid = 'appleskin'",
                 [jei],
                 |r| r.get(0),
             )?;
             assert_eq!(n, 1);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // #48: two artifacts of one mod each declare their own dependency. Asking about
+    // one must never hand back the other's -- that union was the bug the artifact
+    // scope exists to kill. Mod-level facts (an authored assertion about the mod)
+    // still apply to every artifact, and an artifact the registry never read gets
+    // those alone rather than borrowing a sibling build's.
+    #[test]
+    fn relations_are_scoped_to_the_artifact_that_declares_them() {
+        let r = Registry::open_in_memory().unwrap();
+        r.with_conn_mut(|c| {
+            let m = upsert::upsert_mod_by_alias(c, &[("modid", "jei")], NOW)?;
+            let old = upsert::upsert_mod_version(
+                c,
+                m,
+                "4.15",
+                &["forge"],
+                "sha_old",
+                1,
+                None,
+                None,
+                NOW,
+            )?;
+            let new = upsert::upsert_mod_version(
+                c,
+                m,
+                "4.16",
+                &["forge"],
+                "sha_new",
+                1,
+                None,
+                None,
+                NOW,
+            )?;
+            upsert::upsert_relation(
+                c,
+                m,
+                Some(old),
+                "oldlib",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+            upsert::upsert_relation(
+                c,
+                m,
+                Some(new),
+                "newlib",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+            upsert::upsert_relation(
+                c,
+                m,
+                None,
+                "always",
+                None,
+                RelKind::Conflicts,
+                Source::Authored,
+                NOW,
+            )?;
+
+            let targets = |mv: i64| -> anyhow::Result<Vec<String>> {
+                Ok(queries::relations_for_artifact(c, mv, m)?
+                    .into_iter()
+                    .map(|e| e.target)
+                    .collect())
+            };
+
+            let a = targets(old)?;
+            assert!(a.contains(&"oldlib".to_string()));
+            assert!(
+                !a.contains(&"newlib".to_string()),
+                "a sibling version's dependency must not leak onto this artifact"
+            );
+            assert!(
+                a.contains(&"always".to_string()),
+                "a mod-level fact applies to every artifact"
+            );
+
+            let b = targets(new)?;
+            assert!(b.contains(&"newlib".to_string()));
+            assert!(!b.contains(&"oldlib".to_string()));
+
+            // never harvested: mod-level facts only, no borrowed dependencies
+            assert_eq!(targets(-1)?, vec!["always".to_string()]);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // The same edge may now exist once per artifact -- two builds of a version
+    // really do declare different things -- while a repeat for the same artifact
+    // still dedupes.
+    #[test]
+    fn same_edge_coexists_per_artifact_but_dedupes_within_one() {
+        let r = Registry::open_in_memory().unwrap();
+        r.with_conn_mut(|c| {
+            let m = upsert::upsert_mod_by_alias(c, &[("modid", "mod")], NOW)?;
+            let a =
+                upsert::upsert_mod_version(c, m, "1.0", &["forge"], "sha_a", 1, None, None, NOW)?;
+            let b =
+                upsert::upsert_mod_version(c, m, "1.0", &["fabric"], "sha_b", 1, None, None, NOW)?;
+            let write = |mv: i64| {
+                upsert::upsert_relation(
+                    c,
+                    m,
+                    Some(mv),
+                    "lib",
+                    None,
+                    RelKind::Requires,
+                    Source::JarMeta,
+                    NOW,
+                )
+            };
+            assert!(write(a)?, "first artifact records it");
+            assert!(write(b)?, "the other build records its own");
+            assert!(!write(a)?, "a repeat for the same artifact dedupes");
+            let n: i64 = c.query_row(
+                "SELECT count(*) FROM relation WHERE target_modid = 'lib'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(n, 2);
             Ok(())
         })
         .unwrap();

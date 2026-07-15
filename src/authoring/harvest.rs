@@ -311,7 +311,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
     let mut declared_deps_written = 0i64;
     // (from_mod_id, jar) for jars carrying references, resolved to edges in a
     // second pass once every jar's packages are in the index.
-    let mut derivations: Vec<(i64, &JarSeed)> = Vec::new();
+    let mut derivations: Vec<(i64, i64, &JarSeed)> = Vec::new();
 
     let mut no_identity = 0usize;
     for jar in &scan.jars {
@@ -343,7 +343,9 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         } else {
             Some(serde_json::to_string(&jar.mc_versions)?)
         };
-        upsert::upsert_mod_version(
+        // the artifact this jar is: every edge derived below belongs to it, not to
+        // the mod, so a second version of the same mod cannot lend it its deps (#48)
+        let mod_version_id = upsert::upsert_mod_version(
             conn,
             mod_id,
             version,
@@ -375,6 +377,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                 upsert::upsert_relation(
                     conn,
                     mod_id,
+                    Some(mod_version_id),
                     dep,
                     None,
                     RelKind::Requires,
@@ -386,6 +389,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                 if upsert::upsert_relation(
                     conn,
                     mod_id,
+                    Some(mod_version_id),
                     target,
                     range.as_deref(),
                     *kind,
@@ -419,6 +423,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                     && upsert::upsert_relation(
                         conn,
                         mod_id,
+                        Some(mod_version_id),
                         &format!("modrinth:{dep_pid}"),
                         version_id.as_deref(),
                         kind,
@@ -432,7 +437,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         }
 
         if !is_modrinth && (!jar.hard_refs.is_empty() || !jar.optional_refs.is_empty()) {
-            derivations.push((mod_id, jar));
+            derivations.push((mod_id, mod_version_id, jar));
         }
     }
 
@@ -441,18 +446,22 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
     // is skipped; a hard edge to a target suppresses a competing optional one.
     let mut inferred_requires = 0i64;
     let mut inferred_optional = 0i64;
-    // Hard pass first, accumulating each mod's hard targets across ALL its jars, so
-    // a hard reference in one artifact suppresses a soft reference to the same
-    // target in another artifact of the same mod.
-    let mut hard_by_mod: HashMap<i64, HashSet<String>> = HashMap::new();
-    for (from_mod_id, jar) in &derivations {
-        let hard = hard_by_mod.entry(*from_mod_id).or_default();
+    // Hard pass first, keyed by artifact. This used to accumulate across all of a
+    // mod's jars so that a hard reference in one artifact suppressed a soft one in
+    // another -- a workaround for edges being mod-level, where two artifacts'
+    // contradictory rows landed on the same node. Now that an edge names the jar it
+    // came from (#48) each artifact simply states its own facts: a jar's own hard
+    // reference suppresses its own soft one, and nothing leaks between builds.
+    let mut hard_by_artifact: HashMap<i64, HashSet<String>> = HashMap::new();
+    for (from_mod_id, mod_version_id, jar) in &derivations {
+        let hard = hard_by_artifact.entry(*mod_version_id).or_default();
         for prefix in &jar.hard_refs {
             if let Some(target) = resolve_edge_target(conn, prefix, *from_mod_id)?
                 && hard.insert(target.clone())
                 && upsert::upsert_relation(
                     conn,
                     *from_mod_id,
+                    Some(*mod_version_id),
                     &target,
                     None,
                     RelKind::Requires,
@@ -464,21 +473,22 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
             }
         }
     }
-    // Optional pass: skip any target already hard for the same mod.
-    let mut opt_by_mod: HashMap<i64, HashSet<String>> = HashMap::new();
-    for (from_mod_id, jar) in &derivations {
+    // Optional pass: skip any target this same artifact already references hard.
+    let mut opt_by_artifact: HashMap<i64, HashSet<String>> = HashMap::new();
+    for (from_mod_id, mod_version_id, jar) in &derivations {
         for prefix in &jar.optional_refs {
             if let Some(target) = resolve_edge_target(conn, prefix, *from_mod_id)?
-                && !hard_by_mod
-                    .get(from_mod_id)
+                && !hard_by_artifact
+                    .get(mod_version_id)
                     .is_some_and(|h| h.contains(&target))
-                && opt_by_mod
-                    .entry(*from_mod_id)
+                && opt_by_artifact
+                    .entry(*mod_version_id)
                     .or_default()
                     .insert(target.clone())
                 && upsert::upsert_relation(
                     conn,
                     *from_mod_id,
+                    Some(*mod_version_id),
                     &target,
                     None,
                     RelKind::OptionalDep,
@@ -517,7 +527,11 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                 )?;
             }
         }
-        // curator conflicts: A's mod_id conflicts with B's modid (and reverse)
+        // Curator conflicts: A's mod_id conflicts with B's modid (and reverse).
+        // Left mod-level (no artifact scope): a pack author writing
+        // `incompatible_with` is stating that the two mods do not get along, not
+        // that one particular build does not -- so it should hold for whatever
+        // artifact of the mod a pack ships.
         for (a_sha, b_sha) in &pack.conflicts {
             if let (Some(a_mod), Some(b_modid)) = (
                 queries::mod_id_for_sha1(conn, a_sha)?,
@@ -526,6 +540,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                 upsert::upsert_relation(
                     conn,
                     a_mod,
+                    None,
                     b_modid,
                     None,
                     RelKind::Conflicts,
@@ -540,6 +555,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                 upsert::upsert_relation(
                     conn,
                     b_mod,
+                    None,
                     a_modid,
                     None,
                     RelKind::Conflicts,

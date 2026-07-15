@@ -49,6 +49,10 @@ const MIGRATIONS: &[(u32, Migration)] = &[
         10,
         Migration::Sql(include_str!("schema/0010_derived_graph.sql")),
     ),
+    (
+        11,
+        Migration::Sql(include_str!("schema/0011_relation_artifact.sql")),
+    ),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its
@@ -417,6 +421,55 @@ mod tests {
             )
             .unwrap();
         assert_eq!((vn.as_str(), ch.as_str()), ("1.0", "unknown"));
+    }
+
+    // Migration 11 must not invent provenance. A mod with exactly one artifact
+    // leaves no doubt which jar a derived edge came from, so it is attached; a mod
+    // with several genuinely cannot be resolved after the fact, so the row stays
+    // mod-level (today's semantics, no regression) until a re-harvest scopes it.
+    // An authored fact was asserted about the mod and is left alone.
+    #[test]
+    fn migration_0011_attaches_only_unambiguous_derived_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE mods (id INTEGER PRIMARY KEY);
+             CREATE TABLE mod_version (id INTEGER PRIMARY KEY, mod_id INTEGER NOT NULL);
+             CREATE TABLE relation (
+               id                   INTEGER PRIMARY KEY,
+               from_mod_id          INTEGER NOT NULL,
+               target_modid         TEXT NOT NULL,
+               target_version_range TEXT,
+               kind                 TEXT NOT NULL,
+               source               TEXT NOT NULL,
+               confidence           INTEGER NOT NULL,
+               created_at           TEXT NOT NULL
+             );
+             CREATE UNIQUE INDEX idx_rel_dedupe
+               ON relation(from_mod_id, target_modid, kind, source, COALESCE(target_version_range, ''));
+             INSERT INTO mods (id) VALUES (1), (2);
+             -- mod 1 has one artifact; mod 2 has two
+             INSERT INTO mod_version (id, mod_id) VALUES (10, 1), (20, 2), (21, 2);
+             INSERT INTO relation (id, from_mod_id, target_modid, kind, source, confidence, created_at)
+               VALUES (1, 1, 'lib', 'requires', 'jar-meta', 8, 'T'),
+                      (2, 2, 'lib', 'requires', 'jar-meta', 8, 'T'),
+                      (3, 1, 'foe', 'conflicts', 'authored', 40, 'T');",
+        )
+        .unwrap();
+
+        conn.execute_batch(include_str!("schema/0011_relation_artifact.sql"))
+            .unwrap();
+
+        let scope = |id: i64| -> Option<i64> {
+            conn.query_row(
+                "SELECT from_mod_version_id FROM relation WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(scope(1), Some(10), "one artifact: no doubt, attach it");
+        assert_eq!(scope(2), None, "two artifacts: which jar is unknowable now");
+        assert_eq!(scope(3), None, "an authored fact is about the mod");
     }
 
     // A pack table from the pre-drop 0001 (provenance/source columns + a

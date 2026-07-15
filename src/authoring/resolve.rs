@@ -122,6 +122,12 @@ struct Present {
     required: bool,
     mod_id: i64,
     version: Option<String>,
+    /// The exact artifact the pack ships, when the registry has read it. A pack
+    /// declares a file (by sha1, or by Modrinth version id), so its dependencies
+    /// are that file's -- not the union of every version of its mod (#48). `None`
+    /// when the artifact was never harvested: then only mod-level facts apply,
+    /// since we have never actually looked inside this jar.
+    mod_version_id: Option<i64>,
 }
 
 /// Resolve `cfg` against the registry graph reachable through `conn`.
@@ -131,9 +137,9 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
     let mut present: Vec<Present> = Vec::new();
     let mut unresolved: Vec<String> = Vec::new();
     for m in &cfg.mods {
-        let (mod_id, version) = match &m.source {
+        let (mod_id, version, mod_version_id) = match &m.source {
             SourceDecl::SmrtCache { sha1 } => match queries::artifact_by_sha1(conn, sha1)? {
-                Some((id, ver)) => (id, Some(ver)),
+                Some((mv_id, id, ver)) => (id, Some(ver), Some(mv_id)),
                 None => {
                     unresolved.push(m.filename.clone());
                     continue;
@@ -146,6 +152,7 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
                 Some(id) => (
                     id,
                     queries::version_by_modrinth_version_id(conn, version_id)?,
+                    queries::mod_version_id_for_modrinth_version_id(conn, version_id)?,
                 ),
                 None => {
                     unresolved.push(m.filename.clone());
@@ -159,6 +166,7 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
             required: m.required,
             mod_id,
             version,
+            mod_version_id,
         });
     }
 
@@ -180,11 +188,16 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
     let mut depended_on: HashMap<usize, BTreeSet<String>> = HashMap::new();
 
     for (ai, a) in present.iter().enumerate() {
-        // relations_from is ordered by confidence, so the first edge per target is
-        // the authoritative one -- an authored optional_dep suppresses an inferred
-        // requires for the same target, and so on.
+        // Scoped to the artifact the pack actually ships, plus the mod-level facts
+        // (#48): a sibling version's dependencies are not this file's. `-1` matches
+        // no artifact, which is how an unharvested jar falls back to mod-level
+        // facts alone rather than borrowing another build's.
+        //
+        // Ordered by confidence, so the first edge per target is the authoritative
+        // one -- an authored optional_dep suppresses an inferred requires for the
+        // same target, and so on.
         let mut seen_target: HashSet<String> = HashSet::new();
-        for e in queries::relations_from(conn, a.mod_id)? {
+        for e in queries::relations_for_artifact(conn, a.mod_version_id.unwrap_or(-1), a.mod_id)? {
             if !seen_target.insert(e.target.clone()) {
                 continue;
             }
@@ -564,7 +577,8 @@ mod tests {
         src: crate::registry::model::Source,
     ) {
         r.with_conn_mut(|c| {
-            upsert::upsert_relation(c, from, target, range, kind, src, NOW)?;
+            // mod-level: these fixtures assert resolver behaviour, not scoping
+            upsert::upsert_relation(c, from, None, target, range, kind, src, NOW)?;
             Ok(())
         })
         .unwrap();

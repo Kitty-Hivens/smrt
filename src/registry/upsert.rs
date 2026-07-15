@@ -314,9 +314,15 @@ pub fn mod_version_id_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<i
 /// range) unique index, so a re-harvest adds nothing. Returns whether a new row
 /// was actually inserted (false when the dedupe index ignored it), so a caller
 /// can count edges without over-counting duplicates across a mod's several jars.
+/// Record a relation. `from_mod_version_id` scopes the edge to the artifact it was
+/// derived from; `None` states it about the mod as a whole, which is what an
+/// authored fact means (#48). A derived edge should always name its artifact -- the
+/// jar is what actually declared the thing.
+#[allow(clippy::too_many_arguments)]
 pub fn upsert_relation(
     conn: &Connection,
     from_mod_id: i64,
+    from_mod_version_id: Option<i64>,
     target_modid: &str,
     version_range: Option<&str>,
     kind: RelKind,
@@ -325,10 +331,12 @@ pub fn upsert_relation(
 ) -> Result<bool> {
     let inserted = conn.execute(
         "INSERT OR IGNORE INTO relation
-           (from_mod_id, target_modid, target_version_range, kind, source, confidence, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+           (from_mod_id, from_mod_version_id, target_modid, target_version_range,
+            kind, source, confidence, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             from_mod_id,
+            from_mod_version_id,
             target_modid,
             version_range,
             kind.as_str(),

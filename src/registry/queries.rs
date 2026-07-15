@@ -126,15 +126,16 @@ pub fn mod_id_for_selector(conn: &Connection, selector: &str) -> Result<Option<i
     }
 }
 
-/// The `mod` row id + version string of the harvested artifact with this sha1.
-/// The resolver uses it to place a self-hosted mod on the graph and read the
-/// version it would ship, for the version-window check.
-pub fn artifact_by_sha1(conn: &Connection, sha1: &str) -> Result<Option<(i64, String)>> {
+/// The harvested artifact with this sha1: `(mod_version id, mod id, version)`.
+/// The resolver uses it to place a self-hosted mod on the graph, read the version
+/// it would ship for the version-window check, and scope the mod's relations to
+/// the exact jar the pack ships rather than to every version of its mod (#48).
+pub fn artifact_by_sha1(conn: &Connection, sha1: &str) -> Result<Option<(i64, i64, String)>> {
     Ok(conn
         .query_row(
-            "SELECT mod_id, version FROM mod_version WHERE sha1 = ?1",
+            "SELECT id, mod_id, version FROM mod_version WHERE sha1 = ?1",
             params![sha1],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?)
 }
@@ -152,6 +153,61 @@ pub fn version_by_modrinth_version_id(
             |r| r.get(0),
         )
         .optional()?)
+}
+
+/// The `mod_version` row id of a harvested Modrinth artifact, keyed by its
+/// Modrinth version id. The resolver needs the artifact itself, not just its
+/// version string, to scope the artifact's relations (#48).
+pub fn mod_version_id_for_modrinth_version_id(
+    conn: &Connection,
+    version_id: &str,
+) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT id FROM mod_version WHERE modrinth_version_id = ?1 LIMIT 1",
+            params![version_id],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
+/// Every relation that applies to one artifact: the edges derived from that jar,
+/// plus the mod-level facts asserted about its mod (#48). Pass a `mod_version_id`
+/// that matches nothing (the artifact was never harvested) to get the mod-level
+/// facts alone -- which is the honest answer for a jar we have never read, rather
+/// than lending it a sibling version's dependencies.
+///
+/// Ordered by `confidence` descending like [`relations_from`], so the caller still
+/// reads the authoritative edge per target first.
+pub fn relations_for_artifact(
+    conn: &Connection,
+    mod_version_id: i64,
+    from_mod_id: i64,
+) -> Result<Vec<RelationRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT target_modid, target_version_range, kind, source, confidence
+         FROM relation
+         WHERE from_mod_version_id = ?1
+            OR (from_mod_version_id IS NULL AND from_mod_id = ?2)
+         ORDER BY confidence DESC, id",
+    )?;
+    let mut rows = stmt.query(params![mod_version_id, from_mod_id])?;
+    let mut out = Vec::new();
+    while let Some(r) = rows.next()? {
+        let kind: String = r.get(2)?;
+        let source: String = r.get(3)?;
+        let (Some(kind), Some(source)) = (RelKind::parse(&kind), Source::parse(&source)) else {
+            continue;
+        };
+        out.push(RelationRow {
+            target: r.get(0)?,
+            version_range: r.get(1)?,
+            kind,
+            source,
+            confidence: r.get(4)?,
+        });
+    }
+    Ok(out)
 }
 
 /// Every edge out of `from_mod_id` in the dependency graph, for the resolver.
