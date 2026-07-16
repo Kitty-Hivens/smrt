@@ -299,6 +299,38 @@ mod tests {
     }
 
     #[test]
+    fn mod_edges_include_a_range_suffixed_incoming_reference() {
+        let r = fixture();
+        // a mod that requires appleskin by the Forge `modid@[range]` form should
+        // still be counted as an incoming edge on appleskin's page (#1 tail).
+        r.with_conn_mut(|c| {
+            let foo = upsert::upsert_mod_by_alias(c, &[("modid", "foo")], NOW)?;
+            upsert::upsert_relation(
+                c,
+                foo,
+                None,
+                "appleskin@[2.5,)",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        r.with_conn(|c| {
+            let apple = queries::mod_id_for_alias(c, "modid", "appleskin")?.unwrap();
+            let edges = queries::edges_for_mod(c, apple)?;
+            assert!(
+                edges.iter().any(|e| e.dir == "in" && e.other_name == "foo"),
+                "a range-suffixed incoming reference is counted"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn used_by_finds_a_modrinth_only_mod_in_a_build() {
         let r = fixture();
         // a mod known only by its Modrinth project id -- no modid alias, the case

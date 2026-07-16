@@ -6,7 +6,7 @@
 
 use crate::authoring::{
     self, BootstrapArgs, HarvestScheduler, build_manifest, enrich_from_mcmod_info,
-    infer_requires_from_mcmod_info, make_pack_summary,
+    infer_requires_from_mcmod_info, make_pack_summary, promote_required_dependencies,
 };
 use crate::config::Config;
 use crate::domain::{PackManifest, PackSummary};
@@ -241,6 +241,15 @@ async fn run_build(
         .map_err(|e| format!("enrich-mcmod failed: {e}"))?;
     infer_requires_from_mcmod_info(&mut cfg, storage.root())
         .map_err(|e| format!("infer-requires failed: {e}"))?;
+    // Derive required-ness from the inferred graph: a hard dependency of a
+    // required mod is itself required, so the operator need not tick it by hand
+    // (#6). Transient config only -- the saved config keeps the manual flags.
+    let promoted = promote_required_dependencies(&mut cfg);
+    if promoted > 0 {
+        job.line(format!(
+            "derived required from deps: {promoted} mods promoted"
+        ));
+    }
 
     job.line("resolving sources (Modrinth lookups + cache reads)");
     let manifest = build_manifest(

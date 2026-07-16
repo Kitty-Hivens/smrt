@@ -41,8 +41,13 @@ pub struct ResolveReport {
     pub resolved_mods: usize,
     /// A hard dependency no present mod satisfies -- the pack would crash.
     pub missing: Vec<MissingDep>,
-    /// Two present mods the graph says cannot run together.
+    /// Two present mods the graph says cannot run together, both in the default
+    /// install -- a live conflict the pack ships with.
     pub conflicts: Vec<ActiveConflict>,
+    /// The same incompatibility, but with at least one side an opted-out optional
+    /// -- it only bites if the user turns that mod on, so it is advisory, not a
+    /// blocking problem (#9).
+    pub optional_conflicts: Vec<ActiveConflict>,
     /// A capability more than one present mod provides -- usually redundant, and
     /// the two may fight over the same hook.
     pub overlaps: Vec<CapabilityOverlap>,
@@ -151,6 +156,10 @@ pub struct RequiredHint {
 struct Present {
     filename: String,
     required: bool,
+    /// Ships enabled unless the operator opted it out. With `required`, this says
+    /// whether the mod is in the default install -- a conflict only bites when
+    /// both sides actually run (#9).
+    default_enabled: bool,
     mod_id: i64,
     version: Option<String>,
     /// The exact artifact the pack ships, when the registry has read it. A pack
@@ -196,6 +205,7 @@ fn place_mods(conn: &Connection, cfg: &PackConfig) -> Result<(Vec<Present>, Vec<
         present.push(Present {
             filename: m.filename.clone(),
             required: m.required,
+            default_enabled: m.default_enabled,
             mod_id,
             version,
             mod_version_id,
@@ -260,6 +270,7 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
     // 2. Walk each present mod's authoritative edges.
     let mut missing: BTreeMap<String, MissingDep> = BTreeMap::new();
     let mut conflicts: Vec<ActiveConflict> = Vec::new();
+    let mut optional_conflicts: Vec<ActiveConflict> = Vec::new();
     let mut conflict_seen: HashSet<(usize, usize)> = HashSet::new();
     let mut provides: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut version_issues: Vec<VersionIssue> = Vec::new();
@@ -330,12 +341,23 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
                     {
                         let pair = if ai < bi { (ai, bi) } else { (bi, ai) };
                         if conflict_seen.insert(pair) {
-                            conflicts.push(ActiveConflict {
+                            let c = ActiveConflict {
                                 a: a.filename.clone(),
                                 b: present[bi].filename.clone(),
                                 breaks: matches!(e.kind, RelKind::Breaks),
                                 source: e.source.as_str().to_string(),
-                            });
+                            };
+                            // Both in the default install -> a live conflict; an
+                            // opted-out optional on either side makes it advisory,
+                            // firing only if the user enables that mod (#9).
+                            let b = &present[bi];
+                            let both_on = (a.required || a.default_enabled)
+                                && (b.required || b.default_enabled);
+                            if both_on {
+                                conflicts.push(c);
+                            } else {
+                                optional_conflicts.push(c);
+                            }
                         }
                     }
                 }
@@ -433,6 +455,7 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
         .collect();
     missing.sort_by(|x, y| x.target.cmp(&y.target));
     conflicts.sort_by(|x, y| (&x.a, &x.b).cmp(&(&y.a, &y.b)));
+    optional_conflicts.sort_by(|x, y| (&x.a, &x.b).cmp(&(&y.a, &y.b)));
     version_issues.sort_by(|x, y| (&x.filename, &x.target).cmp(&(&y.filename, &y.target)));
     required_hints.sort_by(|x, y| x.filename.cmp(&y.filename));
     unresolved.sort();
@@ -443,6 +466,7 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
         resolved_mods: present.len(),
         missing,
         conflicts,
+        optional_conflicts,
         overlaps,
         version_issues,
         required_hints,
@@ -817,6 +841,40 @@ mod tests {
         assert_eq!(rep.conflicts[0].a, "a.jar");
         assert_eq!(rep.conflicts[0].b, "b.jar");
         assert!(!rep.conflicts[0].breaks);
+    }
+
+    #[test]
+    fn conflict_with_an_opted_out_optional_is_advisory() {
+        use crate::registry::model::Source;
+        let r = Registry::open_in_memory().unwrap();
+        let a = add_mod(&r, "moda", "1.0", &"d".repeat(40));
+        add_mod(&r, "modb", "1.0", &"e".repeat(40));
+        relate(&r, a, "modb", None, RelKind::Conflicts, Source::Authored);
+
+        // b.jar is an optional the pack ships disabled: the conflict only bites if
+        // the user turns it on, so it is advisory, not a blocking conflict (#9).
+        let b_off = crate::domain::DeclaredMod {
+            filename: "b.jar".into(),
+            required: false,
+            default_enabled: false,
+            source: cache(&"e".repeat(40)),
+            display: None::<Display>,
+            note: None,
+        };
+        let rep = r
+            .with_conn(|c| {
+                resolve_pack(
+                    c,
+                    &config(vec![declared("a.jar", true, cache(&"d".repeat(40))), b_off]),
+                )
+            })
+            .unwrap();
+        assert!(
+            rep.conflicts.is_empty(),
+            "an opted-out optional is not a blocking conflict"
+        );
+        assert_eq!(rep.optional_conflicts.len(), 1);
+        assert_eq!(rep.optional_conflicts[0].b, "b.jar");
     }
 
     #[test]

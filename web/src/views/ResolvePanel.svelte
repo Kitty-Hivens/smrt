@@ -21,6 +21,7 @@
     <span class="faint">{t('resolve.resolved', { n: report.resolved_mods, total: report.declared_mods })}</span>
     {#if report.missing.length}<span class="pill danger">{t('resolve.missing', { n: report.missing.length })}</span>{/if}
     {#if report.conflicts.length}<span class="pill danger">{t('resolve.conflicts', { n: report.conflicts.length })}</span>{/if}
+    {#if report.optional_conflicts.length}<span class="pill warn">{t('resolve.optConflicts', { n: report.optional_conflicts.length })}</span>{/if}
     {#if report.version_issues.length}<span class="pill warn">{t('resolve.versionIssues', { n: report.version_issues.length })}</span>{/if}
     {#if report.overlaps.length}<span class="pill warn">{t('resolve.overlaps', { n: report.overlaps.length })}</span>{/if}
     {#if report.loader_mismatch.length}<span class="pill danger">{t('resolve.loaderMismatch', { n: report.loader_mismatch.length })}</span>{/if}
@@ -52,6 +53,21 @@
           <span class="mono strong">{c.a}</span>
           <span class="faint">{c.breaks ? t('resolve.breaks') : t('resolve.conflictsWith')}</span>
           <span class="mono strong">{c.b}</span>
+          <span class="src mono">{c.source}</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  {#if report.optional_conflicts.length}
+    <div class="rlist">
+      <div class="rl-h warn">{t('resolve.optConflictsH')}</div>
+      {#each report.optional_conflicts as c}
+        <div class="rl-row">
+          <span class="mono strong">{c.a}</span>
+          <span class="faint">{c.breaks ? t('resolve.breaks') : t('resolve.conflictsWith')}</span>
+          <span class="mono strong">{c.b}</span>
+          <span class="faint">{t('resolve.ifEnabled')}</span>
           <span class="src mono">{c.source}</span>
         </div>
       {/each}

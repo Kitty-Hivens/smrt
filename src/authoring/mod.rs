@@ -25,7 +25,7 @@ pub use bootstrap::{BootstrapArgs, bootstrap};
 pub use build::{build_manifest, make_pack_summary};
 pub use curator::{
     McModInfo, RoleTable, apply_role_table, enrich_from_mcmod_info, infer_requires_from_mcmod_info,
-    jar_icon, load_role_table, read_mcmod_info,
+    jar_icon, load_role_table, promote_required_dependencies, read_mcmod_info,
 };
 pub use harvest_sched::HarvestScheduler;
 pub use jardiff::{JarDiff, diff_jars};

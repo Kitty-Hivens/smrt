@@ -617,9 +617,16 @@ pub fn edges_for_mod(conn: &Connection, mod_id: i64) -> Result<Vec<ModEdge>> {
         selectors.push(format!("modrinth:{pid}"));
     }
     for sel in selectors {
+        // Also match the Forge `<sel>@[range]` form of the same reference. GLOB is
+        // used rather than LIKE because a modid can contain `_`, which LIKE would
+        // treat as a wildcard; GLOB's metacharacters (`*?[`) do not occur in a
+        // modid or `modrinth:<id>` selector. The in-edge dedupe collapses a mod
+        // that references this one both ways into one incoming edge (#1 tail).
         let mut stmt = conn.prepare(
             "SELECT from_mod_id, kind, source FROM relation
-             WHERE target_modid = ?1 AND from_mod_id <> ?2 ORDER BY kind, from_mod_id",
+             WHERE (target_modid = ?1 OR target_modid GLOB ?1 || '@*')
+               AND from_mod_id <> ?2
+             ORDER BY kind, from_mod_id",
         )?;
         let rows: Vec<(i64, String, String)> = stmt
             .query_map(params![sel, mod_id], |r| {

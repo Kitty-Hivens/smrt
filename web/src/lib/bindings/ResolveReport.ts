@@ -22,9 +22,16 @@ resolved_mods: number,
  */
 missing: Array<MissingDep>, 
 /**
- * Two present mods the graph says cannot run together.
+ * Two present mods the graph says cannot run together, both in the default
+ * install -- a live conflict the pack ships with.
  */
 conflicts: Array<ActiveConflict>, 
+/**
+ * The same incompatibility, but with at least one side an opted-out optional
+ * -- it only bites if the user turns that mod on, so it is advisory, not a
+ * blocking problem (#9).
+ */
+optional_conflicts: Array<ActiveConflict>, 
 /**
  * A capability more than one present mod provides -- usually redundant, and
  * the two may fight over the same hook.
