@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Dialog } from 'bits-ui';
   import { api, ApiError } from '../lib/api';
   import { t } from '../lib/i18n.svelte';
   import type {
@@ -261,10 +262,17 @@
 
   // initial load
   loadMods();
+
+  // escape / outside-click flip Bits' open to false; the parent unmounts us on close
+  function onOpenChange(open: boolean) {
+    if (!open) onClose();
+  }
 </script>
 
-<div class="overlay" onclick={onClose} role="presentation">
-  <div class="picker panel" onclick={(e) => e.stopPropagation()} role="presentation">
+<Dialog.Root open {onOpenChange}>
+  <Dialog.Overlay class="dlg-scrim" />
+  <Dialog.Content class="mirror-dlg panel">
+    <Dialog.Title class="vh">{t('mirror.title')}</Dialog.Title>
     <div class="ph row">
       <div class="tabs">
         <button class="seg" class:active={mode === 'mods'} onclick={() => setMode('mods')}>{t('mirror.tab.mods')}</button>
@@ -422,19 +430,18 @@
         {/if}
       </div>
     {/if}
-  </div>
-</div>
+  </Dialog.Content>
+</Dialog.Root>
 
 <style>
-  .overlay {
+  /* Panel rides on a Bits component -> global, uniquely named to dodge the
+     DialogHost .dlg/.overlay globals. Backdrop is the shared .dlg-scrim. */
+  :global(.mirror-dlg) {
     position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.55);
-    display: grid;
-    place-items: center;
-    z-index: 50;
-  }
-  .picker {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 61;
     width: 660px;
     max-width: 92vw;
     max-height: 82vh;
@@ -560,7 +567,7 @@
     flex-shrink: 0;
   }
   @media (max-width: 560px) {
-    .picker {
+    :global(.mirror-dlg) {
       padding: var(--space-3);
     }
     .ph {

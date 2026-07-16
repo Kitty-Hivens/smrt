@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Dialog } from 'bits-ui';
   import { t } from '../lib/i18n.svelte';
 
   // Crop a dropped raster image to a fixed aspect, client-side. A fixed frame of
@@ -125,11 +126,17 @@
       0.92,
     );
   }
+
+  // escape / outside-click flip Bits' open to false; the parent unmounts us on close
+  function onOpenChange(open: boolean) {
+    if (!open) onCancel();
+  }
 </script>
 
-<div class="overlay" onclick={onCancel} role="presentation">
-  <div class="dlg panel" onclick={(e) => e.stopPropagation()} role="presentation">
-    <h3 class="ttl">{title}</h3>
+<Dialog.Root open {onOpenChange}>
+  <Dialog.Overlay class="dlg-scrim" />
+  <Dialog.Content class="crop-dlg panel">
+    <Dialog.Title level={3} class="crop-h">{title}</Dialog.Title>
     <p class="hint muted">{t('crop.hint')}</p>
     {#if loadErr}<p class="loaderr">{t('crop.failed')}</p>{/if}
 
@@ -177,26 +184,25 @@
         {t('crop.apply')}
       </button>
     </div>
-  </div>
-</div>
+  </Dialog.Content>
+</Dialog.Root>
 
 <style>
-  .overlay {
+  /* Panel + title ride on Bits components -> global, uniquely named to dodge the
+     DialogHost .dlg/.overlay globals. Backdrop is the shared .dlg-scrim. */
+  :global(.crop-dlg) {
     position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.55);
-    display: grid;
-    place-items: center;
-    z-index: 50;
-  }
-  .dlg {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 61;
     padding: var(--space-4);
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
     max-width: 92vw;
   }
-  .ttl {
+  :global(.crop-h) {
     font-size: 14px;
   }
   .hint {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Dialog } from 'bits-ui';
   import { api, ApiError } from '../lib/api';
   import { t } from '../lib/i18n.svelte';
   import type { ModrinthHit, ModrinthVersion } from '../lib/types';
@@ -91,10 +92,17 @@
     versions = [];
     err = '';
   }
+
+  // escape / outside-click flip Bits' open to false; the parent unmounts us on close
+  function onOpenChange(open: boolean) {
+    if (!open) onClose();
+  }
 </script>
 
-<div class="overlay" onclick={onClose} role="presentation">
-  <div class="picker panel" onclick={(e) => e.stopPropagation()} role="presentation">
+<Dialog.Root open {onOpenChange}>
+  <Dialog.Overlay class="dlg-scrim" />
+  <Dialog.Content class="mrp-dlg panel">
+    <Dialog.Title class="vh">{t('mrp.title')}</Dialog.Title>
     {#if !sel}
       <div class="ph row">
         <input bind:value={q} oninput={onInput} placeholder={t('mrp.search')} />
@@ -155,19 +163,18 @@
         {#if shownVersions.length === 0 && !loadingVers}<div class="muted s">{t('mrp.noVersions')}</div>{/if}
       </div>
     {/if}
-  </div>
-</div>
+  </Dialog.Content>
+</Dialog.Root>
 
 <style>
-  .overlay {
+  /* Panel rides on a Bits component -> global, uniquely named to dodge the
+     DialogHost .dlg/.overlay globals. Backdrop is the shared .dlg-scrim. */
+  :global(.mrp-dlg) {
     position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.55);
-    display: grid;
-    place-items: center;
-    z-index: 50;
-  }
-  .picker {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 61;
     width: 620px;
     max-width: 92vw;
     max-height: 80vh;
@@ -276,7 +283,7 @@
     white-space: nowrap;
   }
   @media (max-width: 560px) {
-    .picker {
+    :global(.mrp-dlg) {
       padding: var(--space-3);
     }
   }

@@ -16,6 +16,7 @@
 </script>
 
 <script lang="ts">
+  import { Dialog } from 'bits-ui';
   import { api, ApiError, type IdentityInput } from '../lib/api';
   import { t } from '../lib/i18n.svelte';
   import type { ModSummary } from '../lib/types';
@@ -85,12 +86,20 @@
       busy = false;
     }
   }
+
+  // escape / outside-click flip Bits' open to false; the parent unmounts us on close
+  function onOpenChange(open: boolean) {
+    if (!open) onClose();
+  }
 </script>
 
-<div class="overlay" onclick={onClose} role="presentation">
-  <div class="dlg panel" onclick={(e) => e.stopPropagation()} role="presentation">
+<Dialog.Root open {onOpenChange}>
+  <Dialog.Overlay class="dlg-scrim" />
+  <Dialog.Content class="idp-dlg panel">
     <div class="hd">
-      <div class="ttl">{target.mode === 'assign' ? t('id.title') : t('id.titleEdit')}</div>
+      <Dialog.Title level={3} class="idp-h">
+        {target.mode === 'assign' ? t('id.title') : t('id.titleEdit')}
+      </Dialog.Title>
       <div class="sha faint mono">{target.sha1.slice(0, 16)}</div>
     </div>
 
@@ -166,19 +175,18 @@
         {busy ? t('id.saving') : t('id.save')}
       </button>
     </div>
-  </div>
-</div>
+  </Dialog.Content>
+</Dialog.Root>
 
 <style>
-  .overlay {
+  /* Panel + title ride on Bits components -> global, uniquely named to dodge the
+     DialogHost .dlg/.overlay globals. Backdrop is the shared .dlg-scrim. */
+  :global(.idp-dlg) {
     position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.55);
-    display: grid;
-    place-items: center;
-    z-index: 60;
-  }
-  .dlg {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 61;
     width: 460px;
     max-width: 92vw;
     max-height: 88vh;
@@ -194,7 +202,7 @@
     justify-content: space-between;
     gap: var(--space-3);
   }
-  .ttl {
+  :global(.idp-h) {
     font-size: 15px;
   }
   .sha {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Dialog } from 'bits-ui';
   import { api, ApiError } from '../lib/api';
   import { t } from '../lib/i18n.svelte';
   import Field from './ui/Field.svelte';
@@ -31,12 +32,18 @@
       busy = false;
     }
   }
+
+  // escape / outside-click flip Bits' open to false; the parent unmounts us on close
+  function onOpenChange(open: boolean) {
+    if (!open) onClose();
+  }
 </script>
 
-<div class="overlay" onclick={onClose} role="presentation">
-  <div class="picker panel" onclick={(e) => e.stopPropagation()} role="presentation">
+<Dialog.Root open {onOpenChange}>
+  <Dialog.Overlay class="dlg-scrim" />
+  <Dialog.Content class="ghp-dlg panel">
     <div class="hd row">
-      <h3>{t('gh.title')}</h3>
+      <Dialog.Title level={3} class="ghp-h">{t('gh.title')}</Dialog.Title>
       <div class="sp"></div>
       <button onclick={onClose}>{t('common.close')}</button>
     </div>
@@ -57,19 +64,19 @@
         {busy ? t('gh.adding') : t('gh.add')}
       </button>
     </div>
-  </div>
-</div>
+  </Dialog.Content>
+</Dialog.Root>
 
 <style>
-  .overlay {
+  /* Panel + title classes ride on Bits components, so they are global (no scope
+     hash) and uniquely named to avoid colliding with the DialogHost .dlg/.overlay
+     globals. The backdrop is the shared .dlg-scrim in app.css. */
+  :global(.ghp-dlg) {
     position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.55);
-    display: grid;
-    place-items: center;
-    z-index: 50;
-  }
-  .picker {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 61;
     width: 520px;
     max-width: 92vw;
     padding: var(--space-4);
@@ -77,7 +84,7 @@
   .hd {
     margin-bottom: var(--space-2);
   }
-  .hd h3 {
+  :global(.ghp-h) {
     font-size: 14px;
   }
   .sp {
@@ -101,7 +108,7 @@
     margin-top: var(--space-4);
   }
   @media (max-width: 560px) {
-    .picker {
+    :global(.ghp-dlg) {
       padding: var(--space-3);
     }
   }

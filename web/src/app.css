@@ -282,6 +282,18 @@ input[type='number']::-webkit-inner-spin-button {
   box-shadow: var(--shadow-1);
 }
 
+/* Shared backdrop for the Bits picker dialogs. Bits renders Overlay + Content
+   as siblings portalled/inlined, and a class passed to a Bits component never
+   gets a Svelte scope hash, so this is global by necessity. Kept below the
+   DialogHost confirm/prompt layer (z 80/81) so a confirmation always sits on
+   top of a picker. Each picker positions its own panel (widths differ). */
+.dlg-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 60;
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -293,6 +305,21 @@ input[type='number']::-webkit-inner-spin-button {
 }
 .faint {
   color: var(--fg-faint);
+}
+
+/* visually hidden but reachable by assistive tech -- e.g. a Dialog.Title on a
+   modal whose visible header is a search field or a tab strip, so the dialog
+   still has an accessible name. */
+.vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .tag {
