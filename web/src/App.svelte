@@ -44,6 +44,14 @@
   <AppShell me={me ?? null} onSignIn={() => (showLogin = true)} onLogout={logout}>
     {#if route.mod != null}
       <ModPage modRef={route.mod} me={me ?? null} onBack={() => route.closeMod()} />
+    {:else if route.section === 'mods' && me}
+      <!-- read-only for a member, full authoring for an operator; the view gates
+           its own write surface, so one component serves both -->
+      {#await import('./views/ModManager.svelte')}
+        <div class="muted mono">{t('common.loading')}</div>
+      {:then { default: ModManager }}
+        <ModManager />
+      {/await}
     {:else if route.section === 'graph' && me}
       <!-- read-only for a member, full (with debug authoring) for an operator; the
            view gates its own write affordances, so one component serves both.

@@ -31,14 +31,17 @@ pub fn router(state: AppState) -> Router {
         .merge(debug_routes(state))
 }
 
-/// Read-only registry views any signed-in user may see. The dependency/conflict
-/// graph is one: authoring an edge stays debug-gated in `debug_routes`, and the
-/// relation data it shows is already public per-mod on the mod page, so a member
-/// authoring community packs gets the same read a member has no reason to be
-/// denied. It exposes no pack composition -- nodes are mods, edges are relations,
-/// and "which pack" is a separate query the graph does not run.
+/// Read-only registry views any signed-in user may see. Authoring stays gated in
+/// `operator_routes` / `debug_routes`; these only read, and expose no pack
+/// composition -- the faceted mod list and a mod's releases are mod identity and
+/// its files, the graph is mods and their relations, and "which pack" is a
+/// separate query none of them run. It is the same data the mod page already shows
+/// publicly, so a member browsing the registry to build a community pack has no
+/// reason to be denied it.
 fn member_routes(state: AppState) -> Router {
     Router::new()
+        .route("/v1/registry/mods", get(get_mods))
+        .route("/v1/registry/mod-releases/:mod_id", get(get_releases_by_id))
         .route("/v1/registry/graph", get(get_graph))
         .route("/v1/registry/graph/slices", get(get_graph_slices))
         .layer(from_fn_with_state(
@@ -56,10 +59,9 @@ fn operator_routes(state: AppState) -> Router {
         .route("/v1/registry/stats", get(get_stats))
         .route("/v1/registry/orphans", get(get_orphans))
         .route("/v1/registry/eligible", get(get_eligible))
-        // registry browser: mods (faceted list), versions by surrogate id, builds
-        .route("/v1/registry/mods", get(get_mods))
+        // registry browser: versions by surrogate id, builds (the faceted mod list
+        // and a mod's releases are read-only and open to members -- see below)
         .route("/v1/registry/mod-versions/:mod_id", get(get_versions_by_id))
-        .route("/v1/registry/mod-releases/:mod_id", get(get_releases_by_id))
         .route("/v1/registry/builds", get(get_builds))
         .route(
             "/v1/registry/builds/:pack_id/:pack_version",

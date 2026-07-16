@@ -33,11 +33,11 @@ export const SECTIONS: Section[] = [
 // Guest sees only the public catalog; a signed-in member also gets their own
 // packs and profile; everything else is operator-only.
 export const GUEST_SECTIONS: Section[] = ['browse'];
-// The registry graph is read-only for a member (authoring edges is debug-gated in
-// the view), and its relation data is already public per-mod on the mod page, so a
-// member authoring community packs gets the same "does this hold together" view an
-// operator has.
-export const MEMBER_SECTIONS: Section[] = ['browse', 'graph', 'mypacks', 'profile'];
+// The registry browser (mods) and the graph are read-only for a member -- the
+// views gate their own authoring, and the data is already public per-mod on the
+// mod page -- so a member building a community pack gets the same read of what the
+// mirror indexes, and the same "does this hold together" view, an operator has.
+export const MEMBER_SECTIONS: Section[] = ['browse', 'mods', 'graph', 'mypacks', 'profile'];
 const KNOWN_SECTIONS: Section[] = [...SECTIONS, 'mypacks'];
 export function visibleSections(me: { role: string } | null): Section[] {
   if (!me) return GUEST_SECTIONS;

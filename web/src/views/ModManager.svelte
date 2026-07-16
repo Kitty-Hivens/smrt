@@ -3,20 +3,21 @@
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
-  import { isDebug } from '../lib/roles';
+  import { isDebug, isOperator } from '../lib/roles';
   import type { JarDiff, ModSummary, ReleaseRow, UnassignedJar, VersionRow } from '../lib/types';
   import ModIcon from './ModIcon.svelte';
   import IdentityDialog, { type IdentityTarget } from './IdentityDialog.svelte';
   import DropZone from './ui/DropZone.svelte';
 
-  // Compat-affecting authoring -- assigning/editing a jar's identity or a
-  // release's version -- is debug-gated on the server (#39). Hide those controls
-  // for a plain admin so they never click a button that would 403.
+  // A member reads the registry -- search, the faceted list, a mod's releases and
+  // files -- but does none of its authoring. `canOperate` (admin and up) gates the
+  // whole write surface: upload, the needs-identity bucket, the takedown list, and
+  // every per-item action. `canDebug` gates the compat-affecting subset within it
+  // (assigning/editing identity, merging, editing a release), which is debug-only
+  // on the server (#39). Both come from one identity read; the list load waits on
+  // it so a member never fires an operator-only fetch that would 403.
   let canDebug = $state(false);
-  api
-    .me()
-    .then((m) => (canDebug = isDebug(m?.role)))
-    .catch(() => {});
+  let canOperate = $state(false);
 
   let mods = $state<ModSummary[]>([]);
   let unassigned = $state<UnassignedJar[]>([]);
@@ -47,21 +48,32 @@
     loading = true;
     err = '';
     try {
-      const [m, u, rm] = await Promise.all([
-        api.registryMods(q.trim() || undefined),
-        api.unassigned(),
-        api.removed(),
-      ]);
-      mods = m;
-      unassigned = u;
-      removed = rm.removed;
+      mods = await api.registryMods(q.trim() || undefined);
+      // the needs-identity bucket and the takedown list are operator-only reads
+      if (canOperate) {
+        const [u, rm] = await Promise.all([api.unassigned(), api.removed()]);
+        unassigned = u;
+        removed = rm.removed;
+      }
     } catch (e) {
       err = fail(e);
     } finally {
       loading = false;
     }
   }
-  load();
+
+  async function init() {
+    try {
+      const m = await api.me();
+      canDebug = isDebug(m?.role);
+      canOperate = isOperator(m?.role);
+    } catch {
+      // an identity read failure just leaves the read-only view; load() surfaces
+      // any real error
+    }
+    await load();
+  }
+  init();
 
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   function onSearch() {
@@ -260,15 +272,17 @@
 <div class="view">
   {#if err}<div class="err mono">{err}</div>{/if}
 
-  <DropZone
-    accept=".jar"
-    label={uploading ? t('mm.uploading') : t('mm.drop')}
-    busy={uploading}
-    onFiles={onDropJars}
-  />
-  {#if upMsg}<div class="upmsg muted mono">{upMsg}</div>{/if}
+  {#if canOperate}
+    <DropZone
+      accept=".jar"
+      label={uploading ? t('mm.uploading') : t('mm.drop')}
+      busy={uploading}
+      onFiles={onDropJars}
+    />
+    {#if upMsg}<div class="upmsg muted mono">{upMsg}</div>{/if}
+  {/if}
 
-  {#if unassigned.length}
+  {#if canOperate && unassigned.length}
     <section class="panel bucket">
       <div class="bhead">
         <span class="btitle">{t('mm.needsIdentity')}</span>
@@ -345,17 +359,19 @@
 
         {#if openId === m.mod_id}
           <div class="rels">
-            <div class="modactions">
-              <button class="link" onclick={(e) => rename(m, e)} title={t('mm.renameTitle')}>
-                {t('mm.rename')}
-              </button>
-              {#if canDebug}
-                <button class="link" onclick={(e) => merge(m, e)} title={t('mm.mergeTitle')}>
-                  {t('mm.merge')}
+            {#if canOperate}
+              <div class="modactions">
+                <button class="link" onclick={(e) => rename(m, e)} title={t('mm.renameTitle')}>
+                  {t('mm.rename')}
                 </button>
-                <span class="faint mono modid">#{m.mod_id}</span>
-              {/if}
-            </div>
+                {#if canDebug}
+                  <button class="link" onclick={(e) => merge(m, e)} title={t('mm.mergeTitle')}>
+                    {t('mm.merge')}
+                  </button>
+                  <span class="faint mono modid">#{m.mod_id}</span>
+                {/if}
+              </div>
+            {/if}
             {#if relLoading}
               <div class="muted s">{t('common.loading')}</div>
             {/if}
@@ -391,18 +407,20 @@
                     {:else}
                       <span class="chip">{t('mm.selfhost')}</span>
                     {/if}
-                    <div class="factions">
-                      {#if !f.modrinth_version_id && modHasVerified && f.cached}
-                        <button
-                          class="link"
-                          class:active={diffFor === f.sha1}
-                          onclick={() => showDiff(f)}>{t('mm.diff')}</button>
-                      {/if}
-                      {#if canDebug}
-                        <button class="link" onclick={() => editFile(f, rel, m.name)}>{t('mm.edit')}</button>
-                      {/if}
-                      <button class="link danger" onclick={() => delFile(f)}>{t('common.delete')}</button>
-                    </div>
+                    {#if canOperate}
+                      <div class="factions">
+                        {#if !f.modrinth_version_id && modHasVerified && f.cached}
+                          <button
+                            class="link"
+                            class:active={diffFor === f.sha1}
+                            onclick={() => showDiff(f)}>{t('mm.diff')}</button>
+                        {/if}
+                        {#if canDebug}
+                          <button class="link" onclick={() => editFile(f, rel, m.name)}>{t('mm.edit')}</button>
+                        {/if}
+                        <button class="link danger" onclick={() => delFile(f)}>{t('common.delete')}</button>
+                      </div>
+                    {/if}
                   </div>
                   {#if diffFor === f.sha1}
                     <div class="diffpanel">
@@ -444,7 +462,7 @@
     {/if}
   </div>
 
-  {#if removed.length}
+  {#if canOperate && removed.length}
     <h2 class="sec">{t('cache.removedTitle')}</h2>
     <div class="cache-head muted">{t('cache.removedSub', { count: removed.length })}</div>
     <div class="panel">

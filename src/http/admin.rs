@@ -1,17 +1,15 @@
 use super::ApiError;
 use crate::accounts::{AuditRow, Identity, UploadRow, UserRow};
 use crate::authoring::{
-    ResolveReport, ValidateReport, jar_icon, modrinth, pack_graph, reconstruct_config,
-    resolve_pack, validate,
+    ResolveReport, ValidateReport, modrinth, pack_graph, reconstruct_config, resolve_pack, validate,
 };
 use crate::domain::*;
 use crate::registry::model::GraphData;
 use crate::state::AppState;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
-use axum::http::{StatusCode, header};
+use axum::http::StatusCode;
 use axum::middleware::from_fn_with_state;
-use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
 use sha1::{Digest, Sha1};
@@ -37,7 +35,6 @@ fn operator_router(state: AppState) -> Router {
             "/v1/cache/:prefix/:filename",
             put(put_cache_jar).delete(delete_cache_jar),
         )
-        .route("/v1/cache/icon/:sha1", get(get_cache_icon))
         .route("/v1/authoring/packs", get(list_authoring_packs))
         .route("/v1/authoring/summaries", get(list_all_pack_summaries))
         .route("/v1/featured", post(save_featured))
@@ -284,38 +281,6 @@ async fn delete_cache_jar(
     state.harvest.poke(); // artifact gone -> refresh the registry
     audit(&state, &identity, "cache.delete", Some(sha1), None).await;
     Ok(StatusCode::NO_CONTENT)
-}
-
-// Serve a cached mod's own embedded icon (mcmod.info logoFile / pack.png /
-// fabric icon), so the panel can show real mod icons for self-hosted jars. The
-// content is immutable per sha1, so it caches hard in the browser. 404 when the
-// jar carries no icon -- the panel falls back to a letter avatar.
-async fn get_cache_icon(
-    State(state): State<AppState>,
-    Path(sha1): Path<String>,
-) -> Result<Response, ApiError> {
-    if sha1.len() != 40 || !sha1.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(ApiError::BadRequest("sha1 must be 40 hex chars".into()));
-    }
-    let path = state.storage.cache_jar_path(&sha1[..2], &sha1)?;
-    let bytes = tokio::fs::read(&path)
-        .await
-        .map_err(|_| ApiError::NotFound)?;
-    let icon = tokio::task::spawn_blocking(move || jar_icon(&bytes))
-        .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("icon extract task: {e}")))??;
-    let (img, content_type) = icon.ok_or(ApiError::NotFound)?;
-    Ok((
-        [
-            (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
-            // bytes come from an untrusted jar; pin the type so the browser can't
-            // sniff a "pack.png" that actually contains markup into something active
-            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
-        ],
-        img,
-    )
-        .into_response())
 }
 
 async fn put_pack_static(

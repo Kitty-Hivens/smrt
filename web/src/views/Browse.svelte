@@ -7,7 +7,6 @@
   import type { ModSummary, PackSummary, ServerEntry, UnassignedJar } from '../lib/types';
   import ServerEditor from './ServerEditor.svelte';
   import PackEditor from './PackEditor.svelte';
-  import ModManager from './ModManager.svelte';
   import UsersView from './UsersView.svelte';
   import Moderation from './Moderation.svelte';
   import Audit from './Audit.svelte';
@@ -390,8 +389,6 @@
           </div>
         </div>
       {/if}
-    {:else if route.section === 'mods'}
-      <ModManager />
     {:else if route.section === 'users'}
       <UsersView />
     {:else if route.section === 'moderation'}

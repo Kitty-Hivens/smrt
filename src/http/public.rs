@@ -1,4 +1,5 @@
 use super::ApiError;
+use crate::authoring::jar_icon;
 use crate::domain::*;
 use crate::registry::model::ModDetail;
 use crate::registry::queries;
@@ -34,6 +35,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/servers/:server_id", get(get_server))
         .route("/v1/featured", get(get_featured))
         .route("/v1/cache/:prefix/:filename", get(get_cache_jar))
+        .route("/v1/cache/icon/:sha1", get(get_cache_icon))
         .route("/v1/cache/inventory", get(get_cache_inventory))
         .route("/v1/community", get(list_community))
         .route("/v1/mods/:key", get(get_mod_detail))
@@ -265,6 +267,40 @@ async fn get_cache_jar(
         return Err(ApiError::NotFound);
     }
     serve_file(&path, "application/java-archive").await
+}
+
+// A cached mod's own embedded icon (mcmod.info logoFile / pack.png / fabric icon),
+// so any browser of the registry -- guest, member, operator -- sees the real icon
+// a self-hosted jar carries. Public alongside the jar itself: an icon extracted
+// from a jar anyone can download is no more sensitive than the download. Immutable
+// per sha1, so it caches hard; 404 when the jar has no icon (the caller falls back
+// to a letter avatar).
+async fn get_cache_icon(
+    State(state): State<AppState>,
+    Path(sha1): Path<String>,
+) -> Result<Response, ApiError> {
+    if sha1.len() != 40 || !sha1.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ApiError::BadRequest("sha1 must be 40 hex chars".into()));
+    }
+    let path = state.storage.cache_jar_path(&sha1[..2], &sha1)?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|_| ApiError::NotFound)?;
+    let icon = tokio::task::spawn_blocking(move || jar_icon(&bytes))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("icon extract task: {e}")))??;
+    let (img, content_type) = icon.ok_or(ApiError::NotFound)?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            // bytes come from an untrusted jar; pin the type so the browser can't
+            // sniff a "pack.png" that actually contains markup into something active
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        img,
+    )
+        .into_response())
 }
 
 async fn get_cache_inventory(
