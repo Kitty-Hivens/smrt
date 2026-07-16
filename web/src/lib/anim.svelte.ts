@@ -21,9 +21,18 @@ function reducedMotion(): boolean {
   );
 }
 
+// ~30 emits a second, not 60. The wave is a slow undulation; the eye cannot tell
+// 30 from 60 here, and every consumer redraws on `t`, so halving how often it
+// changes halves the work -- and stops a decorative effect from waking the machine
+// sixty times a second for nothing.
+const MIN_INTERVAL = 33;
+let lastEmit = 0;
+
 function step(now: number) {
-  t = ((now - start) / 1000) * 20;
   raf = requestAnimationFrame(step);
+  if (now - lastEmit < MIN_INTERVAL) return;
+  lastEmit = now;
+  t = ((now - start) / 1000) * 20;
 }
 
 /**

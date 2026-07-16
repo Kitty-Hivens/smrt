@@ -160,10 +160,11 @@
       }
       ctx.strokeStyle = grad;
 
-      // The halo is a wide stroke and the most expensive thing here. Off the
-      // hovered path it is down at 2% -- invisible, and not worth painting five
-      // hundred times a frame.
-      if (lit) {
+      // The halo is a wide stroke and the most expensive thing here. It earns its
+      // cost only when there is a path to make pop -- while hovering. Idle, five
+      // hundred overlapping haloes just smear into a glow the additive core gives
+      // anyway, so the whole pass is skipped and the draw roughly halves.
+      if (hovered != null && lit) {
         ctx.globalAlpha = 0.16;
         ctx.lineWidth = 7;
         ctx.stroke();
