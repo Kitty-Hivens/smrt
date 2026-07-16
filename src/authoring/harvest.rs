@@ -119,13 +119,22 @@ pub struct HarvestReport {
 }
 
 // mcmod.info dependency lists routinely name the platform, not a real mod.
+// Compared lowercased, so the loader is dropped however a jar spells it.
 const PSEUDO_DEPS: &[&str] = &[
     "forge",
-    "mcp",
-    "minecraft",
+    "minecraftforge",
+    "mod_minecraftforge",
+    "forgemodloader",
     "fml",
     "cpw.mods.fml",
+    "mcp",
+    "minecraft",
     "mod_mcversion",
+    "neoforge",
+    "fabric",
+    "fabricloader",
+    "cleanroom",
+    "quilt",
 ];
 
 /// Map a Modrinth `version_type` (release/beta/alpha) to a registry channel.
@@ -139,14 +148,52 @@ fn channel_from_version_type(vt: &str) -> Option<String> {
     }
 }
 
+/// Split and clean a jar's declared dependency list into plausible modids. Real
+/// mcmod.info files vary wildly: a Forge dependency string
+/// (`required-after:jei@[4.16,)`), a comma- or semicolon-joined list kept in one
+/// entry (`forge,codechickenlib,cofhcore`), a human-readable phrase
+/// (`ic2 experimental or ic2 classic`), or the platform itself. Split on the
+/// separators, drop the Forge ordering prefix and the version window, drop the
+/// platform, and keep only what reads as a modid -- so a bogus token never becomes
+/// a relation the resolver then reports missing (#10). Order-preserving, deduped.
 fn filter_deps(deps: &[String]) -> Vec<String> {
-    deps.iter()
-        .filter(|d| {
-            let l = d.trim().to_lowercase();
-            !l.is_empty() && !PSEUDO_DEPS.contains(&l.as_str())
-        })
-        .map(|d| d.trim().to_string())
-        .collect()
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for raw in deps {
+        for token in raw.split([',', ';']) {
+            let Some(modid) = clean_dep_token(token) else {
+                continue;
+            };
+            if PSEUDO_DEPS.contains(&modid.to_lowercase().as_str()) {
+                continue;
+            }
+            if seen.insert(modid.clone()) {
+                out.push(modid);
+            }
+        }
+    }
+    out
+}
+
+/// One dependency token -> its bare modid, or None when it is not one. Drops a
+/// Forge ordering prefix (`required-after:`, `after:`, ...) and the `@[range]`
+/// window, then keeps the token only if what remains reads as a modid
+/// (`[A-Za-z0-9_.-]+`) -- a phrase with spaces is a human-readable note, not a
+/// modid, and cannot be resolved, so it is dropped rather than stored as junk.
+fn clean_dep_token(token: &str) -> Option<String> {
+    // a Forge dependency string is `<ordering>:<modid>`; the modid is the last
+    // colon-segment (a real modid has no colons)
+    let t = token.trim().rsplit(':').next().unwrap_or("").trim();
+    // drop the version window
+    let t = t.split('@').next().unwrap_or("").trim();
+    if t.is_empty()
+        || !t
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+    {
+        return None;
+    }
+    Some(t.to_string())
 }
 
 fn ae(e: crate::http::ApiError) -> anyhow::Error {
@@ -1060,6 +1107,34 @@ mod tests {
             "jei".into(),
         ]);
         assert_eq!(got, vec!["appleskin".to_string(), "jei".to_string()]);
+    }
+
+    #[test]
+    fn filter_deps_splits_cleans_and_drops_junk() {
+        let got = filter_deps(&[
+            // comma-joined list, platform first -> loader dropped, rest split out
+            "forge,codechickenlib,cofhcore,thermalfoundation".into(),
+            // Forge dependency string: ordering prefix + version window stripped
+            "required-after:jei@[4.16,)".into(),
+            // the loader by another spelling, with a range
+            "MinecraftForge@[14.21.0.2373,)".into(),
+            "mod_MinecraftForge".into(),
+            // human-readable phrases are not modids -> dropped; `chisel` survives
+            "ic2 experimental or ic2 classic, chisel".into(),
+            "Applied Energistics 2".into(),
+            // duplicate collapses
+            "codechickenlib".into(),
+        ]);
+        assert_eq!(
+            got,
+            vec![
+                "codechickenlib".to_string(),
+                "cofhcore".to_string(),
+                "thermalfoundation".to_string(),
+                "jei".to_string(),
+                "chisel".to_string(),
+            ]
+        );
     }
 
     fn jar(sha: &str, modid: &str, version: Option<&str>, loaders: Vec<String>) -> JarSeed {
