@@ -1074,8 +1074,27 @@
     padding: 5px 7px;
     font-size: 12px;
   }
+  /* A file-input label styled as a button: the global `button` rules do not reach
+     a <label>, and the `.sm` class only styles `button.sm`, so without this the
+     control rendered as bare text next to real buttons. Matches `button.sm`. */
   .valbtn {
+    display: inline-flex;
+    align-items: center;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fg);
+    background: var(--panel-2);
+    border: 1px solid var(--seam-bright);
+    border-radius: var(--radius-sm);
+    padding: 4px 10px;
     cursor: pointer;
+    transition:
+      border-color 0.13s ease,
+      background 0.13s ease;
+  }
+  .valbtn:hover {
+    background: var(--panel-3);
   }
   .valrep {
     padding: var(--space-3);

@@ -446,11 +446,17 @@ async fn modrinth_icon(
     State(state): State<AppState>,
     Query(q): Query<IconQuery>,
 ) -> Result<Json<IconResp>, ApiError> {
-    let icon_url = state
-        .modrinth
-        .project_icon(&q.id)
-        .await
-        .map_err(ApiError::Internal)?;
+    // An icon is cosmetic garnish -- the preview falls back to a letter avatar
+    // without one. A transient upstream fault should never turn into a 500 that
+    // paints the panel with errors, but it also should not vanish silently, so it
+    // is logged and degraded to "no icon".
+    let icon_url = match state.modrinth.project_icon(&q.id).await {
+        Ok(url) => url,
+        Err(e) => {
+            tracing::warn!(project = %q.id, error = %e, "modrinth icon lookup failed");
+            None
+        }
+    };
     Ok(Json(IconResp { icon_url }))
 }
 

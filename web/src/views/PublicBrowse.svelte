@@ -9,7 +9,10 @@
   import type { CommunityPack, PackManifest, PackSummary } from '../lib/types';
 
   // A signed-in member can fork any pack they can browse into their namespace.
-  let { me }: { me: { uid: number; login: string } | null } = $props();
+  let {
+    me,
+    onSignIn,
+  }: { me: { uid: number; login: string } | null; onSignIn?: () => void } = $props();
 
   // Guest-facing, read-only. Official packs are the launcher contract (/v1/packs);
   // community packs (/v1/community) are site-only, browseable but not in the
@@ -98,6 +101,22 @@
       >{t('browse.community')}</button>
   </div>
 
+  {#if items.length === 0 && !loading}
+    <div class="emptystate">
+      <span class="mk" aria-hidden="true"></span>
+      <div class="etitle">
+        {tab === 'community' ? t('browse.emptyCommunity') : t('browse.empty')}
+      </div>
+      {#if me}
+        <p class="esub muted">{t('browse.emptySubMember')}</p>
+      {:else}
+        <p class="esub muted">{t('browse.emptySubGuest')}</p>
+        {#if onSignIn}
+          <button class="primary" onclick={onSignIn}>{t('shell.signIn')}</button>
+        {/if}
+      {/if}
+    </div>
+  {:else}
   <div class="panel plist">
     {#each items as { summary: p, owner } (p.pack_id)}
       <div class="pack" class:open={openId === p.pack_id}>
@@ -154,12 +173,8 @@
         {/if}
       </div>
     {/each}
-    {#if items.length === 0 && !loading}
-      <div class="empty muted">
-        {tab === 'community' ? t('browse.emptyCommunity') : t('browse.empty')}
-      </div>
-    {/if}
   </div>
+  {/if}
 </div>
 
 <style>
@@ -346,9 +361,41 @@
     color: var(--fg-faint);
     flex-shrink: 0;
   }
-  .empty,
   .s {
     padding: var(--space-4);
     font-size: 12px;
+  }
+
+  /* Empty catalog: a centred block with somewhere to go, not a thin bar of text
+     stranded at the top of the void. */
+  .emptystate {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3);
+    text-align: center;
+    padding: clamp(48px, 12vh, 120px) var(--space-4);
+  }
+  .emptystate .mk {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    background: var(--panel-3);
+    border: 1px solid var(--seam);
+    margin-bottom: var(--space-1);
+  }
+  .etitle {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .esub {
+    margin: 0;
+    max-width: 44ch;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .emptystate .primary {
+    margin-top: var(--space-2);
   }
 </style>

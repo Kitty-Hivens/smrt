@@ -66,6 +66,12 @@ impl Modrinth {
             .await
             .context("project get")?;
         let status = resp.status();
+        // No such project is not an error: it means there is no icon to show (a
+        // project deleted or gone from Modrinth, or a stale id). The caller renders
+        // a letter avatar for `None`; only a real upstream fault is an error.
+        if status.as_u16() == 404 {
+            return Ok(None);
+        }
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
             return Err(anyhow!("modrinth project HTTP {status}: {body}"));

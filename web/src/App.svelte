@@ -51,7 +51,7 @@
     {:else if me && isOperator(me.role) && route.section !== 'browse'}
       <Browse {me} />
     {:else}
-      <PublicBrowse me={me ?? null} />
+      <PublicBrowse me={me ?? null} onSignIn={() => (showLogin = true)} />
     {/if}
   </AppShell>
 {/if}

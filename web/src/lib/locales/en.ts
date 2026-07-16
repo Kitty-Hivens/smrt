@@ -27,6 +27,8 @@ export const en = {
   'login.foot': 'smrt mirror control panel',
   'login.back': 'back to browse',
   'browse.empty': 'No packs published yet.',
+  'browse.emptySubGuest': 'Sign in with GitHub to fork a pack into your own space, or start one from scratch.',
+  'browse.emptySubMember': 'Nothing here yet. Fork a pack you like, or create your own from My Packs.',
   'browse.official': 'Official',
   'browse.community': 'Community',
   'browse.by': 'by {user}',
