@@ -20,11 +20,14 @@
   let canvas = $state<HTMLCanvasElement | null>(null);
   let box = $state({ w: 0, h: 0 });
 
-  // The spindle gradient only depends on where the edge's ends are on screen, so
-  // it survives every frame the graph is not being panned or zoomed -- which is
-  // most of them. Rebuilding five hundred of them per frame was pure waste.
+  // The spindle gradient depends only on where the edge's ends sit on screen, so
+  // it survives every frame nothing moved -- which is most of them. Rebuilding
+  // five hundred per frame was pure waste.
+  //
+  // Keyed by those ends, not by the edge: dragging a node moves an edge without
+  // touching the viewport, and a gradient cached against the old position would
+  // leave the spindle anchored where the edge used to be.
   const gradients = new Map<string, CanvasGradient>();
-  let gradientKey = '';
 
   // Kind -> colour, resolved once from the panel's tokens. Canvas cannot read
   // `var(--accent)`, and the spindle needs an alpha ramp along the line, so the
@@ -91,13 +94,8 @@
     const ctx = el.getContext('2d');
     if (!ctx) return;
 
-    // the gradient cache is keyed on the transform: a pan or a zoom moves every
-    // edge's ends, anything else leaves them where they were
-    const key = `${vp.x.toFixed(1)}:${vp.y.toFixed(1)}:${vp.zoom.toFixed(3)}:${w}x${h}`;
-    if (key !== gradientKey) {
-      gradients.clear();
-      gradientKey = key;
-    }
+    // bound so a long pan cannot grow it without limit
+    if (gradients.size > 4000) gradients.clear();
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
@@ -106,7 +104,7 @@
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    for (const [id, e] of tendrils.all()) {
+    for (const [, e] of tendrils.all()) {
       const lit = hovered == null || e.source === hovered || e.target === hovered;
       const [r, g, bl] = palette[e.kind] ?? palette._default ?? [154, 154, 158];
 
@@ -145,7 +143,8 @@
 
       // 4p(1-p): nothing at either node, full brightness mid-span -- the original's
       // additive product of a fading colour and a rising alpha
-      let grad = gradients.get(id);
+      const gk = `${e.kind}|${sx.toFixed(0)},${sy.toFixed(0)},${tx.toFixed(0)},${ty.toFixed(0)}`;
+      let grad = gradients.get(gk);
       if (!grad) {
         grad = ctx.createLinearGradient(sx, sy, tx, ty);
         for (const [at, a] of [
@@ -157,7 +156,7 @@
         ] as const) {
           grad.addColorStop(at, `rgba(${r},${g},${bl},${a})`);
         }
-        gradients.set(id, grad);
+        gradients.set(gk, grad);
       }
       ctx.strokeStyle = grad;
 
