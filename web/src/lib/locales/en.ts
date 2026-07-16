@@ -52,6 +52,7 @@ export const en = {
   'dialog.delete': 'Delete',
 
   'packs.new': 'New pack',
+  'packs.filter': 'Filter packs...',
   'packs.newPrompt': 'New pack id (letters, digits, - _ .):',
   'packs.col.pack': 'Pack',
   'packs.col.mc': 'MC',

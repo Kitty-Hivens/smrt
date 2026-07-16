@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
+    "@tanstack/svelte-table": "9.0.0-beta.52",
     "@xyflow/svelte": "^1.6.2",
     "bits-ui": "^2.18.1"
   }

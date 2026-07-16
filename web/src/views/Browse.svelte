@@ -10,6 +10,7 @@
   import UsersView from './UsersView.svelte';
   import Moderation from './Moderation.svelte';
   import Audit from './Audit.svelte';
+  import DataTable, { type Column } from './ui/DataTable.svelte';
 
   let { me }: { me: { login: string } } = $props();
 
@@ -104,6 +105,50 @@
     [...new Set([...packs.map((p) => p.pack_id), ...authoring])].sort(),
   );
   const summaryFor = (id: string) => packs.find((p) => p.pack_id === id);
+
+  // Row objects the packs table sorts and filters over. The summary is carried
+  // whole so the row snippet renders exactly what the hand-rolled table did.
+  type PackRow = {
+    id: string;
+    summary: PackSummary | undefined;
+    name: string;
+    mc: string;
+    latest: string;
+    visibility: string;
+    authoring: boolean;
+  };
+  const packRows = $derived<PackRow[]>(
+    allPackIds.map((id) => {
+      const p = summaryFor(id);
+      return {
+        id,
+        summary: p,
+        name: p?.display_name ?? id,
+        mc: p?.minecraft_version ?? '',
+        latest: p?.latest_pack_version ?? '',
+        visibility: p?.visibility ?? '',
+        authoring: authoringSet.has(id),
+      };
+    }),
+  );
+  let packFilter = $state('');
+  const packColumns = $derived<Column<PackRow>[]>([
+    { id: 'pack', header: t('packs.col.pack'), sortable: true, value: (r) => r.name },
+    { id: 'mc', header: t('packs.col.mc'), sortable: true, value: (r) => r.mc },
+    { id: 'latest', header: t('packs.col.latest'), sortable: true, value: (r) => r.latest },
+    { id: 'state', header: t('packs.col.state'), sortable: true, value: (r) => r.visibility },
+    { id: 'tags', header: t('packs.col.tags') },
+    { id: 'flags', header: t('packs.col.flags') },
+    { id: 'actions', header: '', width: '90px' },
+  ]);
+
+  const serverColumns = $derived<Column<ServerEntry>[]>([
+    { id: 'server', header: t('servers.col.server'), sortable: true, value: (s) => s.display_name },
+    { id: 'pack', header: t('packs.col.pack'), sortable: true, value: (s) => s.pack_id },
+    { id: 'owner', header: t('servers.col.owner'), sortable: true, value: (s) => s.owner_display },
+    { id: 'flags', header: t('packs.col.flags') },
+    { id: 'actions', header: '', width: '90px' },
+  ]);
 
   // overview metrics
   const unbuiltCount = $derived(allPackIds.filter((id) => !summaryFor(id)).length);
@@ -249,74 +294,57 @@
       {:else}
         <div class="bar">
           <button class="primary" onclick={newPack}>{t('packs.new')}</button>
+          <input class="tfilter mono" bind:value={packFilter} placeholder={t('packs.filter')} />
         </div>
         <div class="panel">
-          <div class="tablewrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{t('packs.col.pack')}</th>
-                <th>{t('packs.col.mc')}</th>
-                <th>{t('packs.col.latest')}</th>
-                <th>{t('packs.col.state')}</th>
-                <th>{t('packs.col.tags')}</th>
-                <th>{t('packs.col.flags')}</th>
-                <th style="width:90px"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each allPackIds as id}
-                {@const p = summaryFor(id)}
-                <tr
-                  class="clickable"
-                  role="button"
-                  tabindex="0"
-                  onclick={() => (packEdit = id)}
-                  onkeydown={(e) => {
-                    if (e.target !== e.currentTarget) return;
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      packEdit = id;
-                    }
-                  }}
-                >
-                  <td>
-                    <div>{p?.display_name ?? id}</div>
-                    {#if (p?.display_name ?? id) !== id}
-                      <div class="faint mono">{id}</div>
-                    {/if}
-                  </td>
-                  <td class="mono">{p?.minecraft_version ?? '-'}</td>
-                  <td class="mono">{p?.latest_pack_version ?? t('packs.unbuilt')}</td>
-                  <td>
-                    {#if p}
-                      <span class="tag vis-{p.visibility}">{t(visKey[p.visibility])}</span>
-                      {#if p.tier === 'community'}<span class="tag">{t('packs.tier.community')}</span>{/if}
-                    {/if}
-                  </td>
-                  <td>{#each p?.tags ?? [] as tg}<span class="tag">{tg}</span> {/each}</td>
-                  <td>
-                    {#if p?.featured}<span class="tag" style="color:var(--accent)">{t('packs.flag.featured')}</span>{/if}
-                    {#if authoringSet.has(id)}<span class="tag" style="color:var(--ok)">{t('packs.flag.authoring')}</span>{/if}
-                  </td>
-                  <td class="actions">
-                    {#if p}
-                      <button
-                        onclick={(e) => {
-                          e.stopPropagation();
-                          togglePublish(p);
-                        }}>{p.visibility === 'published' ? t('packs.unpublish') : t('packs.publish')}</button>
-                    {/if}
-                  </td>
-                </tr>
-              {/each}
-              {#if allPackIds.length === 0 && !loading}
-                <tr><td colspan="7" class="muted">{t('packs.empty')}</td></tr>
-              {/if}
-            </tbody>
-          </table>
-          </div>
+          <DataTable data={packRows} columns={packColumns} filter={packFilter} row={packRow} empty={packEmpty} />
         </div>
+        {#snippet packRow(r: PackRow)}
+          <tr
+            class="clickable"
+            role="button"
+            tabindex="0"
+            onclick={() => (packEdit = r.id)}
+            onkeydown={(e) => {
+              if (e.target !== e.currentTarget) return;
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                packEdit = r.id;
+              }
+            }}
+          >
+            <td>
+              <div>{r.name}</div>
+              {#if r.name !== r.id}<div class="faint mono">{r.id}</div>{/if}
+            </td>
+            <td class="mono">{r.summary?.minecraft_version ?? '-'}</td>
+            <td class="mono">{r.summary?.latest_pack_version ?? t('packs.unbuilt')}</td>
+            <td>
+              {#if r.summary}
+                <span class="tag vis-{r.summary.visibility}">{t(visKey[r.summary.visibility])}</span>
+                {#if r.summary.tier === 'community'}<span class="tag">{t('packs.tier.community')}</span>{/if}
+              {/if}
+            </td>
+            <td>{#each r.summary?.tags ?? [] as tg}<span class="tag">{tg}</span> {/each}</td>
+            <td>
+              {#if r.summary?.featured}<span class="tag" style="color:var(--accent)">{t('packs.flag.featured')}</span>{/if}
+              {#if r.authoring}<span class="tag" style="color:var(--ok)">{t('packs.flag.authoring')}</span>{/if}
+            </td>
+            <td class="actions">
+              {#if r.summary}
+                {@const sm = r.summary}
+                <button
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    togglePublish(sm);
+                  }}>{sm.visibility === 'published' ? t('packs.unpublish') : t('packs.publish')}</button>
+              {/if}
+            </td>
+          </tr>
+        {/snippet}
+        {#snippet packEmpty()}
+          <tr><td colspan="7" class="muted">{t('packs.empty')}</td></tr>
+        {/snippet}
       {/if}
     {:else if route.section === 'servers'}
       {#if serverEdit !== null}
@@ -336,58 +364,44 @@
           <button class="primary" onclick={() => (serverEdit = 'new')}>{t('servers.new')}</button>
         </div>
         <div class="panel">
-          <div class="tablewrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{t('servers.col.server')}</th>
-                <th>{t('packs.col.pack')}</th>
-                <th>{t('servers.col.owner')}</th>
-                <th>{t('packs.col.flags')}</th>
-                <th style="width:90px"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each servers as s}
-                <tr
-                  class="clickable"
-                  role="button"
-                  tabindex="0"
-                  onclick={() => (serverEdit = s)}
-                  onkeydown={(e) => {
-                    if (e.target !== e.currentTarget) return;
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      serverEdit = s;
-                    }
-                  }}
-                >
-                  <td>
-                    <div>{s.display_name}</div>
-                    <div class="faint mono">{s.server_id}</div>
-                  </td>
-                  <td class="mono">{s.pack_id}</td>
-                  <td>{s.owner_display}</td>
-                  <td>
-                    {#if s.featured}<span class="tag" style="color:var(--accent)">{t('packs.flag.featured')}</span>{/if}
-                  </td>
-                  <td class="actions">
-                    <button
-                      class="danger"
-                      onclick={(e) => {
-                        e.stopPropagation();
-                        delServer(s.server_id);
-                      }}>{t('common.delete')}</button>
-                  </td>
-                </tr>
-              {/each}
-              {#if servers.length === 0 && !loading}
-                <tr><td colspan="5" class="muted">{t('servers.empty')}</td></tr>
-              {/if}
-            </tbody>
-          </table>
-          </div>
+          <DataTable data={servers} columns={serverColumns} row={serverRow} empty={serverEmpty} />
         </div>
+        {#snippet serverRow(s: ServerEntry)}
+          <tr
+            class="clickable"
+            role="button"
+            tabindex="0"
+            onclick={() => (serverEdit = s)}
+            onkeydown={(e) => {
+              if (e.target !== e.currentTarget) return;
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                serverEdit = s;
+              }
+            }}
+          >
+            <td>
+              <div>{s.display_name}</div>
+              <div class="faint mono">{s.server_id}</div>
+            </td>
+            <td class="mono">{s.pack_id}</td>
+            <td>{s.owner_display}</td>
+            <td>
+              {#if s.featured}<span class="tag" style="color:var(--accent)">{t('packs.flag.featured')}</span>{/if}
+            </td>
+            <td class="actions">
+              <button
+                class="danger"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  delServer(s.server_id);
+                }}>{t('common.delete')}</button>
+            </td>
+          </tr>
+        {/snippet}
+        {#snippet serverEmpty()}
+          <tr><td colspan="5" class="muted">{t('servers.empty')}</td></tr>
+        {/snippet}
       {/if}
     {:else if route.section === 'users'}
       <UsersView />
@@ -617,7 +631,16 @@
     align-items: center;
   }
   .bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
     margin-bottom: 14px;
+  }
+  .tfilter {
+    width: 240px;
+    max-width: 100%;
+    padding: 7px 11px;
+    font-size: 12px;
   }
   .actions {
     white-space: nowrap;

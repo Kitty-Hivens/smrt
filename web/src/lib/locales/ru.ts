@@ -51,6 +51,7 @@ export const ru: Dict = {
   'dialog.delete': 'Удалить',
 
   'packs.new': 'Новый пак',
+  'packs.filter': 'Фильтр паков...',
   'packs.newPrompt': 'ID нового пака (буквы, цифры, - _ .):',
   'packs.col.pack': 'Пак',
   'packs.col.mc': 'MC',
