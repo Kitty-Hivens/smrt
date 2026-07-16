@@ -26,6 +26,18 @@
   import DropZone from './ui/DropZone.svelte';
   import Field from './ui/Field.svelte';
   import Section from './ui/Section.svelte';
+  import Select from './ui/Select.svelte';
+
+  const MOD_SOURCE_OPTIONS = [
+    { value: 'smrt_cache', label: 'cache' },
+    { value: 'modrinth', label: 'modrinth' },
+    { value: 'smrt_static', label: 'static' },
+  ];
+  const ASSET_SOURCE_OPTIONS = [
+    { value: 'smrt_static', label: 'static' },
+    { value: 'modrinth', label: 'modrinth' },
+    { value: 'smrt_cache', label: 'cache' },
+  ];
 
   let {
     packId,
@@ -153,8 +165,11 @@
   let resErr = $state('');
 
   // published build versions, for "revert config to build" (config edits autosave
-  // with no undo, so the last built state is the recovery point)
+  // with no undo, so the last built state is the recovery point). The picker is an
+  // action menu -- `revertPick` resets to the placeholder after each choice.
   let revertVersions = $state<string[]>([]);
+  let revertPick = $state('');
+  const revertOptions = $derived(revertVersions.map((v) => ({ value: v, label: v })));
 
   async function load() {
     loading = true;
@@ -590,18 +605,21 @@
   </nav>
   <div class="spacer"></div>
   {#if !loading && cfg && tab === 'config' && revertVersions.length}
-    <select
-      class="revertsel"
-      title={t('pe.revertTo')}
-      onchange={(e) => {
-        const v = e.currentTarget.value;
-        e.currentTarget.value = '';
-        revertTo(v);
-      }}
-    >
-      <option value="">{t('pe.revertPick')}</option>
-      {#each revertVersions as v}<option value={v}>{v}</option>{/each}
-    </select>
+    <span class="revertsel">
+      <Select
+        compact
+        full
+        bind:value={revertPick}
+        options={revertOptions}
+        placeholder={t('pe.revertPick')}
+        title={t('pe.revertTo')}
+        ariaLabel={t('pe.revertTo')}
+        onChange={(v) => {
+          if (v) revertTo(v);
+          revertPick = '';
+        }}
+      />
+    </span>
   {/if}
   {#if !loading && cfg && tab === 'config'}
     <span class="savestate" class:err={saveState === 'error'} title={saveErr}>
@@ -729,15 +747,16 @@
               <div class="modrow">
                 <ModIcon name={m.filename} iconUrl={m.display?.icon_url} source={m.source} size={24} mono />
                 <input class="fn mono" bind:value={m.filename} placeholder={t('pe.filename')} />
-                <select
-                  class="srcsel"
-                  value={m.source.type}
-                  onchange={(e) => changeSourceType(i, (e.currentTarget as HTMLSelectElement).value as SourceDecl['type'])}
-                >
-                  <option value="smrt_cache">cache</option>
-                  <option value="modrinth">modrinth</option>
-                  <option value="smrt_static">static</option>
-                </select>
+                <span class="srcsel">
+                  <Select
+                    compact
+                    full
+                    value={m.source.type}
+                    options={MOD_SOURCE_OPTIONS}
+                    ariaLabel={t('pe.source')}
+                    onChange={(v) => changeSourceType(i, v as SourceDecl['type'])}
+                  />
+                </span>
                 <div class="ref">
                   {#if m.source.type === 'smrt_cache'}
                     <button class="sm" onclick={() => (pick = { src: 'cache', row: i })}>{t('pe.choose')}</button>
@@ -788,14 +807,14 @@
                   <tr>
                     <td><input class="mono" bind:value={a.dest} /></td>
                     <td>
-                      <select
+                      <Select
+                        compact
+                        full
                         value={a.source.type}
-                        onchange={(e) => (cfg!.assets![i].source = blankSource((e.currentTarget as HTMLSelectElement).value as SourceDecl['type']))}
-                      >
-                        <option value="smrt_static">static</option>
-                        <option value="modrinth">modrinth</option>
-                        <option value="smrt_cache">cache</option>
-                      </select>
+                        options={ASSET_SOURCE_OPTIONS}
+                        ariaLabel={t('pe.source')}
+                        onChange={(v) => (cfg!.assets![i].source = blankSource(v as SourceDecl['type']))}
+                      />
                     </td>
                     <td>
                       {#if a.source.type === 'modrinth'}
@@ -949,8 +968,7 @@
     text-align: right;
   }
   .revertsel {
-    font-size: 12px;
-    padding: 4px 6px;
+    display: inline-flex;
     max-width: 180px;
   }
   .savestate.err {
@@ -1031,10 +1049,15 @@
     border-radius: var(--radius-sm);
     background: var(--panel-2);
   }
-  .modrow input,
-  .modrow select {
+  .modrow input {
     padding: 5px 7px;
     font-size: 12px;
+  }
+  /* the source-type Select wrapper occupies the grid's 3rd column; the trigger
+     (full) fills it, and min-width:0 lets it shrink in the narrow flex reflow */
+  .srcsel {
+    display: flex;
+    min-width: 0;
   }
   .ref {
     display: flex;
@@ -1069,8 +1092,7 @@
   td.ctr {
     text-align: center;
   }
-  td input,
-  td select {
+  td input {
     padding: 5px 7px;
     font-size: 12px;
   }

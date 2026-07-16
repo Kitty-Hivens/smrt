@@ -20,6 +20,7 @@
   import { api, ApiError, type IdentityInput } from '../lib/api';
   import { t } from '../lib/i18n.svelte';
   import type { ModSummary } from '../lib/types';
+  import Select from './ui/Select.svelte';
 
   let {
     target,
@@ -34,6 +35,8 @@
   } = $props();
 
   const CHANNELS = ['release', 'beta', 'dev', 'unknown'];
+  const channelOptions = CHANNELS.map((c) => ({ value: c, label: c }));
+  const modOptions = $derived(mods.map((m) => ({ value: String(m.mod_id), label: m.name })));
 
   // svelte-ignore state_referenced_locally -- capture the target's initial values
   // once; the dialog is remounted per open so this is the intended snapshot
@@ -123,15 +126,17 @@
         <input bind:value={modName} placeholder="JourneyMap" />
       </label>
     {:else}
-      <label class="fld">
+      <div class="fld">
         <span class="lbl">{t('id.pickMod')}</span>
-        <select bind:value={modId}>
-          <option value="" disabled>{t('id.pickMod')}</option>
-          {#each mods as m (m.mod_id)}
-            <option value={m.mod_id}>{m.name}</option>
-          {/each}
-        </select>
-      </label>
+        <Select
+          full
+          value={modId === '' ? '' : String(modId)}
+          options={modOptions}
+          placeholder={t('id.pickMod')}
+          ariaLabel={t('id.pickMod')}
+          onChange={(v) => (modId = Number(v))}
+        />
+      </div>
     {/if}
 
     <div class="row2">
@@ -139,14 +144,10 @@
         <span class="lbl">{t('id.version')}</span>
         <input bind:value={version} placeholder="1.7.10-5.1.4" />
       </label>
-      <label class="fld">
+      <div class="fld">
         <span class="lbl">{t('id.channel')}</span>
-        <select bind:value={channel}>
-          {#each CHANNELS as c}
-            <option value={c}>{c}</option>
-          {/each}
-        </select>
-      </label>
+        <Select full bind:value={channel} options={channelOptions} ariaLabel={t('id.channel')} />
+      </div>
     </div>
 
     <div class="row2">

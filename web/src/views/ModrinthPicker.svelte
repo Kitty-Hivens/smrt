@@ -3,6 +3,7 @@
   import { api, ApiError } from '../lib/api';
   import { t } from '../lib/i18n.svelte';
   import type { ModrinthHit, ModrinthVersion } from '../lib/types';
+  import Select from './ui/Select.svelte';
 
   let {
     mc,
@@ -81,6 +82,10 @@
 
   // loaders actually offered by this project's versions, for the filter chips
   const loaderOptions = $derived([...new Set(versions.flatMap((v) => v.loaders))].sort());
+  const loaderSelOptions = $derived([
+    { value: '', label: t('mrp.anyLoader') },
+    ...loaderOptions.map((l) => ({ value: l, label: l })),
+  ]);
 
   function choose(v: ModrinthVersion) {
     if (!sel) return;
@@ -134,13 +139,10 @@
         <button onclick={onClose}>{t('common.close')}</button>
       </div>
       <div class="filters">
-        <label class="fl">
+        <span class="fl">
           {t('mrp.loader')}
-          <select bind:value={loaderFilter}>
-            <option value="">{t('mrp.anyLoader')}</option>
-            {#each loaderOptions as l}<option value={l}>{l}</option>{/each}
-          </select>
-        </label>
+          <Select compact bind:value={loaderFilter} options={loaderSelOptions} ariaLabel={t('mrp.loader')} />
+        </span>
         <label class="fl chk"><input type="checkbox" bind:checked={releaseOnly} /> {t('mrp.releaseOnly')}</label>
         {#if mc}<span class="faint s">{t('mrp.mcLocked', { mc })}</span>{/if}
       </div>
@@ -208,10 +210,6 @@
     gap: 6px;
     font-size: 12px;
     color: var(--fg-dim);
-  }
-  .fl select {
-    padding: 4px 6px;
-    font-size: 12px;
   }
   .chk {
     cursor: pointer;

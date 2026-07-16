@@ -1,5 +1,6 @@
 <script lang="ts">
   import GraphCanvas, { type EdgeFacts } from './GraphCanvas.svelte';
+  import Select from './ui/Select.svelte';
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
@@ -63,6 +64,13 @@
     return order.map((mc_version) => ({ mc_version, artifacts: total.get(mc_version) ?? 0 }));
   });
   const loaderOptions = $derived(slices.filter((s) => s.mc_version === mc));
+
+  const mcSelOptions = $derived(
+    mcOptions.map((m) => ({ value: m.mc_version, label: `${m.mc_version} (${m.artifacts})` })),
+  );
+  const loaderSelOptions = $derived(
+    loaderOptions.map((s) => ({ value: s.loader, label: `${s.loader} (${s.artifacts})` })),
+  );
 
   async function loadSlice() {
     if (mc == null || loader == null) return;
@@ -147,16 +155,26 @@
   {#if slices.length > 1}
     <div class="slicebar">
       <span class="slabel mono">{t('graph.world')}</span>
-      <select class="pick mono" bind:value={mc} onchange={onMcChange} aria-label={t('graph.mcVersion')}>
-        {#each mcOptions as m (m.mc_version)}
-          <option value={m.mc_version}>{m.mc_version} ({m.artifacts})</option>
-        {/each}
-      </select>
-      <select class="pick mono" bind:value={loader} onchange={loadSlice} aria-label={t('graph.loader')}>
-        {#each loaderOptions as s (s.loader)}
-          <option value={s.loader}>{s.loader} ({s.artifacts})</option>
-        {/each}
-      </select>
+      <Select
+        compact
+        value={mc ?? ''}
+        options={mcSelOptions}
+        ariaLabel={t('graph.mcVersion')}
+        onChange={(v) => {
+          mc = v;
+          onMcChange();
+        }}
+      />
+      <Select
+        compact
+        value={loader ?? ''}
+        options={loaderSelOptions}
+        ariaLabel={t('graph.loader')}
+        onChange={(v) => {
+          loader = v;
+          void loadSlice();
+        }}
+      />
     </div>
   {/if}
 
@@ -238,10 +256,5 @@
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--fg-faint);
-  }
-  .slicebar .pick {
-    width: auto;
-    font-size: 12px;
-    padding: 5px 10px;
   }
 </style>
