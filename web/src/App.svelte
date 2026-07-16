@@ -44,6 +44,15 @@
   <AppShell me={me ?? null} onSignIn={() => (showLogin = true)} onLogout={logout}>
     {#if route.mod != null}
       <ModPage modRef={route.mod} me={me ?? null} onBack={() => route.closeMod()} />
+    {:else if route.section === 'graph' && me}
+      <!-- read-only for a member, full (with debug authoring) for an operator; the
+           view gates its own write affordances, so one component serves both.
+           lazy: Svelte Flow + dagre are ~200KB, loaded only when the graph opens -->
+      {#await import('./views/GraphView.svelte')}
+        <div class="muted mono">{t('common.loading')}</div>
+      {:then { default: GraphView }}
+        <GraphView />
+      {/await}
     {:else if route.section === 'profile' && me}
       <Profile {me} />
     {:else if route.section === 'mypacks' && me}

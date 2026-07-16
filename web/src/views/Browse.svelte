@@ -392,13 +392,6 @@
       {/if}
     {:else if route.section === 'mods'}
       <ModManager />
-    {:else if route.section === 'graph'}
-      <!-- lazy: Svelte Flow + dagre are ~200KB, loaded only when the graph opens -->
-      {#await import('./GraphView.svelte')}
-        <div class="muted mono">{t('common.loading')}</div>
-      {:then { default: GraphView }}
-        <GraphView />
-      {/await}
     {:else if route.section === 'users'}
       <UsersView />
     {:else if route.section === 'moderation'}

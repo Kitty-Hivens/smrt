@@ -26,7 +26,26 @@ use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 
 pub fn router(state: AppState) -> Router {
-    operator_routes(state.clone()).merge(debug_routes(state))
+    operator_routes(state.clone())
+        .merge(member_routes(state.clone()))
+        .merge(debug_routes(state))
+}
+
+/// Read-only registry views any signed-in user may see. The dependency/conflict
+/// graph is one: authoring an edge stays debug-gated in `debug_routes`, and the
+/// relation data it shows is already public per-mod on the mod page, so a member
+/// authoring community packs gets the same read a member has no reason to be
+/// denied. It exposes no pack composition -- nodes are mods, edges are relations,
+/// and "which pack" is a separate query the graph does not run.
+fn member_routes(state: AppState) -> Router {
+    Router::new()
+        .route("/v1/registry/graph", get(get_graph))
+        .route("/v1/registry/graph/slices", get(get_graph_slices))
+        .layer(from_fn_with_state(
+            state.clone(),
+            super::auth::require_session,
+        ))
+        .with_state(state)
 }
 
 /// Reads, harvest, backup, and cosmetic authoring (mod rename) -- none of these
@@ -59,9 +78,6 @@ fn operator_routes(state: AppState) -> Router {
             get(get_mod_uses),
         )
         .route("/v1/registry/backup", post(post_backup))
-        // dependency/conflict graph for the graph view (read-only)
-        .route("/v1/registry/graph", get(get_graph))
-        .route("/v1/registry/graph/slices", get(get_graph_slices))
         // needs-identity door: jars with no identity yet (listing only; assigning
         // one asserts compat facts, so the write side is debug-gated below)
         .route("/v1/registry/unassigned", get(get_unassigned))
