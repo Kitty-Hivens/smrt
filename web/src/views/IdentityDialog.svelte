@@ -21,6 +21,7 @@
   import { t } from '../lib/i18n.svelte';
   import type { ModSummary } from '../lib/types';
   import Select from './ui/Select.svelte';
+  import TabStrip from './ui/TabStrip.svelte';
 
   let {
     target,
@@ -37,6 +38,10 @@
   const CHANNELS = ['release', 'beta', 'dev', 'unknown'];
   const channelOptions = CHANNELS.map((c) => ({ value: c, label: c }));
   const modOptions = $derived(mods.map((m) => ({ value: String(m.mod_id), label: m.name })));
+  const modeTabs = $derived([
+    { value: 'new', label: t('id.modNew') },
+    { value: 'existing', label: t('id.modExisting'), disabled: mods.length === 0 },
+  ]);
 
   // svelte-ignore state_referenced_locally -- capture the target's initial values
   // once; the dialog is remounted per open so this is the intended snapshot
@@ -106,19 +111,12 @@
       <div class="sha faint mono">{target.sha1.slice(0, 16)}</div>
     </div>
 
-    <div class="modmode">
-      <button class="seg" class:active={modMode === 'new'} onclick={() => (modMode = 'new')}>
-        {t('id.modNew')}
-      </button>
-      <button
-        class="seg"
-        class:active={modMode === 'existing'}
-        disabled={mods.length === 0}
-        onclick={() => (modMode = 'existing')}
-      >
-        {t('id.modExisting')}
-      </button>
-    </div>
+    <TabStrip
+      value={modMode}
+      tabs={modeTabs}
+      ariaLabel={t('id.title')}
+      onChange={(v) => (modMode = v as 'new' | 'existing')}
+    />
 
     {#if modMode === 'new'}
       <label class="fld">
@@ -208,22 +206,6 @@
   }
   .sha {
     font-size: 11px;
-  }
-  .modmode {
-    display: flex;
-    gap: 2px;
-  }
-  .seg {
-    background: transparent;
-    border: 1px solid transparent;
-    border-bottom: 2px solid transparent;
-    border-radius: 0;
-    padding: 5px 12px;
-    color: var(--fg-dim);
-  }
-  .seg.active {
-    color: var(--fg);
-    border-bottom-color: var(--accent);
   }
   .fld {
     display: flex;

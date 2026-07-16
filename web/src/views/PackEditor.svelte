@@ -27,6 +27,7 @@
   import Field from './ui/Field.svelte';
   import Section from './ui/Section.svelte';
   import Select from './ui/Select.svelte';
+  import TabStrip from './ui/TabStrip.svelte';
 
   const MOD_SOURCE_OPTIONS = [
     { value: 'smrt_cache', label: 'cache' },
@@ -588,21 +589,17 @@
     }
   }
 
-  const tabs = $derived<[Tab, string][]>([
-    ['config', t('pe.tab.config')],
-    ['branding', t('pe.tab.branding')],
-    ['graph', t('pe.tab.graph')],
-    ['build', t('pe.tab.build')],
+  const tabItems = $derived([
+    { value: 'config', label: t('pe.tab.config') },
+    { value: 'branding', label: t('pe.tab.branding') },
+    { value: 'graph', label: t('pe.tab.graph') },
+    { value: 'build', label: t('pe.tab.build') },
   ]);
 </script>
 
 <div class="hd">
   <h2 class="ttl mono">{packId}<span class="faint">/{t('pe.edit')}</span></h2>
-  <nav class="sub">
-    {#each tabs as [id, label]}
-      <button class="seg" class:active={tab === id} onclick={() => (tab = id as Tab)}>{label}</button>
-    {/each}
-  </nav>
+  <TabStrip value={tab} tabs={tabItems} ariaLabel={t('pe.edit')} onChange={(v) => (tab = v as Tab)} />
   <div class="spacer"></div>
   {#if !loading && cfg && tab === 'config' && revertVersions.length}
     <span class="revertsel">
@@ -941,22 +938,6 @@
   }
   .ttl {
     font-size: 16px;
-  }
-  .sub {
-    display: flex;
-    gap: 2px;
-  }
-  .seg {
-    background: transparent;
-    border: 1px solid transparent;
-    border-bottom: 2px solid transparent;
-    border-radius: 0;
-    padding: 5px 12px;
-    color: var(--fg-dim);
-  }
-  .seg.active {
-    color: var(--fg);
-    border-bottom-color: var(--accent);
   }
   .spacer {
     flex: 1;

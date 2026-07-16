@@ -6,6 +6,7 @@
   import { terms } from '../lib/terms.svelte';
   import { renderMarkdown } from '../lib/markdown';
   import ModIcon from './ModIcon.svelte';
+  import TabStrip from './ui/TabStrip.svelte';
   import type { CommunityPack, PackManifest, PackSummary } from '../lib/types';
 
   // A signed-in member can fork any pack they can browse into their namespace.
@@ -19,6 +20,10 @@
   // launcher's catalog. Detail reads /v1/packs/:id/manifest for both.
   type Tab = 'official' | 'community';
   let tab = $state<Tab>('official');
+  const tabTabs = $derived([
+    { value: 'official', label: t('browse.official') },
+    { value: 'community', label: t('browse.community') },
+  ]);
   let packs = $state<PackSummary[]>([]);
   let community = $state<CommunityPack[]>([]);
   let loading = $state(true);
@@ -94,12 +99,7 @@
 <div class="view">
   {#if err}<div class="err mono">{err}</div>{/if}
 
-  <div class="tabs" role="tablist">
-    <button class="tb" class:active={tab === 'official'} onclick={() => (tab = 'official')}
-      >{t('browse.official')}</button>
-    <button class="tb" class:active={tab === 'community'} onclick={() => (tab = 'community')}
-      >{t('browse.community')}</button>
-  </div>
+  <TabStrip variant="pill" value={tab} tabs={tabTabs} onChange={(v) => (tab = v as Tab)} />
 
   {#if items.length === 0 && !loading}
     <div class="emptystate">
@@ -190,29 +190,6 @@
     border-radius: var(--radius-sm);
     padding: var(--space-3) var(--space-4);
     font-size: 12px;
-  }
-  .tabs {
-    display: inline-flex;
-    gap: 2px;
-    border: 1px solid var(--seam);
-    border-radius: var(--radius-sm);
-    padding: 2px;
-    align-self: flex-start;
-  }
-  .tb {
-    border: none;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--fg-dim);
-    font-size: 12px;
-    padding: 5px 14px;
-  }
-  .tb:hover {
-    color: var(--fg);
-  }
-  .tb.active {
-    background: var(--accent-soft);
-    color: var(--accent-strong);
   }
   .plist {
     overflow: hidden;

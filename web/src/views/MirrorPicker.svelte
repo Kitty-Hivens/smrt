@@ -2,6 +2,7 @@
   import { Dialog } from 'bits-ui';
   import { api, ApiError } from '../lib/api';
   import { t } from '../lib/i18n.svelte';
+  import TabStrip from './ui/TabStrip.svelte';
   import type {
     ModSummary,
     VersionRow,
@@ -66,6 +67,12 @@
   type Mode = 'mods' | 'builds' | 'raw';
   let mode = $state<Mode>('mods');
   let err = $state('');
+
+  const modeTabs = $derived([
+    { value: 'mods', label: t('mirror.tab.mods') },
+    { value: 'builds', label: t('mirror.tab.builds') },
+    { value: 'raw', label: t('mirror.tab.raw') },
+  ]);
 
   // ── mods mode ──
   let q = $state('');
@@ -274,11 +281,7 @@
   <Dialog.Content class="mirror-dlg panel">
     <Dialog.Title class="vh">{t('mirror.title')}</Dialog.Title>
     <div class="ph row">
-      <div class="tabs">
-        <button class="seg" class:active={mode === 'mods'} onclick={() => setMode('mods')}>{t('mirror.tab.mods')}</button>
-        <button class="seg" class:active={mode === 'builds'} onclick={() => setMode('builds')}>{t('mirror.tab.builds')}</button>
-        <button class="seg" class:active={mode === 'raw'} onclick={() => setMode('raw')}>{t('mirror.tab.raw')}</button>
-      </div>
+      <TabStrip value={mode} tabs={modeTabs} ariaLabel={t('mirror.title')} onChange={(v) => setMode(v as Mode)} />
       <div class="spacer"></div>
       <button onclick={onClose}>{t('common.close')}</button>
     </div>
@@ -453,22 +456,6 @@
     gap: var(--space-2);
     margin-bottom: var(--space-2);
     align-items: center;
-  }
-  .tabs {
-    display: flex;
-    gap: 2px;
-  }
-  .seg {
-    background: transparent;
-    border: 1px solid transparent;
-    border-bottom: 2px solid transparent;
-    border-radius: 0;
-    padding: 5px 12px;
-    color: var(--fg-dim);
-  }
-  .seg.active {
-    color: var(--fg);
-    border-bottom-color: var(--accent);
   }
   .spacer {
     flex: 1;
