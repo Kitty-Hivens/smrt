@@ -22,6 +22,7 @@
   import dagre from '@dagrejs/dagre';
   import TendrilEdge from './TendrilEdge.svelte';
   import GraphFit from './GraphFit.svelte';
+  import TendrilLayer from './TendrilLayer.svelte';
   import { t } from '../lib/i18n.svelte';
   import { hover } from '../lib/graphhover.svelte';
   import type { GraphData } from '../lib/types';
@@ -398,6 +399,7 @@
       {ondelete}
     >
       <Background />
+      <TendrilLayer />
       <Controls />
       <GraphFit token={fitToken} />
     </SvelteFlow>
