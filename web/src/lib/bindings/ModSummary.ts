@@ -8,4 +8,10 @@ export type ModSummary = { mod_id: number,
 /**
  * canonical_name -> slug -> modid -> `#<id>`, resolved server-side.
  */
-name: string, slug: string | null, author: string | null, loaders: Array<string>, mc_versions: Array<string>, version_count: number, };
+name: string, slug: string | null, author: string | null, loaders: Array<string>, mc_versions: Array<string>, version_count: number, 
+/**
+ * Icon source for the list avatar: the Modrinth project id (its project icon)
+ * when the mod is catalogued there, else the newest artifact's sha1 (its
+ * jar-embedded icon). Both absent -> the letter avatar.
+ */
+modrinth_project_id?: string, icon_sha1?: string, };

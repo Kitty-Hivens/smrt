@@ -278,6 +278,27 @@ mod tests {
     }
 
     #[test]
+    fn list_mods_carries_an_icon_source() {
+        let r = fixture();
+        r.with_conn(|c| {
+            let mods = queries::list_mods(c, None, None, None)?;
+            let apple = mods
+                .iter()
+                .find(|m| m.name == "appleskin")
+                .expect("appleskin");
+            // a Modrinth-catalogued mod offers its project id for the project icon
+            assert_eq!(apple.modrinth_project_id.as_deref(), Some("EsAfb37o"));
+            assert_eq!(apple.icon_sha1.as_deref(), Some("sha_apple"));
+            // a modid-only mod has no project id, only its newest jar's sha1
+            let jei = mods.iter().find(|m| m.name == "jei").expect("jei");
+            assert_eq!(jei.modrinth_project_id, None);
+            assert_eq!(jei.icon_sha1.as_deref(), Some("sha_jei"));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn used_by_finds_a_modrinth_only_mod_in_a_build() {
         let r = fixture();
         // a mod known only by its Modrinth project id -- no modid alias, the case

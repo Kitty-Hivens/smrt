@@ -4,7 +4,14 @@
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
   import { isDebug, isOperator } from '../lib/roles';
-  import type { JarDiff, ModSummary, ReleaseRow, UnassignedJar, VersionRow } from '../lib/types';
+  import type {
+    JarDiff,
+    ModSummary,
+    ReleaseRow,
+    SourceDecl,
+    UnassignedJar,
+    VersionRow,
+  } from '../lib/types';
   import ModIcon from './ModIcon.svelte';
   import IdentityDialog, { type IdentityTarget } from './IdentityDialog.svelte';
   import DropZone from './ui/DropZone.svelte';
@@ -79,6 +86,16 @@
   function onSearch() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(load, 250);
+  }
+
+  // The list avatar's icon source: prefer the Modrinth project icon, else the
+  // newest cached jar's embedded icon; ModIcon falls back to a letter when a mod
+  // has neither (or the icon 404s).
+  function iconSource(m: ModSummary): SourceDecl {
+    if (m.modrinth_project_id)
+      return { type: 'modrinth', project_id: m.modrinth_project_id, version_id: '' };
+    if (m.icon_sha1) return { type: 'smrt_cache', sha1: m.icon_sha1 };
+    return { type: 'smrt_static', rel_path: '' };
   }
 
   async function toggle(m: ModSummary) {
@@ -321,7 +338,7 @@
           }}
         >
           <span class="chev" aria-hidden="true">&#9656;</span>
-          <ModIcon name={m.name} source={{ type: 'smrt_static', rel_path: '' }} size={32} mono />
+          <ModIcon name={m.name} source={iconSource(m)} size={32} mono />
           <div class="minfo">
             <div class="mname">
               <button

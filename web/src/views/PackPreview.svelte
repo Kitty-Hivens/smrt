@@ -32,6 +32,9 @@
   let libsOpen = $state(false);
   let configsOpen = $state(false);
   let diffOpen = $state(false);
+  // the hero <img> has no letter-avatar sibling of its own, so a broken icon_url
+  // would show the browser's broken-image glyph; this flips it to the avatar
+  let heroBroken = $state(false);
 
   const manifest = $derived(result?.manifest ?? null);
   const summary = $derived(result?.summary ?? null);
@@ -68,6 +71,7 @@
     running = true;
     err = '';
     result = null;
+    heroBroken = false;
     showLog = true;
     jobId = null;
     try {
@@ -130,6 +134,17 @@
     {#key jobId}<JobLog {jobId} onDone={onJobDone} />{/key}
   {/if}
 
+  {#if running && !manifest}
+    <!-- a preview needs a full dry-run build, so shape the wait as a loading
+         placeholder rather than an empty panel that reads as broken -->
+    <div class="skeleton" aria-hidden="true">
+      <div class="sk sk-hero"></div>
+      <div class="sk sk-row"></div>
+      <div class="sk sk-row"></div>
+      <div class="sk sk-row"></div>
+    </div>
+  {/if}
+
   {#if manifest && summary}
     <!-- version diff vs published -->
     {#if diff}
@@ -166,8 +181,8 @@
         : ''}
     >
       <div class="heroicon">
-        {#if summary.icon_url}
-          <img src={summary.icon_url} alt={summary.display_name} />
+        {#if summary.icon_url && !heroBroken}
+          <img src={summary.icon_url} alt={summary.display_name} onerror={() => (heroBroken = true)} />
         {:else if heroAvatar}
           <span class="avatar" style="background:{heroAvatar.color}">{heroAvatar.initials}</span>
         {/if}
@@ -392,6 +407,37 @@
     color: var(--p-fg-dim);
     margin: 14px 16px;
     font-size: 12px;
+  }
+  .skeleton {
+    margin: 14px 16px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .sk {
+    border-radius: 10px;
+    background: linear-gradient(
+      90deg,
+      var(--p-surface) 25%,
+      var(--p-surface-2) 37%,
+      var(--p-surface) 63%
+    );
+    background-size: 400% 100%;
+    animation: sk-pulse 1.3s ease-in-out infinite;
+  }
+  .sk-hero {
+    height: 150px;
+  }
+  .sk-row {
+    height: 46px;
+  }
+  @keyframes sk-pulse {
+    0% {
+      background-position: 100% 0;
+    }
+    100% {
+      background-position: 0 0;
+    }
   }
   .diff {
     display: flex;

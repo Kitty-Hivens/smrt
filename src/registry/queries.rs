@@ -962,7 +962,9 @@ pub fn list_mods(
          )
          SELECT m.id, m.canonical_name, m.slug, m.author,
                 (SELECT external_key FROM mod_alias WHERE mod_id = m.id AND source = 'modid' LIMIT 1) AS modid,
-                (SELECT count(*) FROM mod_version mv WHERE mv.mod_id = m.id) AS vcount
+                (SELECT count(*) FROM mod_version mv WHERE mv.mod_id = m.id) AS vcount,
+                (SELECT external_key FROM mod_alias WHERE mod_id = m.id AND source = 'modrinth' LIMIT 1) AS modrinth_pid,
+                (SELECT sha1 FROM mod_version mv WHERE mv.mod_id = m.id ORDER BY mv.id DESC LIMIT 1) AS icon_sha1
          FROM mods m
          WHERE (?1 IS NULL
                 OR m.canonical_name LIKE ?1 ESCAPE '\\' OR m.slug LIKE ?1 ESCAPE '\\'
@@ -984,6 +986,8 @@ pub fn list_mods(
             let author: Option<String> = r.get(3)?;
             let modid: Option<String> = r.get(4)?;
             let version_count: i64 = r.get(5)?;
+            let modrinth_project_id: Option<String> = r.get(6)?;
+            let icon_sha1: Option<String> = r.get(7)?;
             let name = canonical
                 .clone()
                 .or_else(|| slug.clone())
@@ -997,6 +1001,8 @@ pub fn list_mods(
                 loaders: Vec::new(),
                 mc_versions: Vec::new(),
                 version_count,
+                modrinth_project_id,
+                icon_sha1,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;

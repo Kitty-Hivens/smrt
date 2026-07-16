@@ -1,5 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { flip } from 'svelte/animate';
+  import { fade } from 'svelte/transition';
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
@@ -38,6 +40,10 @@
     { value: 'modrinth', label: 'modrinth' },
     { value: 'smrt_cache', label: 'cache' },
   ];
+  // The loaders the registry models via loader_parent, offered as a picker rather
+  // than a free-text field. An unrecognised value already on a config (a loader we
+  // don't list) is kept as its own option so editing never silently drops it.
+  const KNOWN_LOADERS = ['forge', 'cleanroom', 'neoforge', 'fabric', 'quilt'];
 
   let {
     packId,
@@ -572,6 +578,12 @@
     }
   }
 
+  const loaderOptions = $derived.by(() => {
+    const cur = cfg?.loader.name?.trim();
+    const names = cur && !KNOWN_LOADERS.includes(cur) ? [cur, ...KNOWN_LOADERS] : KNOWN_LOADERS;
+    return names.map((l) => ({ value: l, label: l }));
+  });
+
   const tabItems = $derived([
     { value: 'config', label: t('pe.tab.config') },
     { value: 'branding', label: t('pe.tab.branding') },
@@ -684,7 +696,9 @@
           <div class="meta">
             <Field label={t('pe.displayName')}><input bind:value={cfg.display_name} /></Field>
             <Field label={t('pe.mcVersion')}><input bind:value={cfg.minecraft_version} /></Field>
-            <Field label={t('pe.loaderName')}><input bind:value={cfg.loader.name} /></Field>
+            <Field label={t('pe.loaderName')}>
+              <Select full bind:value={cfg.loader.name} options={loaderOptions} ariaLabel={t('pe.loaderName')} />
+            </Field>
             <Field label={t('pe.loaderVersion')}><input bind:value={cfg.loader.version} /></Field>
             <Field label={t('pe.java')}><input type="number" bind:value={cfg.java_major} /></Field>
             <label class="chk"><input type="checkbox" bind:checked={cfg.featured} /> {t('pe.featured')}</label>
@@ -724,7 +738,7 @@
 
           <div class="mods">
             {#each cfg.mods as m, i (m)}
-              <div class="modrow">
+              <div class="modrow" animate:flip={{ duration: 200 }} in:fade={{ duration: 180 }}>
                 <ModIcon name={m.filename} iconUrl={m.display?.icon_url} source={m.source} size={24} mono />
                 <input class="fn mono" bind:value={m.filename} placeholder={t('pe.filename')} />
                 <span class="srcsel">

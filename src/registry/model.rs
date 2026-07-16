@@ -176,6 +176,15 @@ pub struct ModSummary {
     pub mc_versions: Vec<String>,
     #[ts(type = "number")]
     pub version_count: i64,
+    /// Icon source for the list avatar: the Modrinth project id (its project icon)
+    /// when the mod is catalogued there, else the newest artifact's sha1 (its
+    /// jar-embedded icon). Both absent -> the letter avatar.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub modrinth_project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub icon_sha1: Option<String>,
 }
 
 /// One published build in the registry browser (the mirror hosts builds too, not
