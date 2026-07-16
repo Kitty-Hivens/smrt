@@ -150,7 +150,17 @@ pub fn owner_mod_for_prefix(conn: &Connection, prefix: &str) -> Result<Option<i6
 /// Resolve a `relation.target_modid` selector to a mod row id. A bare value is a
 /// `modid` alias; a `modrinth:<project_id>` value (the fallback the derivation
 /// emits when a target carries no modid) is a Modrinth-project alias.
+///
+/// A Forge dependency string carries its version window inline as
+/// `modid@[range]` (e.g. `forgemultipartcbe@[2.6,1,)`), and the same window can
+/// ride a `modrinth:<id>` selector too. The alias tables key on the bare
+/// identity, so the range is dropped before the lookup -- otherwise the same
+/// dependency resolves through its clean-modid row and stays an unresolved
+/// placeholder through its range-suffixed one, drawing the target twice (#1),
+/// and a Modrinth-only target never resolves at all (#2). The version window is
+/// held separately in `target_version_range` and is unaffected.
 pub fn mod_id_for_selector(conn: &Connection, selector: &str) -> Result<Option<i64>> {
+    let selector = selector.split('@').next().unwrap_or(selector);
     match selector.strip_prefix("modrinth:") {
         Some(pid) => mod_id_for_alias(conn, "modrinth", pid),
         None => mod_id_for_alias(conn, "modid", selector),
@@ -490,12 +500,33 @@ pub fn graph_for_slice(
 
     let mut edges: Vec<GraphEdge> = Vec::new();
     let mut endpoints: BTreeSet<i64> = BTreeSet::new();
+    // The same dependency can arrive as several relation rows -- a clean modid and
+    // the Forge `modid@[range]` form, or one row per source. Once resolved they
+    // point at the same node, so dedupe (relations come highest-confidence first,
+    // so the authoritative row wins): a resolved edge is keyed by its endpoints
+    // and kind; an unresolved one keeps its raw target so two genuinely different
+    // missing deps stay distinct.
+    let mut seen: HashSet<(i64, Option<i64>, String, String)> = HashSet::new();
     // deterministic output: walk the mods in id order, not hash order
     let mut mods: Vec<(&i64, &i64)> = in_slice.iter().collect();
     mods.sort();
     for (&mod_id, &mv_id) in mods {
         for e in relations_for_artifact(conn, mv_id, mod_id)? {
             let to = mod_id_for_selector(conn, &e.target)?.filter(|t| in_slice.contains_key(t));
+            let kind = e.kind.as_str().to_string();
+            let key = (
+                mod_id,
+                to,
+                kind.clone(),
+                if to.is_some() {
+                    String::new()
+                } else {
+                    e.target.clone()
+                },
+            );
+            if !seen.insert(key) {
+                continue;
+            }
             endpoints.insert(mod_id);
             if let Some(t) = to {
                 endpoints.insert(t);
@@ -504,7 +535,7 @@ pub fn graph_for_slice(
                 from_mod_id: mod_id,
                 to_mod_id: to,
                 target: e.target,
-                kind: e.kind.as_str().to_string(),
+                kind,
                 source: e.source.as_str().to_string(),
             });
         }
@@ -643,10 +674,7 @@ pub fn mod_detail(conn: &Connection, mod_id: i64) -> Result<Option<ModDetail>> {
     sort_mc(&mut mc_versions);
 
     let edges = edges_for_mod(conn, mod_id)?;
-    let used_by = match &modid {
-        Some(m) => packs_using_mod(conn, "modid", m)?,
-        None => Vec::new(),
-    };
+    let used_by = packs_using_mod_by_id(conn, mod_id)?;
 
     Ok(Some(ModDetail {
         mod_id,
@@ -680,6 +708,33 @@ pub fn packs_using_mod(
     )?;
     let rows = stmt
         .query_map(params![alias_source, external_key], |r| {
+            Ok(ModUse {
+                pack_id: r.get(0)?,
+                pack_version: r.get(1)?,
+                version: r.get(2)?,
+                filename: r.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Which pack builds ship any version of this mod, resolved straight from the mod
+/// id rather than through an alias. `mod_detail` keyed `used_by` on the `modid`
+/// alias, which a Modrinth-sourced mod (no modid alias) never has, so a mod that
+/// packs do ship reported "used in no pack" (#18). A build references the artifact
+/// by `mod_version_id`, whose `mod_id` is the honest join.
+pub fn packs_using_mod_by_id(conn: &Connection, mod_id: i64) -> Result<Vec<ModUse>> {
+    let mut stmt = conn.prepare(
+        "SELECT pb.pack_id, pb.pack_version, mv.version, pbm.filename
+         FROM mod_version mv
+         JOIN pack_build_mod pbm ON pbm.mod_version_id = mv.id
+         JOIN pack_build pb ON pb.id = pbm.build_id
+         WHERE mv.mod_id = ?1
+         ORDER BY pb.pack_id, pb.pack_version",
+    )?;
+    let rows = stmt
+        .query_map(params![mod_id], |r| {
             Ok(ModUse {
                 pack_id: r.get(0)?,
                 pack_version: r.get(1)?,

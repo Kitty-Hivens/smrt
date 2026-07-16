@@ -178,6 +178,114 @@ mod tests {
     }
 
     #[test]
+    fn selector_resolves_through_forge_range_and_modrinth() {
+        let r = fixture();
+        r.with_conn(|c| {
+            let apple = queries::mod_id_for_alias(c, "modid", "appleskin")?.unwrap();
+            assert_eq!(queries::mod_id_for_selector(c, "appleskin")?, Some(apple));
+            // a Forge `modid@[range]` selector resolves like the bare modid (#1)
+            assert_eq!(
+                queries::mod_id_for_selector(c, "appleskin@[2.5,)")?,
+                Some(apple)
+            );
+            // a `modrinth:<id>` selector resolves, with or without a range (#2)
+            assert_eq!(
+                queries::mod_id_for_selector(c, "modrinth:EsAfb37o")?,
+                Some(apple)
+            );
+            assert_eq!(
+                queries::mod_id_for_selector(c, "modrinth:EsAfb37o@[2.5,)")?,
+                Some(apple)
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn slice_graph_dedupes_a_dep_declared_two_ways() {
+        let r = fixture();
+        // jei already requires appleskin by bare modid; add the Forge range form of
+        // the very same dependency, which used to resolve on its own and draw a
+        // duplicate placeholder next to the resolved node (#1).
+        r.with_conn_mut(|c| {
+            let jei = queries::mod_id_for_alias(c, "modid", "jei")?.unwrap();
+            upsert::upsert_relation(
+                c,
+                jei,
+                None,
+                "appleskin@[2.5,)",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        r.with_conn(|c| {
+            let g = queries::graph_for_slice(c, None, Some("forge"))?;
+            let apple = queries::mod_id_for_alias(c, "modid", "appleskin")?.unwrap();
+            let jei = queries::mod_id_for_alias(c, "modid", "jei")?.unwrap();
+            let to_apple = g
+                .edges
+                .iter()
+                .filter(|e| e.from_mod_id == jei && e.to_mod_id == Some(apple))
+                .count();
+            assert_eq!(to_apple, 1, "the same dep two ways collapses to one edge");
+            assert!(
+                !g.edges
+                    .iter()
+                    .any(|e| e.to_mod_id.is_none() && e.target.contains("appleskin")),
+                "no dangling placeholder for a dep that resolves"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn used_by_finds_a_modrinth_only_mod_in_a_build() {
+        let r = fixture();
+        // a mod known only by its Modrinth project id -- no modid alias, the case
+        // that reported "used in no pack" though a build ships it (#18).
+        r.with_conn_mut(|c| {
+            let build: i64 = c.query_row(
+                "SELECT id FROM pack_build WHERE pack_id = 'Industrial'",
+                [],
+                |r| r.get(0),
+            )?;
+            let m = upsert::upsert_mod_by_alias(c, &[("modrinth", "AANobbMI")], NOW)?;
+            let v = upsert::upsert_mod_version(
+                c,
+                m,
+                "1.0",
+                &["forge"],
+                "sha_mb",
+                700,
+                Some("mixinbooter.jar"),
+                None,
+                NOW,
+            )?;
+            upsert::link_build_mod(c, build, v, "mixinbooter.jar", true, true)?;
+            Ok(())
+        })
+        .unwrap();
+        r.with_conn(|c| {
+            let m = queries::mod_id_for_alias(c, "modrinth", "AANobbMI")?.unwrap();
+            let detail = queries::mod_detail(c, m)?.expect("mod detail");
+            assert_eq!(
+                detail.used_by.len(),
+                1,
+                "a Modrinth-only mod in a build is used by it"
+            );
+            assert_eq!(detail.used_by[0].pack_id, "Industrial");
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn alias_collapse_one_identity() {
         let r = fixture();
         r.with_conn(|c| {
