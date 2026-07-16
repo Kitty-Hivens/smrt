@@ -48,9 +48,24 @@
   }
   load();
 
-  async function setSlice(s: GraphSlice) {
-    mc = s.mc_version;
-    loader = s.loader;
+  // A real registry holds hundreds of (mc, loader) worlds -- one per Minecraft
+  // version times every loader that has anything in it -- so a button per world is
+  // a wall across the screen. Two dropdowns instead: Minecraft version, then the
+  // loaders that version actually has. Both keep the busiest-first order the API
+  // returns, so the populated worlds sit at the top rather than buried in a list.
+  const mcOptions = $derived.by(() => {
+    const order: string[] = [];
+    const total = new Map<string, number>();
+    for (const s of slices) {
+      if (!total.has(s.mc_version)) order.push(s.mc_version);
+      total.set(s.mc_version, (total.get(s.mc_version) ?? 0) + s.artifacts);
+    }
+    return order.map((mc_version) => ({ mc_version, artifacts: total.get(mc_version) ?? 0 }));
+  });
+  const loaderOptions = $derived(slices.filter((s) => s.mc_version === mc));
+
+  async function loadSlice() {
+    if (mc == null || loader == null) return;
     loading = true;
     err = '';
     try {
@@ -60,6 +75,14 @@
     } finally {
       loading = false;
     }
+  }
+
+  function onMcChange() {
+    // keep the current loader if this version has it, else jump to its busiest
+    if (!loaderOptions.some((s) => s.loader === loader)) {
+      loader = loaderOptions[0]?.loader ?? null;
+    }
+    void loadSlice();
   }
 
   async function pickKind(): Promise<string | null> {
@@ -124,16 +147,16 @@
   {#if slices.length > 1}
     <div class="slicebar">
       <span class="slabel mono">{t('graph.world')}</span>
-      {#each slices as s (s.mc_version + s.loader)}
-        <button
-          class="slice mono"
-          class:active={s.mc_version === mc && s.loader === loader}
-          aria-pressed={s.mc_version === mc && s.loader === loader}
-          onclick={() => setSlice(s)}
-        >
-          {s.mc_version} / {s.loader}<span class="scount">{s.artifacts}</span>
-        </button>
-      {/each}
+      <select class="pick mono" bind:value={mc} onchange={onMcChange} aria-label={t('graph.mcVersion')}>
+        {#each mcOptions as m (m.mc_version)}
+          <option value={m.mc_version}>{m.mc_version} ({m.artifacts})</option>
+        {/each}
+      </select>
+      <select class="pick mono" bind:value={loader} onchange={loadSlice} aria-label={t('graph.loader')}>
+        {#each loaderOptions as s (s.loader)}
+          <option value={s.loader}>{s.loader} ({s.artifacts})</option>
+        {/each}
+      </select>
     </div>
   {/if}
 
@@ -216,25 +239,9 @@
     text-transform: uppercase;
     color: var(--fg-faint);
   }
-  .slice {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding: 4px 10px;
-    font-size: 11.5px;
-    color: var(--fg-dim);
-    background: transparent;
-  }
-  .slice:hover {
-    color: var(--fg);
-  }
-  .slice.active {
-    background: var(--accent-soft);
-    color: var(--accent-strong);
-    border-color: var(--seam-bright);
-  }
-  .scount {
-    font-size: 10px;
-    color: var(--fg-faint);
+  .slicebar .pick {
+    width: auto;
+    font-size: 12px;
+    padding: 5px 10px;
   }
 </style>
