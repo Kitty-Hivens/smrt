@@ -391,6 +391,7 @@ export const ru: Dict = {
   'graph.openPage': 'Открыть страницу',
   'graph.clearFocus': 'Сбросить фокус',
   'graph.showAll': 'Всё равно показать всю паутину',
+  'graph.collapse': 'Свернуть',
   'graph.showingN': 'узлов: {n}',
   'graph.noSuchMod': 'Мод с таким именем не найден.',
   'graph.tooBig':

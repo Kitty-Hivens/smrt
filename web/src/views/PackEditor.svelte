@@ -6,7 +6,6 @@
   import { isDebug } from '../lib/roles';
   import type {
     DeclaredAsset,
-    Display,
     JobStatus,
     PackConfig,
     ResolveReport,
@@ -385,9 +384,10 @@
     cfg!.mods = cfg!.mods.filter((_, j) => j !== i);
   }
 
-  // Sticky sort: once a direction is chosen, the list stays ordered as mods are
-  // added (an added mod slots into place instead of landing at the end).
-  let sortDir = $state<'asc' | 'desc' | null>(null);
+  // Sticky sort: the list stays ordered as mods are added (an added mod slots
+  // into place instead of landing at the end). Defaults to A-Z so a freshly
+  // opened pack reads in order and an added mod lands where it belongs.
+  let sortDir = $state<'asc' | 'desc' | null>('asc');
 
   // Re-sort only on a structural change (a mod added/removed -> length changes)
   // or a direction change. The sort itself runs untracked, so editing a mod's
@@ -507,23 +507,6 @@
     const assets = cfg.assets ?? [];
     if (assets.some((x) => x.dest === a.dest)) return;
     cfg.assets = [...assets, a];
-  }
-
-  // per-mod display metadata (category / role / incompatibilities) lives on the
-  // mod in the config now -- the curator no longer carries per-mod rules
-  function ensureDisplay(i: number): Display {
-    const m = cfg!.mods[i];
-    if (!m.display) m.display = { incompatible_with: [], requires: [] };
-    return m.display;
-  }
-  function setModField(i: number, field: 'category' | 'role', v: string) {
-    ensureDisplay(i)[field] = v.trim() || undefined;
-  }
-  function setModIncompat(i: number, v: string) {
-    ensureDisplay(i).incompatible_with = v
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
   }
 
   function onModrinthPick(sel: { project_id: string; slug: string; version_id: string }) {
@@ -829,34 +812,6 @@
                 {/each}
                 {#if (cfg.assets ?? []).length === 0}
                   <tr><td colspan="5" class="muted">{t('pe.noAssets')}</td></tr>
-                {/if}
-              </tbody>
-            </table>
-          </div>
-        </Section>
-
-        <Section title={t('pe.perModDisplay')} count={cfg.mods.length}>
-          <div class="panel scroll flushtable">
-            <table>
-              <thead>
-                <tr>
-                  <th>{t('pe.filename')}</th>
-                  <th style="width:130px">{t('pe.col.category')}</th>
-                  <th style="width:130px">{t('pe.col.role')}</th>
-                  <th>{t('pe.col.incompatible')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each cfg.mods as m, i (m)}
-                  <tr>
-                    <td class="mono">{m.filename}</td>
-                    <td><input value={m.display?.category ?? ''} oninput={(e) => setModField(i, 'category', e.currentTarget.value)} placeholder="-" /></td>
-                    <td><input value={m.display?.role ?? ''} oninput={(e) => setModField(i, 'role', e.currentTarget.value)} placeholder="-" /></td>
-                    <td><input class="mono" value={(m.display?.incompatible_with ?? []).join(', ')} oninput={(e) => setModIncompat(i, e.currentTarget.value)} placeholder={t('pe.incompatHint')} /></td>
-                  </tr>
-                {/each}
-                {#if cfg.mods.length === 0}
-                  <tr><td colspan="4" class="muted">{t('pe.noMods')}</td></tr>
                 {/if}
               </tbody>
             </table>

@@ -269,9 +269,18 @@
     hops = n;
     rebuild();
   }
+  // Leave focus, but keep the "show the whole web" opt-in: if the operator chose
+  // to reveal everything and then focused a mod, clearing focus returns them to
+  // the whole web, not back to the too-big prompt they already dismissed.
   function clearFocus() {
     focusId = null;
+    query = '';
+    rebuild();
+  }
+  // The explicit way back to the prompt from the revealed whole web.
+  function collapseAll() {
     showAll = false;
+    focusId = null;
     query = '';
     rebuild();
   }
@@ -372,7 +381,7 @@
     <button class="sm" onclick={clearFocus}>{t('graph.clearFocus')}</button>
   {:else if showAll}
     <span class="count faint mono">{t('graph.showingN', { n: nodes.length })}</span>
-    <button class="sm" onclick={clearFocus}>{t('graph.clearFocus')}</button>
+    <button class="sm" onclick={collapseAll}>{t('graph.collapse')}</button>
   {/if}
 </div>
 

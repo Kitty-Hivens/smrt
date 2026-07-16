@@ -392,6 +392,7 @@ export const en = {
   'graph.openPage': 'Open page',
   'graph.clearFocus': 'Clear focus',
   'graph.showAll': 'Show the whole web anyway',
+  'graph.collapse': 'Collapse',
   'graph.showingN': '{n} nodes',
   'graph.noSuchMod': 'No mod matches that name.',
   'graph.tooBig':

@@ -4,6 +4,11 @@
   // A labeled field: human label on top, the caller's own control inside (so
   // two-way binding stays the caller's), optional hint below. The label is the
   // place to say what a raw config key means in plain words.
+  //
+  // A plain <div>, not a <label>: wrapping the control in a <label> made the
+  // whole cell focus the input on click, which reads as the field grabbing focus
+  // when you meant only to click near it. Focus now follows the control itself
+  // (click it, or Tab), which is what the caption implies.
   let {
     label,
     hint,
@@ -17,11 +22,11 @@
   } = $props();
 </script>
 
-<label class="field" class:wide>
+<div class="field" class:wide>
   <span class="lbl">{label}</span>
   {@render children()}
   {#if hint}<span class="hint">{hint}</span>{/if}
-</label>
+</div>
 
 <style>
   .field {
