@@ -152,6 +152,33 @@ pub struct RequiredHint {
     pub needed_by: Vec<String>,
 }
 
+/// A dependency on the loader itself (Forge/FML, NeoForge, Fabric, ...), which is
+/// always present, so it is not a missing mod however the jar spells it -- Forge
+/// mods variously require `forge`, `MinecraftForge`, `mod_MinecraftForge` or
+/// `FML`. Any version window rides after `@` and is dropped first. A jar's loader
+/// compatibility is judged separately (#50); this only stops the scanner
+/// reporting the loader as a missing dependency (#10).
+fn is_loader_dep(target: &str) -> bool {
+    let id = target
+        .split('@')
+        .next()
+        .unwrap_or(target)
+        .to_ascii_lowercase();
+    matches!(
+        id.as_str(),
+        "forge"
+            | "minecraftforge"
+            | "mod_minecraftforge"
+            | "fml"
+            | "forgemodloader"
+            | "neoforge"
+            | "fabric"
+            | "fabricloader"
+            | "cleanroom"
+            | "quilt"
+    )
+}
+
 /// A declared jar mod placed on the graph.
 struct Present {
     filename: String,
@@ -322,6 +349,11 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
                             }
                         }
                         None => {
+                            // A dependency on the loader itself is never a missing
+                            // mod -- the loader is always present (#10).
+                            if is_loader_dep(&e.target) {
+                                continue;
+                            }
                             let entry =
                                 missing
                                     .entry(e.target.clone())
@@ -875,6 +907,35 @@ mod tests {
         );
         assert_eq!(rep.optional_conflicts.len(), 1);
         assert_eq!(rep.optional_conflicts[0].b, "b.jar");
+    }
+
+    #[test]
+    fn a_loader_dependency_is_not_missing() {
+        use crate::registry::model::Source;
+        let r = Registry::open_in_memory().unwrap();
+        let a = add_mod(&r, "moda", "1.0", &"d".repeat(40));
+        // moda requires the loader, spelled the Forge way, with a version window
+        relate(
+            &r,
+            a,
+            "MinecraftForge",
+            None,
+            RelKind::Requires,
+            Source::JarMeta,
+        );
+
+        let rep = r
+            .with_conn(|c| {
+                resolve_pack(
+                    c,
+                    &config(vec![declared("a.jar", true, cache(&"d".repeat(40)))]),
+                )
+            })
+            .unwrap();
+        assert!(
+            rep.missing.is_empty(),
+            "a dependency on the loader is not a missing mod (#10)"
+        );
     }
 
     #[test]
