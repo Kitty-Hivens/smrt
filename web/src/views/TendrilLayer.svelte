@@ -1,7 +1,7 @@
 <script lang="ts">
   import { useStore } from '@xyflow/svelte';
   import { clock, useClock } from '../lib/anim.svelte';
-  import { hover } from '../lib/graphhover.svelte';
+  import { hover, drag } from '../lib/graphhover.svelte';
   import { tendrils } from '../lib/tendrils.svelte';
 
   // Paints every tendril on one canvas, under the nodes.
@@ -84,6 +84,10 @@
     const t = clock.t;
     const vp = store.viewport;
     const hovered = hover.id;
+    // while a node is dragged, freeze the wave: the tendrils still follow their
+    // moving ends, but as flat lines, so no sine churns per vertex on top of the
+    // library re-rendering the nodes every pointer move
+    const frozen = drag.active;
     if (!el || w === 0 || h === 0) return;
 
     const dpr = window.devicePixelRatio || 1;
@@ -127,8 +131,9 @@
       const dx = tx - sx;
       const dy = ty - sy;
       const dist = Math.hypot(dx, dy) || 1;
-      const n = lit ? Math.max(6, Math.min(140, Math.round(dist / 4))) : 1;
-      const amp = lit ? 5 * vp.zoom : 0;
+      // frozen or unlit -> one straight segment, no wave; else sampled per screen px
+      const n = lit && !frozen ? Math.max(6, Math.min(140, Math.round(dist / 4))) : 1;
+      const amp = lit && !frozen ? 5 * vp.zoom : 0;
       const time = t + e.phase;
 
       ctx.beginPath();

@@ -24,7 +24,7 @@
   import GraphFit from './GraphFit.svelte';
   import TendrilLayer from './TendrilLayer.svelte';
   import { t } from '../lib/i18n.svelte';
-  import { hover } from '../lib/graphhover.svelte';
+  import { hover, drag } from '../lib/graphhover.svelte';
   import type { GraphData } from '../lib/types';
 
   // Draws a relation graph and lets you walk it. Owns the focus, the layout and
@@ -395,6 +395,8 @@
       {onnodeclick}
       {onnodepointerenter}
       {onnodepointerleave}
+      onnodedragstart={() => drag.set(true)}
+      onnodedragstop={() => drag.set(false)}
       {onconnect}
       {ondelete}
     >
