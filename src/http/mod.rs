@@ -4,6 +4,7 @@
 //! the halves.
 
 pub mod admin;
+pub mod apidoc;
 pub mod auth;
 pub mod error;
 pub mod jobs;
@@ -54,6 +55,7 @@ pub fn router(state: AppState) -> Router {
         .merge(auth::router(state.clone()))
         .merge(jobs::router(state.clone()))
         .merge(panel::router())
+        .merge(apidoc::router())
 }
 
 #[cfg(test)]

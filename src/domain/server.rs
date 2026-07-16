@@ -3,10 +3,11 @@
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 // ── Server metadata ────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct ServerEntry {
     pub schema_version: u32,
@@ -37,7 +38,7 @@ pub struct ServerEntry {
     pub featured: bool,
 }
 
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct ServerListing {
     pub schema_version: u32,
@@ -47,7 +48,7 @@ pub struct ServerListing {
 
 // ── Featured ───────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct Featured {
     pub schema_version: u32,
@@ -104,7 +105,7 @@ pub struct CacheUse {
 
 // ── Health ─────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct Health {
     pub schema_version: u32,

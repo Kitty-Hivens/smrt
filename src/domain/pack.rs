@@ -6,6 +6,7 @@
 use super::manifest::{Display, LoaderSpec};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 // ── Ownership ──────────────────────────────────────────────────────────────
 
@@ -16,7 +17,7 @@ const OPERATOR_UID: i64 = 211033194;
 /// Curation tier. `official` = the mirror's own packs (the launcher's catalog,
 /// no personal byline); `community` = a member's pack. The launcher reads
 /// official only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 #[serde(rename_all = "snake_case")]
 pub enum PackTier {
@@ -26,7 +27,7 @@ pub enum PackTier {
 
 /// Publication state. Only `published` packs reach the public listing; `draft`
 /// is work-in-progress, `unlisted` is reachable by direct id but off the catalog.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 #[serde(rename_all = "snake_case")]
 pub enum Visibility {
@@ -51,7 +52,7 @@ pub(crate) fn default_visibility() -> Visibility {
 
 // ── Pack summary / listing ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct PackSummary {
     pub pack_id: String,
@@ -96,7 +97,7 @@ pub struct PackSummary {
     pub fork_of: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct PackListing {
     pub schema_version: u32,
@@ -108,7 +109,7 @@ pub struct PackListing {
 /// plus the owner's GitHub login (resolved from the uid) for the `by <user>`
 /// byline. Community packs are browseable on the site but never in the launcher's
 /// official `/v1/packs` catalog.
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct CommunityPack {
     pub summary: PackSummary,

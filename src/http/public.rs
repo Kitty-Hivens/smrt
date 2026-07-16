@@ -112,7 +112,13 @@ async fn get_mod_detail(
 
 // ── /v1/health ─────────────────────────────────────────────────────────────
 
-async fn health() -> Json<Health> {
+#[utoipa::path(
+    get,
+    path = "/v1/health",
+    tag = "public",
+    responses((status = 200, description = "Mirror is up", body = Health))
+)]
+pub(crate) async fn health() -> Json<Health> {
     Json(Health {
         schema_version: SCHEMA_VERSION,
         status: "ok",
@@ -123,7 +129,15 @@ async fn health() -> Json<Health> {
 
 // ── /v1/packs ──────────────────────────────────────────────────────────────
 
-async fn list_packs(State(state): State<AppState>) -> Result<Json<PackListing>, ApiError> {
+#[utoipa::path(
+    get,
+    path = "/v1/packs",
+    tag = "public",
+    responses((status = 200, description = "The launcher catalog: official, published packs", body = PackListing))
+)]
+pub(crate) async fn list_packs(
+    State(state): State<AppState>,
+) -> Result<Json<PackListing>, ApiError> {
     // The launcher's catalog is official + published only; drafts, unlisted, and
     // community packs are reached through other surfaces, never this listing.
     let packs = state
@@ -143,7 +157,13 @@ async fn list_packs(State(state): State<AppState>) -> Result<Json<PackListing>, 
 /// Published community packs for the site's Community view -- browseable here but
 /// never part of the launcher's official `/v1/packs` catalog. Each carries the
 /// owner's login (resolved from the uid) for the byline.
-async fn list_community(
+#[utoipa::path(
+    get,
+    path = "/v1/community",
+    tag = "public",
+    responses((status = 200, description = "Published community packs with owner byline", body = Vec<CommunityPack>))
+)]
+pub(crate) async fn list_community(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<CommunityPack>>, ApiError> {
     let summaries: Vec<PackSummary> = state
@@ -176,7 +196,14 @@ async fn list_community(
     Ok(Json(out))
 }
 
-async fn get_pack_summary(
+#[utoipa::path(
+    get,
+    path = "/v1/packs/{pack_id}",
+    tag = "public",
+    params(("pack_id" = String, Path, description = "Pack identifier")),
+    responses((status = 200, body = PackSummary), (status = 404, description = "No such pack"))
+)]
+pub(crate) async fn get_pack_summary(
     State(state): State<AppState>,
     Path(pack_id): Path<String>,
 ) -> Result<Json<PackSummary>, ApiError> {
@@ -227,7 +254,15 @@ async fn get_pack_static(
 
 // ── /v1/servers ────────────────────────────────────────────────────────────
 
-async fn list_servers(State(state): State<AppState>) -> Result<Json<ServerListing>, ApiError> {
+#[utoipa::path(
+    get,
+    path = "/v1/servers",
+    tag = "public",
+    responses((status = 200, description = "Curated server listing", body = ServerListing))
+)]
+pub(crate) async fn list_servers(
+    State(state): State<AppState>,
+) -> Result<Json<ServerListing>, ApiError> {
     let servers = state.storage.list_servers().await?;
     Ok(Json(ServerListing {
         schema_version: SCHEMA_VERSION,
@@ -245,7 +280,15 @@ async fn get_server(
 
 // ── /v1/featured ───────────────────────────────────────────────────────────
 
-async fn get_featured(State(state): State<AppState>) -> Result<Json<Featured>, ApiError> {
+#[utoipa::path(
+    get,
+    path = "/v1/featured",
+    tag = "public",
+    responses((status = 200, description = "Featured packs and servers", body = Featured))
+)]
+pub(crate) async fn get_featured(
+    State(state): State<AppState>,
+) -> Result<Json<Featured>, ApiError> {
     Ok(Json(state.storage.load_featured().await?))
 }
 
