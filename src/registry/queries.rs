@@ -571,6 +571,11 @@ fn mod_name(conn: &Connection, mod_id: i64) -> Result<String> {
 /// its `modid`/`modrinth` alias keys), naming the referencing mod.
 pub fn edges_for_mod(conn: &Connection, mod_id: i64) -> Result<Vec<ModEdge>> {
     let mut out = Vec::new();
+    // The clean modid and the Forge `modid@[range]` form of one dependency both
+    // resolve to the same target now, and a mod that references this one through
+    // several aliases matches more than once, so an edge could list the same
+    // neighbour twice. Collapse by direction, resolved target, name and kind.
+    let mut seen: HashSet<(&str, Option<i64>, String, String)> = HashSet::new();
 
     // outgoing: this mod -> target
     {
@@ -587,6 +592,9 @@ pub fn edges_for_mod(conn: &Connection, mod_id: i64) -> Result<Vec<ModEdge>> {
                 Some(id) => mod_name(conn, id)?,
                 None => target.clone(),
             };
+            if !seen.insert(("out", other_mod_id, other_name.clone(), kind.clone())) {
+                continue;
+            }
             out.push(ModEdge {
                 dir: "out".into(),
                 other_mod_id,
@@ -619,10 +627,14 @@ pub fn edges_for_mod(conn: &Connection, mod_id: i64) -> Result<Vec<ModEdge>> {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         for (from, kind, source) in rows {
+            let other_name = mod_name(conn, from)?;
+            if !seen.insert(("in", Some(from), other_name.clone(), kind.clone())) {
+                continue;
+            }
             out.push(ModEdge {
                 dir: "in".into(),
                 other_mod_id: Some(from),
-                other_name: mod_name(conn, from)?,
+                other_name,
                 kind,
                 source,
             });
@@ -719,19 +731,25 @@ pub fn packs_using_mod(
     Ok(rows)
 }
 
-/// Which pack builds ship any version of this mod, resolved straight from the mod
-/// id rather than through an alias. `mod_detail` keyed `used_by` on the `modid`
-/// alias, which a Modrinth-sourced mod (no modid alias) never has, so a mod that
-/// packs do ship reported "used in no pack" (#18). A build references the artifact
-/// by `mod_version_id`, whose `mod_id` is the honest join.
+/// Which packs ship any version of this mod, one row per pack, resolved straight
+/// from the mod id rather than through an alias. `mod_detail` keyed `used_by` on
+/// the `modid` alias, which a Modrinth-sourced mod (no modid alias) never has, so
+/// a mod that packs do ship reported "used in no pack" (#18). A build references
+/// the artifact by `mod_version_id`, whose `mod_id` is the honest join.
+///
+/// One row per pack, carrying its latest build: a mod that rides every snapshot
+/// of a pack is used by that one pack, not by it forty times over -- the page
+/// answers "which packs", not "which builds". `MAX(pack_version)` picks the
+/// latest, and SQLite reads the bare columns from that same winning row.
 pub fn packs_using_mod_by_id(conn: &Connection, mod_id: i64) -> Result<Vec<ModUse>> {
     let mut stmt = conn.prepare(
-        "SELECT pb.pack_id, pb.pack_version, mv.version, pbm.filename
+        "SELECT pb.pack_id, MAX(pb.pack_version), mv.version, pbm.filename
          FROM mod_version mv
          JOIN pack_build_mod pbm ON pbm.mod_version_id = mv.id
          JOIN pack_build pb ON pb.id = pbm.build_id
          WHERE mv.mod_id = ?1
-         ORDER BY pb.pack_id, pb.pack_version",
+         GROUP BY pb.pack_id
+         ORDER BY pb.pack_id",
     )?;
     let rows = stmt
         .query_map(params![mod_id], |r| {

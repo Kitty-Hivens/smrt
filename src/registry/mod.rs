@@ -245,6 +245,39 @@ mod tests {
     }
 
     #[test]
+    fn mod_edges_dedupe_a_dep_declared_two_ways() {
+        let r = fixture();
+        // jei already requires appleskin by bare modid; the Forge range form of the
+        // same dep now resolves too and would list appleskin twice on the page (#1).
+        r.with_conn_mut(|c| {
+            let jei = queries::mod_id_for_alias(c, "modid", "jei")?.unwrap();
+            upsert::upsert_relation(
+                c,
+                jei,
+                None,
+                "appleskin@[2.5,)",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        r.with_conn(|c| {
+            let jei = queries::mod_id_for_alias(c, "modid", "jei")?.unwrap();
+            let edges = queries::edges_for_mod(c, jei)?;
+            let out_to_apple = edges
+                .iter()
+                .filter(|e| e.dir == "out" && e.other_name == "appleskin")
+                .count();
+            assert_eq!(out_to_apple, 1, "a dep declared two ways lists once");
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn used_by_finds_a_modrinth_only_mod_in_a_build() {
         let r = fixture();
         // a mod known only by its Modrinth project id -- no modid alias, the case
