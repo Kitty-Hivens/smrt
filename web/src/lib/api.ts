@@ -166,6 +166,10 @@ export const api = {
   },
   deleteCacheJar: (sha1: string) =>
     send('DELETE', `/v1/cache/${sha1.slice(0, 2)}/${sha1}.jar`),
+  // deliberate policy block (#14): drop bytes + tombstone so it cannot be
+  // re-served or re-ingested; restore lifts it
+  takedownJar: (sha1: string) => send('POST', `/v1/cache/removed/${sha1}`),
+  restoreJar: (sha1: string) => send('DELETE', `/v1/cache/removed/${sha1}`),
 
   // server-side fetch of a GitHub release asset into the cache, returning its
   // content hash; the caller adds it as a normal smrt_cache mod

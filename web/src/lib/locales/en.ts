@@ -63,8 +63,8 @@ export const en = {
   'packs.flag.featured': 'featured',
   'packs.flag.authoring': 'editable',
   'packs.col.state': 'State',
-  'packs.vis.draft': 'draft',
-  'packs.vis.unlisted': 'unlisted',
+  'packs.vis.draft': 'draft (private)',
+  'packs.vis.unlisted': 'unlisted (link)',
   'packs.vis.published': 'published',
   'packs.tier.community': 'community',
   'packs.publish': 'Publish',
@@ -229,7 +229,12 @@ export const en = {
   'cache.empty': 'Cache is empty. Drop a jar to seed it.',
   'cache.noMatch': 'Nothing matches.',
   'cache.deleteTitle': 'Delete cache jar',
-  'cache.deleteMsg': 'Delete {name}? It is added to the takedown list and cannot be re-uploaded.',
+  'cache.deleteMsg': 'Delete {name}? This only frees its bytes -- the jar can be added again later.',
+  'cache.takedownTitle': 'Take down jar',
+  'cache.takedownMsg':
+    'Take down {name}? It is blocked and can neither be served nor re-added until you restore it.',
+  'cache.restore': 'Restore',
+  'cache.restoreHint': 'Lift the block so this jar can be added again',
   'cache.removedTitle': 'Removed (takedown)',
   'cache.removedSub': '{count} sha1 blocked from re-ingestion',
 
@@ -452,6 +457,8 @@ export const en = {
   'mm.overviewModsSub': '{n} need identity',
   'mm.verified': 'Modrinth',
   'mm.selfhost': 'self-hosted',
+  'mm.takedown': 'Take down',
+  'mm.takedownHint': 'Block this jar (copyright / policy); reversible from the removed list',
   'mm.repack': 'repack?',
   'mm.repackHint':
     'self-hosted jar under a mod that also has a Modrinth-verified file -- likely a repackage',

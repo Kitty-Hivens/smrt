@@ -542,6 +542,9 @@ impl Storage {
         atomic_write(&path, bytes).await
     }
 
+    /// Free a cached jar's bytes. Reversible: the sha1 is not blocked, so the
+    /// same jar can be re-added later. A deliberate policy block is `takedown`,
+    /// a separate act -- deleting to reclaim space must not tombstone a jar (#14).
     pub async fn delete_cache_jar(&self, sha1: &str) -> Result<(), ApiError> {
         if !is_hex(sha1) || sha1.len() != 40 {
             return Err(ApiError::BadRequest("invalid sha1".into()));
@@ -551,8 +554,44 @@ impl Storage {
         fs::remove_file(&path)
             .await
             .map_err(|_| ApiError::NotFound)?;
-        self.record_removed(sha1).await?;
         Ok(())
+    }
+
+    /// Block a jar: drop any cached copy and add its sha1 to the removed list so
+    /// it can neither be served nor re-ingested. The deliberate act for copyright
+    /// or policy, distinct from `delete_cache_jar` which only frees bytes (#14).
+    pub async fn takedown(&self, sha1: &str) -> Result<(), ApiError> {
+        if !is_hex(sha1) || sha1.len() != 40 {
+            return Err(ApiError::BadRequest("invalid sha1".into()));
+        }
+        if let Some(path) = cache_jar_path_in(&self.root, sha1) {
+            let _ = fs::remove_file(&path).await; // best-effort: may not be cached
+        }
+        self.record_removed(sha1).await
+    }
+
+    /// Lift a takedown: remove the sha1 from the removed list so the jar may be
+    /// cached and served again. The bytes are not restored -- re-add to recache.
+    pub async fn restore(&self, sha1: &str) -> Result<(), ApiError> {
+        if !is_hex(sha1) || sha1.len() != 40 {
+            return Err(ApiError::BadRequest("invalid sha1".into()));
+        }
+        let _guard = self.removed_lock.lock().await;
+        let path = self.root.join("removed.txt");
+        let content = match fs::read_to_string(&path).await {
+            Ok(c) => c,
+            Err(_) => return Ok(()),
+        };
+        let mut out: String = content
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && *l != sha1)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        atomic_write(&path, out.as_bytes()).await
     }
 
     /// Stage a member upload pending moderation, content-addressed by sha1 under

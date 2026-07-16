@@ -16,8 +16,11 @@ export type Section =
   | 'audit'
   | 'profile'
   | 'mypacks';
-// The operator's tabs. `mypacks` is member-only (admins author via `packs`), so
-// it is not here; KNOWN_SECTIONS is the superset used to validate a stored tab.
+// The operator's official tabs. `mypacks` is not among them because it is a
+// personal surface, not an operator one -- but every account has it, admins
+// included (their own community packs under `u/<uid>/`, distinct from the
+// official packs they author via `packs`), so `visibleSections` appends it for
+// operators too. KNOWN_SECTIONS is the superset used to validate a stored tab.
 export const SECTIONS: Section[] = [
   'browse',
   'overview',
@@ -41,7 +44,7 @@ export const MEMBER_SECTIONS: Section[] = ['browse', 'mods', 'graph', 'mypacks',
 const KNOWN_SECTIONS: Section[] = [...SECTIONS, 'mypacks'];
 export function visibleSections(me: { role: string } | null): Section[] {
   if (!me) return GUEST_SECTIONS;
-  if (isOperator(me.role)) return SECTIONS;
+  if (isOperator(me.role)) return [...SECTIONS, 'mypacks'];
   return MEMBER_SECTIONS;
 }
 

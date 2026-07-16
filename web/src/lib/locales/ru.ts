@@ -62,8 +62,8 @@ export const ru: Dict = {
   'packs.flag.featured': 'рекомендуемый',
   'packs.flag.authoring': 'редактируемый',
   'packs.col.state': 'Статус',
-  'packs.vis.draft': 'черновик',
-  'packs.vis.unlisted': 'скрытый',
+  'packs.vis.draft': 'черновик (приватный)',
+  'packs.vis.unlisted': 'скрытый (по ссылке)',
   'packs.vis.published': 'опубликован',
   'packs.tier.community': 'сообщество',
   'packs.publish': 'Опубликовать',
@@ -228,7 +228,12 @@ export const ru: Dict = {
   'cache.empty': 'Кэш пуст. Перетащи jar, чтобы наполнить.',
   'cache.noMatch': 'Ничего не найдено.',
   'cache.deleteTitle': 'Удалить jar из кэша',
-  'cache.deleteMsg': 'Удалить {name}? Он попадёт в список takedown и не сможет быть загружен повторно.',
+  'cache.deleteMsg': 'Удалить {name}? Это лишь освобождает байты -- jar можно добавить снова позже.',
+  'cache.takedownTitle': 'Заблокировать jar',
+  'cache.takedownMsg':
+    'Заблокировать {name}? Он не будет отдаваться и не сможет быть добавлен снова, пока не разблокируешь.',
+  'cache.restore': 'Разблокировать',
+  'cache.restoreHint': 'Снять блокировку, чтобы jar можно было добавить снова',
   'cache.removedTitle': 'Удалённые (takedown)',
   'cache.removedSub': '{count} sha1 заблокировано от повторной загрузки',
 
@@ -451,6 +456,8 @@ export const ru: Dict = {
   'mm.overviewModsSub': '{n} без identity',
   'mm.verified': 'Modrinth',
   'mm.selfhost': 'самохост',
+  'mm.takedown': 'Заблокировать',
+  'mm.takedownHint': 'Заблокировать jar (копирайт / политика); обратимо из списка удалённых',
   'mm.repack': 'репак?',
   'mm.repackHint':
     'самохостный jar под модом, у которого есть и Modrinth-версия -- вероятно, репак',

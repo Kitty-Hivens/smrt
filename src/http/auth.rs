@@ -361,6 +361,13 @@ async fn resolve_identity(state: &AppState, headers: &HeaderMap) -> Option<Ident
         .flatten()
 }
 
+/// Who is calling, if anyone -- for a public handler that stays open to guests
+/// but tightens for a signed-in owner (e.g. a private draft pack, #17). `None`
+/// is a guest, not an error.
+pub(crate) async fn optional_identity(state: &AppState, headers: &HeaderMap) -> Option<Identity> {
+    resolve_identity(state, headers).await
+}
+
 // -- helpers ----------------------------------------------------------------
 
 fn break_glass(role: Role) -> Identity {

@@ -88,18 +88,23 @@ fn operator_routes(state: AppState) -> Router {
         .route("/v1/registry/files/:sha1/repack-diff", get(get_repack_diff))
         // cosmetic: canonical name / slug, nothing the resolver reads
         .route("/v1/registry/mod-meta/:mod_id", put(put_mod_rename))
+        // Naming a cached jar (its mod, version, channel, loaders/mc). It does
+        // feed the derivation, but it is the operator's routine job of putting a
+        // name to a jar the mirror already holds, not a surgical override of it,
+        // so it sits at admin rather than the debug rung (#13).
+        .route("/v1/registry/files/:sha1/identity", put(put_file_identity))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
         .with_state(state)
 }
 
-/// Compat-affecting authoring (#39): asserting a jar's loaders/mc/version, a
-/// release's version number, or a dependency/conflict fact. These move the
-/// derivation graph the eligibility + resolver ride on, so they sit above the
-/// admin token on the debug rung and are audited.
+/// Compat-affecting authoring (#39): rewriting a release's version number,
+/// merging two mods into one identity, or a dependency/conflict fact. These
+/// surgically move the derivation graph the eligibility + resolver ride on --
+/// unlike naming a jar (now admin, #13) -- so they sit above the admin token on
+/// the debug rung and are audited.
 fn debug_routes(state: AppState) -> Router {
     Router::new()
         .route("/v1/registry/conflicts", post(post_conflict))
-        .route("/v1/registry/files/:sha1/identity", put(put_file_identity))
         .route("/v1/registry/releases/:release_id", put(put_release_edit))
         .route("/v1/registry/merge", post(post_merge))
         .route("/v1/registry/relations", post(post_relation))

@@ -39,6 +39,10 @@ fn operator_router(state: AppState) -> Router {
         .route("/v1/authoring/summaries", get(list_all_pack_summaries))
         .route("/v1/featured", post(save_featured))
         .route("/v1/cache/removed", get(list_removed))
+        .route(
+            "/v1/cache/removed/:sha1",
+            post(takedown_jar).delete(restore_jar),
+        )
         .route("/v1/cache/usage", get(list_cache_usage))
         .route("/v1/cache/github", post(ingest_github))
         .route("/v1/users", get(list_users))
@@ -280,6 +284,33 @@ async fn delete_cache_jar(
     state.storage.delete_cache_jar(sha1).await?;
     state.harvest.poke(); // artifact gone -> refresh the registry
     audit(&state, &identity, "cache.delete", Some(sha1), None).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Block a jar (copyright / policy): drop any cached copy and tombstone the sha1
+/// so it can neither be served nor re-ingested. Deliberate and reversible via
+/// `restore`; distinct from delete, which only frees bytes (#14).
+async fn takedown_jar(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(sha1): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    state.storage.takedown(&sha1).await?;
+    state.harvest.poke();
+    audit(&state, &identity, "cache.takedown", Some(&sha1), None).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Lift a takedown: remove the sha1 from the removed list. The bytes are not
+/// restored -- re-add the jar to recache it.
+async fn restore_jar(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(sha1): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    state.storage.restore(&sha1).await?;
+    state.harvest.poke();
+    audit(&state, &identity, "cache.restore", Some(&sha1), None).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

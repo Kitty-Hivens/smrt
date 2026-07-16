@@ -6,7 +6,7 @@ use crate::registry::queries;
 use crate::state::AppState;
 use axum::body::Body;
 use axum::extract::{Path, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -205,22 +205,29 @@ pub(crate) async fn list_community(
 )]
 pub(crate) async fn get_pack_summary(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(pack_id): Path<String>,
 ) -> Result<Json<PackSummary>, ApiError> {
-    Ok(Json(state.storage.load_pack_summary(&pack_id).await?))
+    let summary = state.storage.load_pack_summary(&pack_id).await?;
+    gate_summary(&state, &headers, &pack_id, &summary).await?;
+    Ok(Json(summary))
 }
 
 async fn get_latest_manifest(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(pack_id): Path<String>,
 ) -> Result<Json<PackManifest>, ApiError> {
+    gate_pack_read(&state, &headers, &pack_id).await?;
     Ok(Json(state.storage.load_latest_manifest(&pack_id).await?))
 }
 
 async fn get_manifest_version(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((pack_id, version)): Path<(String, String)>,
 ) -> Result<Json<PackManifest>, ApiError> {
+    gate_pack_read(&state, &headers, &pack_id).await?;
     Ok(Json(
         state
             .storage
@@ -231,8 +238,10 @@ async fn get_manifest_version(
 
 async fn list_manifest_versions(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(pack_id): Path<String>,
 ) -> Result<Json<ManifestVersionsListing>, ApiError> {
+    gate_pack_read(&state, &headers, &pack_id).await?;
     let versions = state.storage.list_manifest_versions(&pack_id).await?;
     Ok(Json(ManifestVersionsListing {
         schema_version: SCHEMA_VERSION,
@@ -243,13 +252,43 @@ async fn list_manifest_versions(
 
 async fn get_pack_static(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((pack_id, rel_path)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
+    gate_pack_read(&state, &headers, &pack_id).await?;
     let path = state.storage.pack_static_path(&pack_id, &rel_path)?;
     if tokio::fs::metadata(&path).await.is_err() {
         return Err(ApiError::NotFound);
     }
     serve_file(&path, content_type_for(&rel_path)).await
+}
+
+/// Draft packs are private -- readable only by their owner (or an admin), so a
+/// work-in-progress pack does not leak by direct id. Unlisted and published stay
+/// readable by id (unlisted is off-catalog but link-shareable). A denied draft
+/// answers `NotFound`, not 403, so a private pack's existence stays unconfirmed.
+async fn gate_summary(
+    state: &AppState,
+    headers: &HeaderMap,
+    pack_id: &str,
+    summary: &PackSummary,
+) -> Result<(), ApiError> {
+    if summary.visibility != Visibility::Draft {
+        return Ok(());
+    }
+    match super::auth::optional_identity(state, headers).await {
+        Some(id) if super::auth::may_author(&id, pack_id) => Ok(()),
+        _ => Err(ApiError::NotFound),
+    }
+}
+
+async fn gate_pack_read(
+    state: &AppState,
+    headers: &HeaderMap,
+    pack_id: &str,
+) -> Result<(), ApiError> {
+    let summary = state.storage.load_pack_summary(pack_id).await?;
+    gate_summary(state, headers, pack_id, &summary).await
 }
 
 // ── /v1/servers ────────────────────────────────────────────────────────────

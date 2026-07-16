@@ -18,10 +18,11 @@
 
   // A member reads the registry -- search, the faceted list, a mod's releases and
   // files -- but does none of its authoring. `canOperate` (admin and up) gates the
-  // whole write surface: upload, the needs-identity bucket, the takedown list, and
-  // every per-item action. `canDebug` gates the compat-affecting subset within it
-  // (assigning/editing identity, merging, editing a release), which is debug-only
-  // on the server (#39). Both come from one identity read; the list load waits on
+  // whole write surface: upload, the needs-identity bucket, assigning/editing a
+  // jar's identity, the takedown list, and every per-item action. `canDebug`
+  // gates the narrower surgical subset within it (merging two mods, rewriting a
+  // release version), debug-only on the server (#39/#13). Both come from one
+  // identity read; the list load waits on
   // it so a member never fires an operator-only fetch that would 403.
   let canDebug = $state(false);
   let canOperate = $state(false);
@@ -267,6 +268,33 @@
     }
   }
 
+  // A deliberate policy block, not a cleanup delete: drops the bytes and
+  // tombstones the sha1 so it cannot be re-served or re-added (#14).
+  async function takedown(f: VersionRow) {
+    const name = f.filename || f.sha1.slice(0, 12);
+    const ok = await dialogs.confirm(t('cache.takedownMsg', { name }), {
+      title: t('cache.takedownTitle'),
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.takedownJar(f.sha1);
+      await load();
+      await reloadOpen();
+    } catch (x) {
+      err = fail(x);
+    }
+  }
+
+  async function restore(sha1: string) {
+    try {
+      await api.restoreJar(sha1);
+      removed = removed.filter((s) => s !== sha1);
+    } catch (x) {
+      err = fail(x);
+    }
+  }
+
   function fmtBytes(n: number): string {
     if (n < 1024) return `${n} B`;
     const u = ['KB', 'MB', 'GB'];
@@ -311,9 +339,7 @@
             <span class="mono">{u.sha1.slice(0, 16)}</span>
             <span class="faint mono">{fmtBytes(u.size_bytes)}</span>
           </div>
-          {#if canDebug}
-            <button class="primary sm" onclick={() => assign(u)}>{t('mm.assign')}</button>
-          {/if}
+          <button class="primary sm" onclick={() => assign(u)}>{t('mm.assign')}</button>
         </div>
       {/each}
     </section>
@@ -432,10 +458,9 @@
                             class:active={diffFor === f.sha1}
                             onclick={() => showDiff(f)}>{t('mm.diff')}</button>
                         {/if}
-                        {#if canDebug}
-                          <button class="link" onclick={() => editFile(f, rel, m.name)}>{t('mm.edit')}</button>
-                        {/if}
-                        <button class="link danger" onclick={() => delFile(f)}>{t('common.delete')}</button>
+                        <button class="link" onclick={() => editFile(f, rel, m.name)}>{t('mm.edit')}</button>
+                        <button class="link" onclick={() => delFile(f)}>{t('common.delete')}</button>
+                        <button class="link danger" onclick={() => takedown(f)} title={t('mm.takedownHint')}>{t('mm.takedown')}</button>
                       </div>
                     {/if}
                   </div>
@@ -484,7 +509,12 @@
     <div class="cache-head muted">{t('cache.removedSub', { count: removed.length })}</div>
     <div class="panel">
       {#each removed as sha}
-        <div class="rmrow mono faint">{sha}</div>
+        <div class="rmrow">
+          <span class="mono faint">{sha}</span>
+          <button class="link" onclick={() => restore(sha)} title={t('cache.restoreHint')}>
+            {t('cache.restore')}
+          </button>
+        </div>
       {/each}
     </div>
   {/if}
@@ -781,6 +811,10 @@
     margin-bottom: 8px;
   }
   .rmrow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
     padding: 4px var(--space-3);
     font-size: 11px;
     border-bottom: 1px solid var(--seam);

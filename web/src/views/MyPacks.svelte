@@ -8,7 +8,9 @@
 
   // A member's own packs: create a community pack and author it. The pack id is
   // u/<uid>/<name> -- the owner is encoded in the id, so the backend gates edits
-  // by namespace. Admins author via the operator Packs view instead.
+  // by namespace. Every account has this surface, admins included: a personal
+  // community pack under their own uid, separate from the official packs they
+  // author via the operator Packs view (#16).
   type Me = { uid: number; login: string; role: string };
   let { me }: { me: Me } = $props();
 
