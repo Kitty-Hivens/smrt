@@ -24,7 +24,7 @@ use crate::registry::model::{RelKind, Source};
 use crate::registry::{Registry, queries, upsert};
 use crate::storage::Storage;
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{Connection, params};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -97,6 +97,10 @@ pub struct ScanData {
     /// Forge modids learned this scan by fetching a Modrinth re-upload's jar (a
     /// mod present only via Modrinth, whose bytes are not in the local cache).
     pub modrinth_modids_learned: usize,
+    /// `project_id -> slug` for every Modrinth project named as a dependency
+    /// target, so `write_scan` can link a `modrinth:<project>` dependency to a
+    /// self-hosted provider whose forge modid matches the project slug.
+    pub dep_project_slugs: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -123,6 +127,10 @@ pub struct HarvestReport {
     /// a modid-keyed dependency (an addon requiring `ic2`) resolves to the mod the
     /// pack ships from Modrinth. Fetched once per mod, then cached as an alias.
     pub modrinth_modids_learned: usize,
+    /// Self-hosted mods linked to a Modrinth project this harvest, so a
+    /// `modrinth:<project>` dependency resolves to a provider the mirror re-hosts
+    /// under its forge modid (a project-keyed dep pointing at a self-hosted jar).
+    pub modrinth_selfhost_links: i64,
 }
 
 // mcmod.info dependency lists routinely name the platform, not a real mod.
@@ -636,6 +644,30 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         }
     }
 
+    // Link a self-hosted provider to the Modrinth project a dependency names. A
+    // `modrinth:<project>` edge (from a Modrinth mod's declared deps) resolves only
+    // against a mod carrying that project alias -- but the provider may be a jar the
+    // mirror re-hosts under its forge modid, unlinked to the project (its repackaged
+    // bytes are not on Modrinth by sha, so the hash lookup never tied them). Modrinth
+    // identity has priority: a project some mod already owns is left alone. Otherwise
+    // a mod whose modid matches the project slug is the same mod re-hosted, so attach
+    // the project alias to it and the edge resolves.
+    let mut modrinth_selfhost_links = 0i64;
+    for (dep_pid, slug) in &scan.dep_project_slugs {
+        if queries::mod_id_for_alias(conn, "modrinth", dep_pid)?.is_some() {
+            continue;
+        }
+        if let Some(mod_id) = queries::mod_id_for_selector(conn, slug)? {
+            let inserted = conn.execute(
+                "INSERT INTO mod_alias (mod_id, source, external_key)
+                 VALUES (?1, 'modrinth', ?2)
+                 ON CONFLICT(source, external_key) DO NOTHING",
+                params![mod_id, dep_pid],
+            )?;
+            modrinth_selfhost_links += inserted as i64;
+        }
+    }
+
     // drop the provisional 'unknown' releases left empty once files moved to
     // their channel / content-signature release
     upsert::prune_empty_releases(conn)?;
@@ -655,6 +687,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         modrinth_deps: modrinth_deps_written,
         declared_deps: declared_deps_written,
         modrinth_modids_learned: scan.modrinth_modids_learned,
+        modrinth_selfhost_links,
     })
 }
 
@@ -787,10 +820,21 @@ pub async fn scan(
         Some(i) => i.name.trim().is_empty() || i.authors.is_empty(),
         None => true,
     };
+    // Every Modrinth project named as a dependency target: their slugs let
+    // write_scan link a `modrinth:<project>` dependency to a self-hosted provider
+    // the mirror re-hosts under a matching forge modid. Folded into the same
+    // project batch as the enrichment lookup, so it is not a second round-trip.
+    let dep_projects: HashSet<String> = modrinth_by_sha
+        .values()
+        .flat_map(|v| &v.dependencies)
+        .filter_map(|d| d.project_id.clone())
+        .filter(|p| !p.is_empty())
+        .collect();
     let project_ids: Vec<String> = modrinth_by_sha
         .iter()
         .filter(|(sha, _)| needs_enrich(sha))
         .map(|(_, v)| v.project_id.clone())
+        .chain(dep_projects.iter().cloned())
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
@@ -801,6 +845,13 @@ pub async fn scan(
             HashMap::new()
         }
     };
+    // project_id -> slug for the dependency targets, the key write_scan matches a
+    // self-hosted modid against.
+    let dep_project_slugs: HashMap<String, String> = dep_projects
+        .iter()
+        .filter_map(|pid| projects.get(pid).map(|p| (pid.clone(), p.slug.clone())))
+        .filter(|(_, slug)| !slug.is_empty())
+        .collect();
     let team_ids: Vec<String> = projects
         .values()
         .map(|p| p.team.clone())
@@ -964,6 +1015,7 @@ pub async fn scan(
         jars,
         packs,
         modrinth_modids_learned,
+        dep_project_slugs,
     })
 }
 
@@ -1088,6 +1140,7 @@ mod tests {
                 conflicts: vec![("sha_a".into(), "sha_b".into())],
             }],
             modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
         }
     }
 
@@ -1237,6 +1290,7 @@ mod tests {
             jars: vec![ic2, addon],
             packs: vec![],
             modrinth_modids_learned: 1,
+            dep_project_slugs: Default::default(),
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
@@ -1253,6 +1307,79 @@ mod tests {
                 known.contains("wTncj5gs"),
                 "the project now carries a modid alias, so the fetch is skipped next harvest"
             );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn write_scan_links_selfhosted_provider_to_a_modrinth_dep_project() {
+        // Quark depends on AutoRegLib by its Modrinth project (NvZ9ZhwE); the mirror
+        // re-hosts AutoRegLib as a self-hosted jar under modid `autoreglib`, unlinked
+        // to that project. The scan resolved the project slug; write_scan attaches the
+        // project alias to the self-hosted mod so the modrinth:<project> dep resolves.
+        let r = Registry::open_in_memory().unwrap();
+        let scan = ScanData {
+            jars: vec![jar(
+                "sha_arl",
+                "autoreglib",
+                Some("1"),
+                vec!["forge".into()],
+            )],
+            packs: vec![],
+            modrinth_modids_learned: 0,
+            dep_project_slugs: HashMap::from([("NvZ9ZhwE".to_string(), "autoreglib".to_string())]),
+        };
+        let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        assert_eq!(rep.modrinth_selfhost_links, 1);
+        r.with_conn(|c| {
+            let by_modid = queries::mod_id_for_selector(c, "autoreglib")?.unwrap();
+            assert_eq!(
+                queries::mod_id_for_selector(c, "modrinth:NvZ9ZhwE")?,
+                Some(by_modid),
+                "the project-keyed dep now resolves to the self-hosted provider"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn selfhost_link_yields_to_an_existing_modrinth_owner() {
+        // Modrinth identity has priority: when a real Modrinth mod already owns the
+        // project, the self-hosted modid mod is not relinked to it.
+        let r = Registry::open_in_memory().unwrap();
+        let existing = r
+            .with_txn(|c| {
+                let m = upsert::upsert_mod_by_alias(c, &[("modrinth", "NvZ9ZhwE")], "T0")?;
+                upsert::upsert_mod_version(c, m, "1", &["forge"], "sha_real", 1, None, None, "T0")?;
+                Ok(m)
+            })
+            .unwrap();
+        let scan = ScanData {
+            jars: vec![jar(
+                "sha_arl",
+                "autoreglib",
+                Some("1"),
+                vec!["forge".into()],
+            )],
+            packs: vec![],
+            modrinth_modids_learned: 0,
+            dep_project_slugs: HashMap::from([("NvZ9ZhwE".to_string(), "autoreglib".to_string())]),
+        };
+        let rep = r.with_txn(|c| write_scan(c, &scan, "T1")).unwrap();
+        assert_eq!(
+            rep.modrinth_selfhost_links, 0,
+            "no self-host link is made while a Modrinth owner exists"
+        );
+        r.with_conn(|c| {
+            assert_eq!(
+                queries::mod_id_for_selector(c, "modrinth:NvZ9ZhwE")?,
+                Some(existing),
+                "the project still resolves to the Modrinth mod"
+            );
+            let arl = queries::mod_id_for_selector(c, "autoreglib")?.unwrap();
+            assert_ne!(arl, existing, "the self-hosted mod stays a distinct row");
             Ok(())
         })
         .unwrap();
@@ -1380,6 +1507,7 @@ mod tests {
             ],
             packs: vec![],
             modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
         };
 
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
@@ -1475,6 +1603,7 @@ mod tests {
             ],
             packs: vec![],
             modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.inferred_requires, 0, "ambiguous prefix -> no edge");
@@ -1509,6 +1638,7 @@ mod tests {
             ],
             packs: vec![],
             modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
         };
 
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
@@ -1585,6 +1715,7 @@ mod tests {
             )],
             packs: vec![],
             modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.declared_deps, 3);
@@ -1644,6 +1775,7 @@ mod tests {
             ],
             packs: vec![],
             modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.modrinth_deps, 0);
@@ -1739,6 +1871,7 @@ mod tests {
             ],
             packs: vec![],
             modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.mods, 1, "same modid -> one identity");
@@ -1768,6 +1901,7 @@ mod tests {
             ],
             packs: vec![],
             modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
@@ -1787,6 +1921,7 @@ mod tests {
             jars: vec![jar("sha_multi", "multi", Some("1"), vec!["forge".into()])],
             packs: vec![],
             modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
         };
         r.with_txn(|c| write_scan(c, &scan2, "T1")).unwrap();
         r.with_conn(|c| {
@@ -1811,6 +1946,7 @@ mod tests {
             )],
             packs: vec![],
             modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_txn(|c| {
@@ -1827,6 +1963,7 @@ mod tests {
             jars: vec![jar("sha_p", "pmod", Some("1"), vec!["forge".into()])],
             packs: vec![],
             modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
         };
         r.with_txn(|c| write_scan(c, &scan2, "T1")).unwrap();
         r.with_conn(|c| {
@@ -1855,6 +1992,7 @@ mod tests {
             jars: vec![a],
             packs: vec![],
             modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
