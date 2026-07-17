@@ -24,7 +24,7 @@ use crate::registry::model::{RelKind, Source};
 use crate::registry::{Registry, queries, upsert};
 use crate::storage::Storage;
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -641,6 +641,45 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                     now,
                 )?;
             }
+        }
+    }
+
+    // Reconcile a mod split across identities that no single artifact bridges: a
+    // Modrinth-identified mod whose slug equals another mod's forge modid is the same
+    // mod (AutoRegLib re-hosted under modid `autoreglib`, its Modrinth twin carrying
+    // slug `autoreglib`, on different jars). Fold the pair so a `modrinth:<project>`
+    // dependency and a modid placement resolve to one mod. Which row survives does
+    // not matter -- both identities land on it either way. DB-only, no egress.
+    let split_pairs: Vec<(i64, i64)> = {
+        let mut stmt = conn.prepare(
+            "SELECT a.mod_id, b.id
+             FROM mods b
+             JOIN mod_alias mr ON mr.mod_id = b.id AND mr.source = 'modrinth'
+             JOIN mod_alias a ON a.source = 'modid' AND a.external_key = b.slug COLLATE NOCASE
+             WHERE b.slug IS NOT NULL AND b.slug != '' AND a.mod_id != b.id",
+        )?;
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut consumed: HashSet<i64> = HashSet::new();
+    for (modid_mod, project_mod) in split_pairs {
+        if consumed.contains(&modid_mod) || consumed.contains(&project_mod) {
+            continue;
+        }
+        let survivor = upsert::merge_collided_mods(conn, &[modid_mod, project_mod], now)?;
+        let loser = if survivor == modid_mod {
+            project_mod
+        } else {
+            modid_mod
+        };
+        let folded = conn
+            .query_row("SELECT 1 FROM mods WHERE id = ?1", params![loser], |_| {
+                Ok(())
+            })
+            .optional()?
+            .is_none();
+        if folded {
+            consumed.insert(loser);
         }
     }
 
@@ -1363,6 +1402,39 @@ mod tests {
                 Some(by_modid),
                 "the project-keyed dep now resolves to the self-hosted provider"
             );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn write_scan_reconciles_a_slug_matched_identity_split() {
+        // AutoRegLib is two rows no single artifact bridges: a cache jar under modid
+        // `autoreglib`, and a Modrinth twin (a different jar) carrying project
+        // NvZ9ZhwE plus slug `autoreglib`. The slug==modid match must fold them so a
+        // modrinth:<project> dependency and a modid placement resolve to one mod.
+        let r = Registry::open_in_memory().unwrap();
+        let cache = jar("sha_cache", "autoreglib", Some("1.6"), vec!["forge".into()]);
+        let mut twin = jar("sha_twin", "unused", Some("1.6"), vec!["forge".into()]);
+        twin.modid = None;
+        twin.project_id = Some("NvZ9ZhwE".into());
+        twin.slug = Some("autoreglib".into());
+        let scan = ScanData {
+            jars: vec![cache, twin],
+            packs: vec![],
+            modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
+        };
+        r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        r.with_conn(|c| {
+            let by_modid = queries::mod_id_for_selector(c, "autoreglib")?.unwrap();
+            assert_eq!(
+                queries::mod_id_for_selector(c, "modrinth:NvZ9ZhwE")?,
+                Some(by_modid),
+                "the slug-matched split folded to one mod"
+            );
+            let mods: i64 = c.query_row("SELECT count(*) FROM mods", [], |r| r.get(0))?;
+            assert_eq!(mods, 1);
             Ok(())
         })
         .unwrap();

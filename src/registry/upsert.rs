@@ -71,7 +71,7 @@ pub fn upsert_mod_by_alias(conn: &Connection, aliases: &[(&str, &str)], now: &st
 /// survivor is a precious row when one is present, and when two or more precious
 /// rows collide the split is left for the operator to resolve rather than guessed.
 /// Otherwise the lowest id survives, for a stable outcome across harvests.
-fn merge_collided_mods(conn: &Connection, matched: &[i64], now: &str) -> Result<i64> {
+pub(crate) fn merge_collided_mods(conn: &Connection, matched: &[i64], now: &str) -> Result<i64> {
     let is_precious = |id: i64| -> Result<bool> {
         let source: String =
             conn.query_row("SELECT source FROM mods WHERE id = ?1", params![id], |r| {
