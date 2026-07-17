@@ -9,7 +9,7 @@
 
 use super::{ApiError, audit};
 use crate::accounts::Identity;
-use crate::authoring::harvest::{self, HarvestReport};
+use crate::authoring::HarvestStatus;
 use crate::authoring::{JarDiff, diff_jars, reconstruct_config};
 use crate::domain::DeclaredAsset;
 use crate::registry::model::{
@@ -56,6 +56,7 @@ fn member_routes(state: AppState) -> Router {
 fn operator_routes(state: AppState) -> Router {
     Router::new()
         .route("/v1/registry/harvest", post(post_harvest))
+        .route("/v1/registry/harvest/status", get(get_harvest_status))
         .route("/v1/registry/stats", get(get_stats))
         .route("/v1/registry/orphans", get(get_orphans))
         .route("/v1/registry/eligible", get(get_eligible))
@@ -152,15 +153,20 @@ async fn cache_shas(state: &AppState) -> Result<std::collections::HashSet<String
     Ok(inv.into_iter().map(|e| e.sha1).collect())
 }
 
-/// Force an immediate harvest and return the report. Runs the harvest directly
-/// (not via the background scheduler) so the operator gets the counts back
-/// synchronously. Overlap with a concurrent auto-harvest is safe: the writes are
-/// idempotent and serialized by the registry's connection mutex, so the two just
-/// converge on the same state.
-async fn post_harvest(State(state): State<AppState>) -> Result<Json<HarvestReport>, ApiError> {
-    let report =
-        harvest::run_harvest(&state.storage, &state.modrinth, state.registry.clone()).await?;
-    Ok(Json(report))
+/// Force an immediate harvest and return at once with the harvester's status. The
+/// run happens on the background worker (skipping its debounce), not inline, so a
+/// harvest that outlasts the gateway timeout no longer 504s the operator's request
+/// -- the result is read from [`get_harvest_status`]. Coalesced with a concurrent
+/// auto-harvest: a force during a run leaves a wake for one follow-up pass.
+async fn post_harvest(State(state): State<AppState>) -> (StatusCode, Json<HarvestStatus>) {
+    state.harvest.force();
+    (StatusCode::ACCEPTED, Json(state.harvest.status()))
+}
+
+/// The background harvester's current state: whether a run is in flight, and the
+/// report or error of the last completed one. Polled after a forced harvest.
+async fn get_harvest_status(State(state): State<AppState>) -> Json<HarvestStatus> {
+    Json(state.harvest.status())
 }
 
 async fn get_stats(State(state): State<AppState>) -> Result<Json<RegistryStats>, ApiError> {

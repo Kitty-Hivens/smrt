@@ -6,10 +6,15 @@
 //! `/registry/harvest` endpoint stays as an immediate force-refresh.
 
 use super::harvest;
+use super::harvest::HarvestReport;
 use super::modrinth::Modrinth;
 use crate::registry::Registry;
+use crate::registry::upsert::now_rfc3339;
 use crate::storage::Storage;
+use serde::Serialize;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::Notify;
 
@@ -18,11 +23,29 @@ use tokio::sync::Notify;
 /// into a single run instead of one harvest per write.
 const DEBOUNCE: Duration = Duration::from_secs(45);
 
+/// Observable state of the background harvester, served by the status endpoint so
+/// an operator who kicked a forced harvest can watch it without holding the
+/// request open (a full harvest can outlast a gateway timeout).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct HarvestStatus {
+    /// A harvest is executing right now.
+    pub running: bool,
+    /// The report of the most recent completed harvest, if any.
+    pub last_report: Option<HarvestReport>,
+    /// The error of the most recent failed harvest, cleared on the next success.
+    pub last_error: Option<String>,
+    /// When the most recent harvest finished (RFC3339), success or failure.
+    pub last_finished: Option<String>,
+}
+
 pub struct HarvestScheduler {
     storage: Arc<Storage>,
     modrinth: Arc<Modrinth>,
     registry: Arc<Registry>,
     wake: Notify,
+    /// Set by [`force`] so the worker skips the debounce and harvests at once.
+    force_now: AtomicBool,
+    status: Mutex<HarvestStatus>,
 }
 
 impl HarvestScheduler {
@@ -36,6 +59,8 @@ impl HarvestScheduler {
             modrinth,
             registry,
             wake: Notify::new(),
+            force_now: AtomicBool::new(false),
+            status: Mutex::new(HarvestStatus::default()),
         })
     }
 
@@ -46,6 +71,20 @@ impl HarvestScheduler {
         self.wake.notify_one();
     }
 
+    /// Request an immediate harvest, skipping the debounce window -- the operator's
+    /// manual force-refresh. Non-blocking: the run happens on the worker and its
+    /// result lands in [`status`], so the caller returns at once instead of holding
+    /// the request open for the whole harvest.
+    pub fn force(&self) {
+        self.force_now.store(true, Ordering::SeqCst);
+        self.wake.notify_one();
+    }
+
+    /// A snapshot of the harvester's state for the status endpoint.
+    pub fn status(&self) -> HarvestStatus {
+        self.status.lock().expect("harvest status mutex").clone()
+    }
+
     /// Spawn the worker loop and request an initial harvest so the registry is
     /// built/refreshed shortly after startup. Call once, after the runtime is up.
     pub fn spawn(self: Arc<Self>) {
@@ -53,14 +92,23 @@ impl HarvestScheduler {
         tokio::spawn(async move {
             loop {
                 // wait for a poke, then settle: each further poke restarts the
-                // window, so a whole burst coalesces into one run
+                // window, so a whole burst coalesces into one run. A forced poke
+                // (operator refresh) skips the settle entirely.
                 self.wake.notified().await;
-                loop {
-                    tokio::select! {
-                        _ = self.wake.notified() => continue,
-                        _ = tokio::time::sleep(DEBOUNCE) => break,
+                if !self.force_now.swap(false, Ordering::SeqCst) {
+                    loop {
+                        tokio::select! {
+                            _ = self.wake.notified() => {
+                                if self.force_now.swap(false, Ordering::SeqCst) {
+                                    break;
+                                }
+                                continue;
+                            }
+                            _ = tokio::time::sleep(DEBOUNCE) => break,
+                        }
                     }
                 }
+                self.status.lock().expect("harvest status mutex").running = true;
                 // pokes arriving during the run leave a wake for the next pass --
                 // those are genuinely-newer changes, worth a follow-up harvest.
                 // Run in a child task so a panic deep in harvest is isolated and
@@ -74,21 +122,35 @@ impl HarvestScheduler {
                 let run = tokio::spawn(async move {
                     harvest::run_harvest(&storage, &modrinth, registry).await
                 });
-                match run.await {
-                    Ok(Ok(rep)) => tracing::info!(
-                        jars = rep.jars_scanned,
-                        mods = rep.mods,
-                        versions = rep.mod_versions,
-                        builds = rep.builds,
-                        inferred_requires = rep.inferred_requires,
-                        inferred_optional = rep.inferred_optional,
-                        modrinth_deps = rep.modrinth_deps,
-                        declared_deps = rep.declared_deps,
-                        sides = rep.sides_derived,
-                        "auto-harvest complete"
-                    ),
-                    Ok(Err(e)) => tracing::warn!(error = %e, "auto-harvest failed"),
-                    Err(join) => tracing::error!(error = %join, "auto-harvest task crashed"),
+                let result = run.await;
+                let mut st = self.status.lock().expect("harvest status mutex");
+                st.running = false;
+                st.last_finished = Some(now_rfc3339());
+                match result {
+                    Ok(Ok(rep)) => {
+                        tracing::info!(
+                            jars = rep.jars_scanned,
+                            mods = rep.mods,
+                            versions = rep.mod_versions,
+                            builds = rep.builds,
+                            inferred_requires = rep.inferred_requires,
+                            inferred_optional = rep.inferred_optional,
+                            modrinth_deps = rep.modrinth_deps,
+                            declared_deps = rep.declared_deps,
+                            sides = rep.sides_derived,
+                            "auto-harvest complete"
+                        );
+                        st.last_error = None;
+                        st.last_report = Some(rep);
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!(error = %e, "auto-harvest failed");
+                        st.last_error = Some(e.to_string());
+                    }
+                    Err(join) => {
+                        tracing::error!(error = %join, "auto-harvest task crashed");
+                        st.last_error = Some(format!("harvest task crashed: {join}"));
+                    }
                 }
             }
         });
