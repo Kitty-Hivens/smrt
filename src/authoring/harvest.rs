@@ -346,7 +346,9 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
 
     // The derived layers are purely rebuildable: wipe the package index and the
     // inferred + Modrinth edges up front, then re-derive from this scan. jar-meta
-    // and authored/curator relations are a different source and untouched.
+    // edges are cleared per artifact as each is re-derived below (so a jar no
+    // longer cached keeps its edges); authored/curator relations are a different
+    // source and untouched.
     conn.execute("DELETE FROM mod_package", [])?;
     conn.execute(
         "DELETE FROM relation WHERE source IN ('inferred', 'modrinth')",
@@ -415,6 +417,17 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         // never want a Modrinth mod to end up with zero edges just because its
         // Modrinth page is bare.
         let is_modrinth = jar.project_id.is_some() && !jar.modrinth_deps.is_empty();
+
+        // Re-derive this artifact's jar-meta edges from scratch: drop the ones a
+        // previous harvest wrote -- possibly under an older, buggier dependency
+        // parse -- before writing the current ones, so a stale malformed target
+        // (a comma-joined list, a human-readable phrase) does not linger beside the
+        // clean one (#10). Scoped to this artifact, so jar-meta edges of jars no
+        // longer in the cache are left alone.
+        conn.execute(
+            "DELETE FROM relation WHERE from_mod_version_id = ?1 AND source = 'jar-meta'",
+            [mod_version_id],
+        )?;
 
         // Declared deps (author-written) go in for a non-authoritative-Modrinth
         // jar: mcmod.info modids for 1.12.2, plus typed + version-ranged deps from
