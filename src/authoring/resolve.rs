@@ -35,8 +35,9 @@ use ts_rs::TS;
 pub struct ResolveReport {
     #[ts(type = "number")]
     pub declared_mods: usize,
-    /// How many declared jar mods mapped to a registry identity (the rest are in
-    /// `unresolved` and could not be reasoned about).
+    /// How many declared jar mods are identified: a registry identity, or a valid
+    /// Modrinth pin the mirror has not harvested yet (present at build). The rest
+    /// are in `unresolved`.
     #[ts(type = "number")]
     pub resolved_mods: usize,
     /// A hard dependency no present mod satisfies -- the pack would crash.
@@ -65,9 +66,10 @@ pub struct ResolveReport {
     /// actually fabric mods riding the bridge -- pull the connector and they all
     /// go at once.
     pub loader_bridged: Vec<LoaderMismatch>,
-    /// Declared jar mods with no registry identity yet (an un-harvested upload,
-    /// or a Modrinth pin the mirror has not seen). Left unjudged, listed so the
-    /// operator knows coverage was partial.
+    /// Declared jar mods with no identity and no valid pin: an un-harvested
+    /// `smrt_cache` upload the mirror has not read. Left unjudged, listed so the
+    /// operator knows coverage was partial. A Modrinth pin is not here -- it is a
+    /// valid declaration, counted in `resolved_mods`.
     pub unresolved: Vec<String>,
     /// How many version windows could not be checked because a version string was
     /// not plainly comparable (a classifier suffix, an embedded MC prefix).
@@ -201,9 +203,10 @@ struct Present {
 /// landed plus the filenames that could not be identified. A `SmrtStatic` source
 /// is not a mod (a config/asset file) and is skipped; a jar with no registry
 /// identity cannot be reasoned about and is reported unresolved.
-fn place_mods(conn: &Connection, cfg: &PackConfig) -> Result<(Vec<Present>, Vec<String>)> {
+fn place_mods(conn: &Connection, cfg: &PackConfig) -> Result<PlacedMods> {
     let mut present: Vec<Present> = Vec::new();
     let mut unresolved: Vec<String> = Vec::new();
+    let mut pinned_projects: Vec<String> = Vec::new();
     for m in &cfg.mods {
         let (mod_id, version, mod_version_id) = match &m.source {
             SourceDecl::SmrtCache { sha1 } => match queries::artifact_by_sha1(conn, sha1)? {
@@ -222,8 +225,14 @@ fn place_mods(conn: &Connection, cfg: &PackConfig) -> Result<(Vec<Present>, Vec<
                     queries::version_by_modrinth_version_id(conn, version_id)?,
                     queries::mod_version_id_for_modrinth_version_id(conn, version_id)?,
                 ),
+                // A Modrinth pin the mirror has not harvested yet is still valid: a
+                // build fetches it straight from Modrinth, so it will be present.
+                // This is a pre-build check, so it must not be reported as an
+                // unidentified mod. Record the project instead -- a
+                // `modrinth:<project>` dependency resolves against it -- and leave
+                // its own dependencies unchecked (nothing is harvested to read).
                 None => {
-                    unresolved.push(m.filename.clone());
+                    pinned_projects.push(project_id.clone());
                     continue;
                 }
             },
@@ -238,7 +247,24 @@ fn place_mods(conn: &Connection, cfg: &PackConfig) -> Result<(Vec<Present>, Vec<
             mod_version_id,
         });
     }
-    Ok((present, unresolved))
+    Ok(PlacedMods {
+        present,
+        unresolved,
+        pinned_projects,
+    })
+}
+
+/// The outcome of placing a pack's declared mods on the registry graph.
+struct PlacedMods {
+    /// Mods the registry has an identity for -- reasoned about fully.
+    present: Vec<Present>,
+    /// Declared mods with no identity and no valid pin: an un-harvested `smrt_cache`
+    /// upload. Listed, not judged.
+    unresolved: Vec<String>,
+    /// Modrinth project ids of declared Modrinth mods the mirror has not harvested.
+    /// Valid pins (present at build); a `modrinth:<project>` dependency they cover
+    /// is satisfied even though their own edges cannot be walked.
+    pinned_projects: Vec<String>,
 }
 
 /// The relation graph of one pack: its own mods, wired by the relations the exact
@@ -255,7 +281,7 @@ fn place_mods(conn: &Connection, cfg: &PackConfig) -> Result<(Vec<Present>, Vec<
 /// not: a mod with no relations is still part of the pack, and this is a picture of
 /// the pack's composition rather than of the relation web.
 pub fn pack_graph(conn: &Connection, cfg: &PackConfig) -> Result<GraphData> {
-    let (present, _unresolved) = place_mods(conn, cfg)?;
+    let present = place_mods(conn, cfg)?.present;
     let in_pack: HashSet<i64> = present.iter().map(|p| p.mod_id).collect();
 
     let mut nodes = Vec::with_capacity(present.len());
@@ -285,7 +311,14 @@ pub fn pack_graph(conn: &Connection, cfg: &PackConfig) -> Result<GraphData> {
 /// Resolve `cfg` against the registry graph reachable through `conn`.
 pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport> {
     // 1. Place each declared jar mod on the graph.
-    let (present, mut unresolved) = place_mods(conn, cfg)?;
+    let PlacedMods {
+        present,
+        mut unresolved,
+        pinned_projects,
+    } = place_mods(conn, cfg)?;
+    // Modrinth projects the pack pins but the mirror has not harvested: a
+    // `modrinth:<project>` dependency they cover is satisfied (present at build).
+    let pinned: HashSet<&str> = pinned_projects.iter().map(String::as_str).collect();
 
     // first declaration of a mod_id wins the index (a pack rarely ships one mod
     // twice; if it does, the earlier row is the one findings point at)
@@ -353,6 +386,15 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
                             // mod -- the loader is always present (#10).
                             if is_loader_dep(&e.target) {
                                 continue;
+                            }
+                            // A `modrinth:<project>` the pack pins but the mirror has
+                            // not harvested is satisfied by that pin -- the build
+                            // fetches it, so it is present, not missing.
+                            if let Some(pid) = e.target.strip_prefix("modrinth:") {
+                                let pid = pid.split('@').next().unwrap_or(pid);
+                                if pinned.contains(pid) {
+                                    continue;
+                                }
                             }
                             let entry =
                                 missing
@@ -495,7 +537,9 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
 
     Ok(ResolveReport {
         declared_mods: cfg.mods.len(),
-        resolved_mods: present.len(),
+        // a Modrinth pin the mirror has not harvested is resolved too -- it is a
+        // valid declaration the build will fetch, not an unidentified mod
+        resolved_mods: present.len() + pinned_projects.len(),
         missing,
         conflicts,
         optional_conflicts,
@@ -594,6 +638,50 @@ mod tests {
             Ok(id)
         })
         .unwrap()
+    }
+
+    // A pre-build check must recognise a valid Modrinth pin: litematica depends on
+    // malilib by its Modrinth project, and the pack pins malilib from Modrinth but
+    // the mirror has not harvested it. The build fetches it, so it is present -- the
+    // dependency is satisfied and the pin is not an unidentified mod.
+    #[test]
+    fn a_modrinth_pin_satisfies_a_dependency_without_a_harvested_mod() {
+        let r = Registry::open_in_memory().unwrap();
+        let lite = add_mod(&r, "litematica", "1.0", "sha_lite");
+        relate(
+            &r,
+            lite,
+            "modrinth:malilib_proj",
+            None,
+            RelKind::Requires,
+            crate::registry::model::Source::Modrinth,
+        );
+        let cfg = config(vec![
+            declared("litematica.jar", true, cache("sha_lite")),
+            declared(
+                "malilib.jar",
+                false,
+                SourceDecl::Modrinth {
+                    project_id: "malilib_proj".into(),
+                    version_id: "v1".into(),
+                },
+            ),
+        ]);
+        let rep = r.with_conn(|c| resolve_pack(c, &cfg)).unwrap();
+        assert!(
+            rep.missing.is_empty(),
+            "the pin satisfies the modrinth dependency: {:?}",
+            rep.missing
+        );
+        assert!(
+            rep.unresolved.is_empty(),
+            "a valid Modrinth pin is not unresolved: {:?}",
+            rep.unresolved
+        );
+        assert_eq!(
+            rep.resolved_mods, 2,
+            "the harvested mod and the pin both count as resolved"
+        );
     }
 
     // #50: a fabric jar in a forge pack will not load, and nothing in the pack says

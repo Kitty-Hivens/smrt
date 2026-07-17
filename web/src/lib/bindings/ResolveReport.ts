@@ -13,8 +13,9 @@ import type { VersionIssue } from "./VersionIssue";
  */
 export type ResolveReport = { declared_mods: number, 
 /**
- * How many declared jar mods mapped to a registry identity (the rest are in
- * `unresolved` and could not be reasoned about).
+ * How many declared jar mods are identified: a registry identity, or a valid
+ * Modrinth pin the mirror has not harvested yet (present at build). The rest
+ * are in `unresolved`.
  */
 resolved_mods: number, 
 /**
@@ -60,9 +61,10 @@ loader_mismatch: Array<LoaderMismatch>,
  */
 loader_bridged: Array<LoaderMismatch>, 
 /**
- * Declared jar mods with no registry identity yet (an un-harvested upload,
- * or a Modrinth pin the mirror has not seen). Left unjudged, listed so the
- * operator knows coverage was partial.
+ * Declared jar mods with no identity and no valid pin: an un-harvested
+ * `smrt_cache` upload the mirror has not read. Left unjudged, listed so the
+ * operator knows coverage was partial. A Modrinth pin is not here -- it is a
+ * valid declaration, counted in `resolved_mods`.
  */
 unresolved: Array<string>, 
 /**
