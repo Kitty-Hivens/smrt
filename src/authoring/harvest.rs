@@ -136,6 +136,9 @@ pub struct HarvestReport {
     /// `modrinth:<project>` dependency resolves to a provider the mirror re-hosts
     /// under its forge modid (a project-keyed dep pointing at a self-hosted jar).
     pub modrinth_selfhost_links: i64,
+    /// Identity splits folded this harvest by matching a Modrinth mod's slug to
+    /// another mod's forge modid (the two-jar re-upload case no artifact bridges).
+    pub identities_reconciled: i64,
 }
 
 // mcmod.info dependency lists routinely name the platform, not a real mod.
@@ -667,19 +670,20 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
     // slug `autoreglib`, on different jars). Fold the pair so a `modrinth:<project>`
     // dependency and a modid placement resolve to one mod. Which row survives does
     // not matter -- both identities land on it either way. DB-only, no egress.
-    let split_pairs: Vec<(i64, i64)> = {
+    let split_pairs: Vec<(i64, i64, String)> = {
         let mut stmt = conn.prepare(
-            "SELECT a.mod_id, b.id
+            "SELECT a.mod_id, b.id, b.slug
              FROM mods b
              JOIN mod_alias mr ON mr.mod_id = b.id AND mr.source = 'modrinth'
              JOIN mod_alias a ON a.source = 'modid' AND a.external_key = b.slug COLLATE NOCASE
              WHERE b.slug IS NOT NULL AND b.slug != '' AND a.mod_id != b.id",
         )?;
-        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
     let mut consumed: HashSet<i64> = HashSet::new();
-    for (modid_mod, project_mod) in split_pairs {
+    let mut identities_reconciled = 0i64;
+    for (modid_mod, project_mod, slug) in split_pairs {
         if consumed.contains(&modid_mod) || consumed.contains(&project_mod) {
             continue;
         }
@@ -697,6 +701,17 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
             .is_none();
         if folded {
             consumed.insert(loser);
+            identities_reconciled += 1;
+            // audit trail: a slug==modid fold is a heuristic bridge, so name the
+            // rows folded and the slug that matched, in case a coincidental match
+            // ever unions two genuinely distinct mods.
+            tracing::info!(
+                slug = %slug,
+                modid_mod,
+                project_mod,
+                survivor,
+                "reconciled a slug-matched identity split"
+            );
         }
     }
 
@@ -744,6 +759,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         declared_deps: declared_deps_written,
         modrinth_modids_learned: scan.modrinth_modids_learned,
         modrinth_selfhost_links,
+        identities_reconciled,
     })
 }
 
