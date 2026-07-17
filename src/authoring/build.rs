@@ -289,6 +289,7 @@ mod tests {
             default_enabled: true,
             source: Source::SmrtCache { url: "u".into() },
             display: None,
+            slug: None,
         }
     }
 

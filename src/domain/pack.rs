@@ -215,6 +215,12 @@ pub struct DeclaredMod {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub note: Option<String>,
+    /// Curator-assigned stable identity, carried into the emitted ModEntry so the
+    /// launcher can key an optional mod's toggle by it across version bumps (ADR
+    /// 0002). Optional; a Modrinth mod already has a stable key in its project id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub slug: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -361,6 +361,7 @@ mod tests {
                 source: SourceDecl::SmrtCache { sha1: sha1.into() },
                 display: None,
                 note: None,
+                slug: None,
             }],
             assets: vec![],
             pack_meta: Default::default(),

@@ -110,6 +110,7 @@ pub(super) async fn resolve_mod(
         default_enabled: decl.default_enabled,
         source,
         display: decl.display.clone(),
+        slug: decl.slug.clone(),
     })
 }
 

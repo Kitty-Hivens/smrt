@@ -764,7 +764,10 @@
                 </div>
                 <label class="ck" title={t('pe.reqHint')}><input type="checkbox" bind:checked={m.required} /> {t('pe.req')}</label>
                 <label class="ck" title={t('pe.defHint')}><input type="checkbox" bind:checked={m.default_enabled} /> {t('pe.def')}</label>
-                <input class="note" bind:value={m.note} placeholder={t('pe.note')} />
+                <div class="meta">
+                  <input class="note" bind:value={m.note} placeholder={t('pe.note')} />
+                  <input class="slug mono" bind:value={m.slug} placeholder={t('pe.slug')} title={t('pe.slugHint')} />
+                </div>
                 <button class="danger sm del" onclick={() => removeMod(i)} aria-label={t('common.delete')}>x</button>
               </div>
             {/each}
@@ -1003,6 +1006,20 @@
     padding: 5px 7px;
     font-size: 12px;
   }
+  /* note + curator slug share the 7th grid column, stacked; slug is the
+     stable optional-toggle key for smrt_cache mods (ADR 0002) */
+  .meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .meta input {
+    width: 100%;
+  }
+  .meta .slug {
+    opacity: 0.85;
+  }
   /* the source-type Select wrapper occupies the grid's 3rd column; the trigger
      (full) fills it, and min-width:0 lets it shrink in the narrow flex reflow */
   .srcsel {
@@ -1204,7 +1221,7 @@
     .modrow .ck {
       flex: 0 0 auto;
     }
-    .modrow .note {
+    .modrow .meta {
       flex: 1 1 240px;
       min-width: 120px;
       width: auto;
@@ -1232,7 +1249,7 @@
     .modrow .ck {
       flex: 0 0 auto;
     }
-    .modrow .note {
+    .modrow .meta {
       flex: 1 1 auto;
       min-width: 120px;
       width: auto;

@@ -84,6 +84,7 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
                             version_id: hit.id.clone(),
                         },
                         display: None,
+                        slug: None,
                         note: Some(format!("matched on Modrinth ({})", hit.version_number)),
                     }
                 } else {
@@ -96,6 +97,7 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
                             sha1: m.sha1.clone(),
                         },
                         display: None,
+                        slug: None,
                         note: Some(format!(
                             "TODO: Modrinth hit exists but mc/loader mismatch (mc={:?}, loaders={:?}); review for substitution",
                             hit.game_versions, hit.loaders
@@ -112,6 +114,7 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
                         sha1: m.sha1.clone(),
                     },
                     display: None,
+                    slug: None,
                     note: Some(
                         "TODO: no Modrinth match; check if a relabel of an upstream project".into(),
                     ),

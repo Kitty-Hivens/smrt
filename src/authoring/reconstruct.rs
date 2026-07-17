@@ -46,6 +46,7 @@ fn reconstruct_mod(m: &ModEntry) -> DeclaredMod {
         source: source_decl(&m.source, &m.sha1),
         display: m.display.clone(),
         note: None,
+        slug: m.slug.clone(),
     }
 }
 
@@ -132,6 +133,7 @@ mod tests {
                         name: Some("JEI".into()),
                         ..Default::default()
                     }),
+                    slug: None,
                 },
                 ModEntry {
                     filename: "open-smrt.jar".into(),
@@ -143,6 +145,7 @@ mod tests {
                         url: "https://m/v1/cache/bb/bbb.jar".into(),
                     },
                     display: None,
+                    slug: None,
                 },
             ],
             assets: vec![AssetEntry {

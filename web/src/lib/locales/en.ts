@@ -186,6 +186,9 @@ export const en = {
   'pe.reqHint': 'Required: always installed, the player cannot turn it off',
   'pe.defHint': 'Default on/off for an optional mod; ignored when required',
   'pe.note': 'note',
+  'pe.slug': 'slug',
+  'pe.slugHint':
+    'Stable id for optional mods: keeps the on/off choice across updates when the filename changes. Set it for optional cache mods; Modrinth mods already have one.',
   'pe.noMods': 'No mods yet. Drag a .jar in, or add from cache / Modrinth.',
   'pe.sortAsc': 'A-Z',
   'pe.sortDesc': 'Z-A',

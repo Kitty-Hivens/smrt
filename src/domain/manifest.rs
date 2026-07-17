@@ -69,6 +69,13 @@ pub struct ModEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub display: Option<Display>,
+    /// Curator-assigned stable identity, independent of the versioned filename. The
+    /// launcher keys an optional mod's on/off state by it so the choice survives a
+    /// version bump (ADR 0002); a Modrinth mod already has its project id, so this
+    /// carries the stable key for a self-hosted (smrt_cache) mod. Absent when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub slug: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -202,6 +209,7 @@ mod tests {
             default_enabled: true,
             source: Source::SmrtCache { url: "u".into() },
             display: None,
+            slug: None,
         };
         let s = serde_json::to_string(&m).unwrap();
         assert!(
