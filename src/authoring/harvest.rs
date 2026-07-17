@@ -697,6 +697,7 @@ pub async fn scan(
     storage: &Storage,
     modrinth: &Modrinth,
     known_modid_projects: &HashSet<String>,
+    known_project_aliases: &HashSet<String>,
 ) -> Result<ScanData> {
     let inventory = storage.list_cache_inventory().await.map_err(ae)?;
     let mut size_by_sha: HashMap<String, i64> = inventory
@@ -820,21 +821,10 @@ pub async fn scan(
         Some(i) => i.name.trim().is_empty() || i.authors.is_empty(),
         None => true,
     };
-    // Every Modrinth project named as a dependency target: their slugs let
-    // write_scan link a `modrinth:<project>` dependency to a self-hosted provider
-    // the mirror re-hosts under a matching forge modid. Folded into the same
-    // project batch as the enrichment lookup, so it is not a second round-trip.
-    let dep_projects: HashSet<String> = modrinth_by_sha
-        .values()
-        .flat_map(|v| &v.dependencies)
-        .filter_map(|d| d.project_id.clone())
-        .filter(|p| !p.is_empty())
-        .collect();
     let project_ids: Vec<String> = modrinth_by_sha
         .iter()
         .filter(|(sha, _)| needs_enrich(sha))
         .map(|(_, v)| v.project_id.clone())
-        .chain(dep_projects.iter().cloned())
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
@@ -845,13 +835,35 @@ pub async fn scan(
             HashMap::new()
         }
     };
-    // project_id -> slug for the dependency targets, the key write_scan matches a
-    // self-hosted modid against.
-    let dep_project_slugs: HashMap<String, String> = dep_projects
-        .iter()
-        .filter_map(|pid| projects.get(pid).map(|p| (pid.clone(), p.slug.clone())))
-        .filter(|(_, slug)| !slug.is_empty())
+
+    // Dependency-target projects whose slug write_scan matches against a self-hosted
+    // modid, to link a `modrinth:<project>` dependency to a provider the mirror
+    // re-hosts. Skip a project some mod already owns -- a linked or Modrinth-native
+    // one needs no lookup, so this shrinks to nothing once a mirror is warm. Kept
+    // out of the enrichment batch above so it never amplifies the team lookup.
+    let dep_projects: Vec<String> = modrinth_by_sha
+        .values()
+        .flat_map(|v| &v.dependencies)
+        .filter_map(|d| d.project_id.clone())
+        .filter(|p| !p.is_empty() && !known_project_aliases.contains(p))
+        .collect::<HashSet<_>>()
+        .into_iter()
         .collect();
+    let dep_project_slugs: HashMap<String, String> = if dep_projects.is_empty() {
+        HashMap::new()
+    } else {
+        match modrinth.projects_by_ids(&dep_projects).await {
+            Ok(m) => m
+                .into_iter()
+                .filter(|(_, p)| !p.slug.is_empty())
+                .map(|(pid, p)| (pid, p.slug))
+                .collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "modrinth dep-project slug lookup failed; self-host links skipped");
+                HashMap::new()
+            }
+        }
+    };
     let team_ids: Vec<String> = projects
         .values()
         .map(|p| p.team.clone())
@@ -1028,11 +1040,23 @@ pub async fn run_harvest(
     // Modrinth projects whose mod already carries a forge modid alias -- their jar
     // was read once before, so the scan skips re-fetching it (the one-time cost).
     let reg = registry.clone();
-    let known_modid_projects =
-        tokio::task::spawn_blocking(move || reg.with_conn(queries::modrinth_projects_with_modid))
-            .await
-            .map_err(|e| anyhow::anyhow!("known-modid query task: {e}"))??;
-    let scan = scan(storage, modrinth, &known_modid_projects).await?;
+    let (known_modid_projects, known_project_aliases) = tokio::task::spawn_blocking(move || {
+        reg.with_conn(|c| {
+            Ok((
+                queries::modrinth_projects_with_modid(c)?,
+                queries::modrinth_project_aliases(c)?,
+            ))
+        })
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("known-modid query task: {e}"))??;
+    let scan = scan(
+        storage,
+        modrinth,
+        &known_modid_projects,
+        &known_project_aliases,
+    )
+    .await?;
     let now = upsert::now_rfc3339();
     let report =
         tokio::task::spawn_blocking(move || registry.with_txn(|c| write_scan(c, &scan, &now)))

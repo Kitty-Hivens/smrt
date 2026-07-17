@@ -81,6 +81,18 @@ pub fn mod_id_for_alias(
         .optional()?)
 }
 
+/// Every Modrinth project id some mod already owns (has a `modrinth` alias for).
+/// Harvest uses this to skip the dependency-target slug lookup for a project that
+/// is already resolvable -- a linked or Modrinth-native one needs no self-host
+/// bridging -- so the lookup shrinks to nothing once a mirror is warm.
+pub fn modrinth_project_aliases(conn: &Connection) -> Result<HashSet<String>> {
+    let mut stmt = conn.prepare("SELECT external_key FROM mod_alias WHERE source = 'modrinth'")?;
+    let rows = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+    Ok(rows)
+}
+
 /// Modrinth project ids whose mod already carries a forge `modid` alias. Harvest
 /// uses this to skip re-fetching a Modrinth re-upload's jar: once the modid is
 /// learned and stored as an alias, the mod is fully identified and the (bandwidth-
