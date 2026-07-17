@@ -304,16 +304,19 @@ fn read_jar(bytes: &[u8]) -> JarReadout {
         }
     }
 
-    let loader = if has_forge {
+    let fabric_side = fabric_json
+        .as_deref()
+        .and_then(bytecode::fabric_side_from_json);
+    let bytecode = bytecode::aggregate(&classes, fabric_side);
+    // `@Mod` is a Forge-specific annotation, so a jar carrying one is Forge even
+    // when it ships no mcmod.info / mods.toml marker file (older mods often do not).
+    let loader = if has_forge || bytecode.mod_id.is_some() {
         Some("forge".to_string())
     } else if has_fabric {
         Some("fabric".to_string())
     } else {
         None
     };
-    let fabric_side = fabric_json
-        .as_deref()
-        .and_then(bytecode::fabric_side_from_json);
     let modmeta = if let Some(t) = mods_toml.as_deref() {
         std::str::from_utf8(t)
             .map(modmeta::parse_mods_toml)
@@ -325,7 +328,7 @@ fn read_jar(bytes: &[u8]) -> JarReadout {
     };
     JarReadout {
         facts: JarFacts { loader },
-        bytecode: bytecode::aggregate(&classes, fabric_side),
+        bytecode,
         modmeta,
         mcmod: mcmod_raw
             .as_deref()
@@ -824,12 +827,15 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
             let slug = project.map(|p| p.slug.clone()).filter(|s| !s.is_empty());
             JarSeed {
                 size_bytes: size_by_sha.get(&sha).copied().unwrap_or(0),
-                // identity: jar-meta modid wins; else the modern declared modid,
-                // so a self-hosted modern jar (no mcmod.info) is not identity-less.
+                // identity: jar-meta modid wins; else the modern declared modid
+                // (mods.toml/fabric.mod.json); else the class-level @Mod annotation
+                // modid, so an old Forge jar carrying neither metadata file (Chisel,
+                // HatStand) is not identity-less and stays invisible on the mirror.
                 modid: info
                     .map(|i| i.modid.clone())
                     .filter(|s| !s.is_empty())
-                    .or_else(|| mm.and_then(|m| m.modid.clone())),
+                    .or_else(|| mm.and_then(|m| m.modid.clone()))
+                    .or_else(|| bc.and_then(|b| b.mod_id.clone())),
                 version: info
                     .map(|i| i.version.clone())
                     .filter(|s| !s.is_empty())
@@ -1588,6 +1594,29 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["jei"]
         );
+    }
+
+    // Chisel/HatStand class: a Forge mod shipping no mcmod.info or mods.toml, its
+    // identity only in the class-level @Mod(modid=...). The reader must still name
+    // it and mark it forge (the annotation is Forge-specific), so it is not skipped
+    // as identity-less and stays visible on the mirror.
+    #[test]
+    fn read_jar_uses_mod_annotation_modid_and_marks_forge() {
+        use super::super::classfile::fixtures::{build_class_modid, jar};
+        let cls = build_class_modid("team/chisel/Chisel", "chisel");
+        let bytes = jar(&[("team/chisel/Chisel.class", &cls)]);
+        let r = read_jar(&bytes);
+        assert_eq!(
+            r.bytecode.mod_id.as_deref(),
+            Some("chisel"),
+            "modid comes from the @Mod annotation when no metadata file is present"
+        );
+        assert_eq!(
+            r.facts.loader.as_deref(),
+            Some("forge"),
+            "an @Mod annotation implies forge even without a marker file"
+        );
+        assert!(r.mcmod.is_none(), "no mcmod.info in the jar");
     }
 
     // #1: two distinct jars of one mod with no version metadata both become

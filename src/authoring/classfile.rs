@@ -81,6 +81,11 @@ pub struct ClassInfo {
     /// `(client_side_only, server_side_only)` from an `@Mod` annotation on this
     /// class, when present.
     pub mod_sides: Option<(bool, bool)>,
+    /// The `modid` element of an `@Mod` annotation on this class, when present and
+    /// non-empty. A Forge mod that ships no `mcmod.info` / `mods.toml` carries its
+    /// identity only here (the annotation value is a compile-time constant, so a
+    /// `modid = MOD_ID` reference is already inlined to its literal in the bytes).
+    pub mod_id: Option<String>,
 }
 
 /// Constant-pool entries, reduced to what derivation reads. `Skip` is the dead
@@ -270,8 +275,9 @@ pub fn parse_class(bytes: &[u8]) -> Option<ClassInfo> {
         skip_attributes(&mut c)?;
     }
 
-    // ── class attributes: only the annotation blocks matter (for @Mod side) ─
+    // ── class attributes: only the annotation blocks matter (for @Mod) ─
     let mut mod_sides: Option<(bool, bool)> = None;
+    let mut mod_id: Option<String> = None;
     let attr_count = c.u2()?;
     for _ in 0..attr_count {
         let name_index = c.u2()?;
@@ -281,9 +287,12 @@ pub fn parse_class(bytes: &[u8]) -> Option<ClassInfo> {
         if matches!(
             name,
             Some("RuntimeVisibleAnnotations") | Some("RuntimeInvisibleAnnotations")
-        ) && let Some(sides) = mod_sides_from_annotations(body, &cp)
+        ) && let Some(ann) = mod_annotation(body, &cp)
         {
-            mod_sides = Some(sides);
+            mod_sides = Some(ann.sides);
+            if mod_id.is_none() {
+                mod_id = ann.modid;
+            }
         }
     }
 
@@ -295,6 +304,7 @@ pub fn parse_class(bytes: &[u8]) -> Option<ClassInfo> {
         this_class,
         referenced,
         mod_sides,
+        mod_id,
     })
 }
 
@@ -403,9 +413,17 @@ fn extract_object_types(desc: &str, out: &mut BTreeSet<String>) {
     }
 }
 
-/// Scan an annotations attribute body for an `@Mod` annotation and return its
-/// `(clientSideOnly, serverSideOnly)` element values (absent element -> false).
-fn mod_sides_from_annotations(body: &[u8], cp: &[Cp]) -> Option<(bool, bool)> {
+/// The `@Mod` element values this module reads: the mod's `modid` (its identity
+/// when no metadata file is present) and its `(clientSideOnly, serverSideOnly)`
+/// side flags (absent element -> false).
+struct ModAnnotation {
+    modid: Option<String>,
+    sides: (bool, bool),
+}
+
+/// Scan an annotations attribute body for an `@Mod` annotation and read the
+/// element values in [`ModAnnotation`].
+fn mod_annotation(body: &[u8], cp: &[Cp]) -> Option<ModAnnotation> {
     let mut c = Cur::new(body);
     let num = c.u2()?;
     for _ in 0..num {
@@ -414,19 +432,30 @@ fn mod_sides_from_annotations(body: &[u8], cp: &[Cp]) -> Option<(bool, bool)> {
             .map(|t| MOD_DESCRIPTORS.contains(&t))
             .unwrap_or(false);
         if is_mod {
+            let mut modid = None;
             let mut client = false;
             let mut server = false;
             for (name_index, value) in pairs {
-                if let Some(Prim(b'Z', const_index)) = value {
-                    let on = integer(cp, const_index).unwrap_or(0) != 0;
-                    match utf8(cp, name_index) {
-                        Some("clientSideOnly") => client = on,
-                        Some("serverSideOnly") => server = on,
-                        _ => {}
+                match (utf8(cp, name_index), value) {
+                    // modid is a compile-time-constant String element (tag `s`)
+                    (Some("modid"), Some(Prim(b's', const_index))) => {
+                        modid = utf8(cp, const_index)
+                            .map(str::to_string)
+                            .filter(|s| !s.is_empty());
                     }
+                    (Some("clientSideOnly"), Some(Prim(b'Z', const_index))) => {
+                        client = integer(cp, const_index).unwrap_or(0) != 0;
+                    }
+                    (Some("serverSideOnly"), Some(Prim(b'Z', const_index))) => {
+                        server = integer(cp, const_index).unwrap_or(0) != 0;
+                    }
+                    _ => {}
                 }
             }
-            return Some((client, server));
+            return Some(ModAnnotation {
+                modid,
+                sides: (client, server),
+            });
         }
     }
     None
@@ -624,6 +653,31 @@ pub(crate) mod fixtures {
         w.build(this_index, obj, &attrs, attr_n)
     }
 
+    /// Build a class carrying only an `@Mod(modid = "...")` annotation -- the
+    /// identity path for a Forge mod that ships no metadata file. The `modid`
+    /// element is a String value (tag `s`) whose const index is a `Utf8`.
+    pub(crate) fn build_class_modid(this: &str, modid: &str) -> Vec<u8> {
+        let mut w = ClassWriter::default();
+        let obj = w.class("java/lang/Object");
+        let this_index = w.class(this);
+        let mod_desc = w.utf8("Lnet/minecraftforge/fml/common/Mod;");
+        let modid_name = w.utf8("modid");
+        let modid_val = w.utf8(modid);
+        let ann_name = w.utf8("RuntimeVisibleAnnotations");
+        let mut body = Vec::new();
+        body.extend_from_slice(&1u16.to_be_bytes()); // num_annotations
+        body.extend_from_slice(&mod_desc.to_be_bytes());
+        body.extend_from_slice(&1u16.to_be_bytes()); // num_element_value_pairs
+        body.extend_from_slice(&modid_name.to_be_bytes());
+        body.push(b's');
+        body.extend_from_slice(&modid_val.to_be_bytes());
+        let mut attrs = Vec::new();
+        attrs.extend_from_slice(&ann_name.to_be_bytes());
+        attrs.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        attrs.extend_from_slice(&body);
+        w.build(this_index, obj, &attrs, 1)
+    }
+
     /// Zip the given `(name, bytes)` entries into an in-memory jar.
     pub(crate) fn jar(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -664,6 +718,18 @@ mod tests {
         );
         assert!(!info.conditional);
         assert!(info.mod_sides.is_none());
+    }
+
+    #[test]
+    fn reads_modid_from_mod_annotation() {
+        // a Forge mod (Chisel, HatStand) whose only identity is @Mod(modid=...)
+        let bytes = fixtures::build_class_modid("team/chisel/Chisel", "chisel");
+        let info = parse_class(&bytes).expect("parses");
+        assert_eq!(
+            info.mod_id.as_deref(),
+            Some("chisel"),
+            "modid read from the class-level @Mod annotation"
+        );
     }
 
     #[test]

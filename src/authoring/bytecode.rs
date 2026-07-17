@@ -47,6 +47,10 @@ pub struct JarBytecode {
     pub optional_refs: BTreeSet<String>,
     /// Derived side, or `None` when nothing in the jar decides it.
     pub side: Option<Side>,
+    /// The `modid` from a class-level `@Mod` annotation, the identity fallback for
+    /// a Forge mod that ships no `mcmod.info` / `mods.toml` (e.g. Chisel, HatStand).
+    /// The first `@Mod`-carrying class wins; `None` when no class declares one.
+    pub mod_id: Option<String>,
 }
 
 /// First-segment roots too broad for a 2-segment prefix to be distinctive
@@ -186,6 +190,7 @@ pub(crate) fn aggregate(classes: &[ClassInfo], fabric: Option<Side>) -> JarBytec
         hard_refs,
         optional_refs,
         side: derive_side(classes).or(fabric),
+        mod_id: classes.iter().find_map(|c| c.mod_id.clone()),
     }
 }
 
@@ -271,6 +276,7 @@ mod tests {
             referenced: refs.iter().map(|s| s.to_string()).collect(),
             conditional,
             mod_sides: None,
+            mod_id: None,
         }
     }
 
