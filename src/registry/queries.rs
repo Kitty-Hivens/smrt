@@ -182,8 +182,19 @@ pub fn owner_mod_for_prefix(conn: &Connection, prefix: &str) -> Result<Option<i6
 pub fn mod_id_for_selector(conn: &Connection, selector: &str) -> Result<Option<i64>> {
     let selector = selector.split('@').next().unwrap_or(selector);
     match selector.strip_prefix("modrinth:") {
+        // Modrinth project ids are case-sensitive -- match exactly.
         Some(pid) => mod_id_for_alias(conn, "modrinth", pid),
-        None => mod_id_for_alias(conn, "modid", selector),
+        // A Forge modid is lowercase by spec, but a dependency string routinely
+        // names it in display case (`JEI` for modid `jei`), so a dep would miss its
+        // present provider on case alone. Match the modid alias case-insensitively.
+        None => Ok(conn
+            .query_row(
+                "SELECT mod_id FROM mod_alias
+                 WHERE source = 'modid' AND external_key = ?1 COLLATE NOCASE",
+                params![selector],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?),
     }
 }
 

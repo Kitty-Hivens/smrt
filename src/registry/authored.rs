@@ -598,6 +598,33 @@ mod tests {
     }
 
     #[test]
+    fn selector_resolves_modid_case_insensitively() {
+        // a dependency names the mod in display case (`JEI`) while its forge modid
+        // is `jei`; the selector must still resolve, and only for modids -- a
+        // Modrinth project id stays case-sensitive.
+        let r = Registry::open_in_memory().unwrap();
+        let jei = r
+            .with_txn(|c| upsert::upsert_mod_by_alias(c, &[("modid", "jei")], "T0"))
+            .unwrap();
+        r.with_conn(|c| {
+            assert_eq!(queries::mod_id_for_selector(c, "JEI")?, Some(jei));
+            assert_eq!(queries::mod_id_for_selector(c, "jei")?, Some(jei));
+            assert_eq!(
+                queries::mod_id_for_selector(c, "JeI@[4.16,)")?,
+                Some(jei),
+                "the version window is still stripped before the lookup"
+            );
+            assert_eq!(
+                queries::mod_id_for_selector(c, "modrinth:JEI")?,
+                None,
+                "a modrinth project id is not case-folded"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn upsert_auto_merge_keeps_a_precious_row() {
         // An operator-authored identity must never be deleted by the automatic
         // collision merge: it is the survivor, the harvested row folds into it.
