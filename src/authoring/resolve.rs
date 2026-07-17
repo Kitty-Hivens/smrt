@@ -525,7 +525,6 @@ mod tests {
             default_enabled: true,
             source,
             display: None::<Display>,
-            note: None,
             slug: None,
         }
     }
@@ -892,7 +891,6 @@ mod tests {
             default_enabled: false,
             source: cache(&"e".repeat(40)),
             display: None::<Display>,
-            note: None,
             slug: None,
         };
         let rep = r

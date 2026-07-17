@@ -45,7 +45,6 @@ fn reconstruct_mod(m: &ModEntry) -> DeclaredMod {
         default_enabled: m.default_enabled,
         source: source_decl(&m.source, &m.sha1),
         display: m.display.clone(),
-        note: None,
         slug: m.slug.clone(),
     }
 }
@@ -56,7 +55,6 @@ fn reconstruct_asset(a: &AssetEntry) -> DeclaredAsset {
         required: a.required,
         source: source_decl(&a.source, &a.sha1),
         display: a.display.clone(),
-        note: None,
     }
 }
 

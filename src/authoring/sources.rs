@@ -356,7 +356,6 @@ mod tests {
                 rel_path: "ok.png".into(),
             },
             display: None,
-            note: None,
         };
         let modrinth = Modrinth::new().unwrap();
         let cache = ModrinthCache::default();

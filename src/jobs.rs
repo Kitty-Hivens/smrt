@@ -360,7 +360,6 @@ mod tests {
                 default_enabled: true,
                 source: SourceDecl::SmrtCache { sha1: sha1.into() },
                 display: None,
-                note: None,
                 slug: None,
             }],
             assets: vec![],

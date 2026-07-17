@@ -85,7 +85,6 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
                         },
                         display: None,
                         slug: None,
-                        note: Some(format!("matched on Modrinth ({})", hit.version_number)),
                     }
                 } else {
                     write_to_cache(&storage, &m.sha1, &m.bytes)?;
@@ -98,10 +97,6 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
                         },
                         display: None,
                         slug: None,
-                        note: Some(format!(
-                            "TODO: Modrinth hit exists but mc/loader mismatch (mc={:?}, loaders={:?}); review for substitution",
-                            hit.game_versions, hit.loaders
-                        )),
                     }
                 }
             } else {
@@ -115,9 +110,6 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
                     },
                     display: None,
                     slug: None,
-                    note: Some(
-                        "TODO: no Modrinth match; check if a relabel of an upstream project".into(),
-                    ),
                 }
             };
             declared_mods.push(decl);
@@ -134,7 +126,6 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
                     rel_path: a.rel_path.clone(),
                 },
                 display: None,
-                note: Some("TODO: review whether to keep SC default or curate replacement".into()),
             });
         }
         declared_assets.sort_by(|a, b| a.dest.cmp(&b.dest));

@@ -662,7 +662,6 @@ mod tests {
                 }],
                 ..default_display()
             }),
-            note: None,
             slug: None,
         });
         for (name, sha) in [("lib.jar", "b"), ("util.jar", "c")] {
@@ -674,7 +673,6 @@ mod tests {
                     sha1: sha.repeat(40),
                 },
                 display: None,
-                note: None,
                 slug: None,
             });
         }
@@ -764,7 +762,6 @@ mod tests {
                 role: None,
                 requires: Vec::new(),
             }),
-            note: None,
             slug: None,
         });
 
@@ -802,7 +799,6 @@ mod tests {
                 } else {
                     None
                 },
-                note: None,
                 slug: None,
             });
         }
@@ -852,7 +848,6 @@ mod tests {
             default_enabled: true,
             source: SourceDecl::SmrtCache { sha1: sha_jei },
             display: None,
-            note: None,
             slug: None,
         });
         cfg.mods.push(DeclaredMod {
@@ -861,7 +856,6 @@ mod tests {
             default_enabled: true,
             source: SourceDecl::SmrtCache { sha1: sha_addon },
             display: None,
-            note: None,
             slug: None,
         });
 
@@ -890,7 +884,6 @@ mod tests {
             default_enabled: true,
             source: SourceDecl::SmrtCache { sha1: sha },
             display: None,
-            note: None,
             slug: None,
         });
 
