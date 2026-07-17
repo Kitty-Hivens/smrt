@@ -99,15 +99,26 @@ pub fn parse_mcmod_info(raw: &[u8]) -> Option<McModInfo> {
     if trimmed.is_empty() {
         return None;
     }
+    // Hand-authored mcmod.info files routinely embed raw newlines/tabs inside a
+    // string value (a multi-line `description`, a `credits` block) -- invalid per
+    // strict JSON, which serde_json enforces, so the whole file fails to parse and
+    // an otherwise-identifiable mod (IronChest, and others) falls through to no
+    // identity. Forge's own reader tolerates it. Neutralize control characters to
+    // spaces first: inside a string this repairs the illegal literal; between
+    // tokens a control char is insignificant whitespace, so a space is equivalent.
+    let src: String = trimmed
+        .chars()
+        .map(|c| if (c as u32) < 0x20 { ' ' } else { c })
+        .collect();
     // Two valid shapes per the Forge spec era:
     //   1. JSON array of mod entries
     //   2. JSON object with a `modList` field containing the array
-    if trimmed.starts_with('[') {
-        serde_json::from_str::<Vec<McModInfo>>(trimmed)
+    if src.starts_with('[') {
+        serde_json::from_str::<Vec<McModInfo>>(&src)
             .ok()
             .and_then(|v| v.into_iter().next())
     } else {
-        serde_json::from_str::<McModInfoListWrap>(trimmed)
+        serde_json::from_str::<McModInfoListWrap>(&src)
             .ok()
             .and_then(|w| w.mod_list.into_iter().next())
     }
@@ -681,6 +692,17 @@ mod tests {
         );
         let info = read_mcmod_info(&bytes).unwrap().unwrap();
         assert_eq!(info.modid, "oldmod");
+    }
+
+    #[test]
+    fn parse_mcmod_info_tolerates_raw_newlines_in_strings() {
+        // Hand-authored 1.12 files (IronChest and others) put a literal newline
+        // inside a multi-line description -- invalid per strict JSON. The parse must
+        // still recover the identity rather than dropping the whole file.
+        let raw = "[{\"modid\":\"ironchest\",\"name\":\"Iron Chest\",\"description\":\"Bigger chests.\nCrystal chest is transparent.\"}]";
+        let info = parse_mcmod_info(raw.as_bytes()).expect("parses despite raw newline");
+        assert_eq!(info.modid, "ironchest");
+        assert_eq!(info.name, "Iron Chest");
     }
 
     #[test]
