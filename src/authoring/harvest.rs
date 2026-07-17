@@ -17,7 +17,7 @@
 use super::archive::read_zip_entry;
 use super::bytecode;
 use super::classfile::parse_class;
-use super::curator::{JarFacts, McModInfo, clean_mc_version, parse_mcmod_info};
+use super::curator::{JarFacts, McModInfo, clean_mc_version, mcmod_modids, parse_mcmod_info};
 use super::modmeta;
 use super::modrinth::Modrinth;
 use crate::registry::model::{RelKind, Source};
@@ -34,6 +34,11 @@ pub struct JarSeed {
     pub sha1: String,
     pub size_bytes: i64,
     pub modid: Option<String>,
+    // Every modid the jar's mcmod.info declares when it bundles more than one mod
+    // (ForgeMultipart, ProjectRed, ReplayMod). Each becomes a modid alias on the
+    // jar's mod, so a dependency on a bundled modid resolves to the jar shipping it.
+    // Empty for a single-mod jar (its one modid is already `modid`).
+    pub extra_modids: Vec<String>,
     pub version: Option<String>,
     pub project_id: Option<String>,
     pub loaders: Vec<String>,
@@ -256,6 +261,9 @@ struct JarReadout {
     bytecode: bytecode::JarBytecode,
     modmeta: modmeta::ModMeta,
     mcmod: Option<McModInfo>,
+    /// Every modid the jar's mcmod.info declares -- more than one when the jar
+    /// bundles several mods. Empty when the jar has no mcmod.info.
+    mcmod_modids: Vec<String>,
 }
 
 /// Open a jar's zip ONCE and derive every fact the harvest needs from it: the
@@ -268,6 +276,7 @@ fn read_jar(bytes: &[u8]) -> JarReadout {
         bytecode: bytecode::JarBytecode::default(),
         modmeta: modmeta::ModMeta::default(),
         mcmod: None,
+        mcmod_modids: Vec::new(),
     };
     let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
         return empty();
@@ -349,6 +358,7 @@ fn read_jar(bytes: &[u8]) -> JarReadout {
             .as_deref()
             .and_then(parse_mcmod_info)
             .filter(|i| !i.modid.is_empty()),
+        mcmod_modids: mcmod_raw.as_deref().map(mcmod_modids).unwrap_or_default(),
     }
 }
 
@@ -388,6 +398,13 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         }
         if let Some(p) = jar.project_id.as_deref().filter(|s| !s.is_empty()) {
             aliases.push(("modrinth", p));
+        }
+        // a jar bundling several mods declares each as a modid alias, so a
+        // dependency on any bundled modid resolves to the jar that ships it
+        for m in &jar.extra_modids {
+            if !m.is_empty() {
+                aliases.push(("modid", m.as_str()));
+            }
         }
         if aliases.is_empty() {
             no_identity += 1;
@@ -764,12 +781,13 @@ pub async fn scan(
                 .map(|p| (e.sha1.clone(), p))
         })
         .collect();
-    let (mcmod_by_sha, facts_by_sha, bytecode_by_sha, modmeta_by_sha) =
+    let (mcmod_by_sha, facts_by_sha, bytecode_by_sha, modmeta_by_sha, extra_modids_by_sha) =
         tokio::task::spawn_blocking(move || {
             let mut mcmod: HashMap<String, McModInfo> = HashMap::new();
             let mut facts: HashMap<String, JarFacts> = HashMap::new();
             let mut bc: HashMap<String, bytecode::JarBytecode> = HashMap::new();
             let mut mm: HashMap<String, modmeta::ModMeta> = HashMap::new();
+            let mut extra: HashMap<String, Vec<String>> = HashMap::new();
             for (sha, path) in jar_paths {
                 let Ok(bytes) = std::fs::read(&path) else {
                     continue;
@@ -778,11 +796,14 @@ pub async fn scan(
                 facts.insert(sha.clone(), r.facts);
                 bc.insert(sha.clone(), r.bytecode);
                 mm.insert(sha.clone(), r.modmeta);
+                if r.mcmod_modids.len() > 1 {
+                    extra.insert(sha.clone(), r.mcmod_modids);
+                }
                 if let Some(info) = r.mcmod {
                     mcmod.insert(sha.clone(), info);
                 }
             }
-            (mcmod, facts, bc, mm)
+            (mcmod, facts, bc, mm, extra)
         })
         .await
         .map_err(|e| anyhow::anyhow!("jar scan task: {e}"))?;
@@ -991,6 +1012,7 @@ pub async fn scan(
                     .or_else(|| mm.and_then(|m| m.modid.clone()))
                     .or_else(|| bc.and_then(|b| b.mod_id.clone()))
                     .or_else(|| learned_modid.get(&sha).cloned()),
+                extra_modids: extra_modids_by_sha.get(&sha).cloned().unwrap_or_default(),
                 version: info
                     .map(|i| i.version.clone())
                     .filter(|s| !s.is_empty())
@@ -1116,6 +1138,7 @@ mod tests {
                     size_bytes: 100,
                     channel: None,
                     modid: Some("appleskin".into()),
+                    extra_modids: vec![],
                     version: Some("2.5".into()),
                     project_id: Some("EsAfb37o".into()),
                     loaders: vec!["forge".into()],
@@ -1138,6 +1161,7 @@ mod tests {
                     size_bytes: 200,
                     channel: None,
                     modid: Some("jei".into()),
+                    extra_modids: vec![],
                     version: Some("4.16".into()),
                     project_id: None,
                     loaders: vec!["forge".into()],
@@ -1160,6 +1184,7 @@ mod tests {
                     size_bytes: 50,
                     channel: None,
                     modid: None,
+                    extra_modids: vec![],
                     version: None,
                     project_id: None,
                     loaders: vec![],
@@ -1481,12 +1506,55 @@ mod tests {
         .unwrap();
     }
 
+    #[test]
+    fn write_scan_registers_every_modid_a_bundled_jar_declares() {
+        // ForgeMultipart ships three mods in one jar (forgemultipartcbe +
+        // minecraftmultipartcbe + microblockcbe); a dependency on any bundled modid
+        // must resolve to the jar that provides it, so each becomes an alias.
+        let r = Registry::open_in_memory().unwrap();
+        let mut fmp = jar(
+            "sha_fmp",
+            "forgemultipartcbe",
+            Some("2.6"),
+            vec!["forge".into()],
+        );
+        fmp.extra_modids = vec![
+            "forgemultipartcbe".into(),
+            "minecraftmultipartcbe".into(),
+            "microblockcbe".into(),
+        ];
+        let scan = ScanData {
+            jars: vec![fmp],
+            packs: vec![],
+            modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
+        };
+        r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        r.with_conn(|c| {
+            let primary = queries::mod_id_for_selector(c, "forgemultipartcbe")?.unwrap();
+            assert_eq!(
+                queries::mod_id_for_selector(c, "minecraftmultipartcbe")?,
+                Some(primary),
+                "a bundled modid resolves to the jar's mod"
+            );
+            assert_eq!(
+                queries::mod_id_for_selector(c, "microblockcbe")?,
+                Some(primary)
+            );
+            let mods: i64 = c.query_row("SELECT count(*) FROM mods", [], |r| r.get(0))?;
+            assert_eq!(mods, 1, "all three bundled modids land on one mod");
+            Ok(())
+        })
+        .unwrap();
+    }
+
     fn jar(sha: &str, modid: &str, version: Option<&str>, loaders: Vec<String>) -> JarSeed {
         JarSeed {
             sha1: sha.into(),
             size_bytes: 1,
             channel: None,
             modid: Some(modid.into()),
+            extra_modids: vec![],
             version: version.map(Into::into),
             project_id: None,
             loaders,
@@ -1521,6 +1589,7 @@ mod tests {
             size_bytes: 1,
             channel: None,
             modid: Some(modid.into()),
+            extra_modids: vec![],
             version: Some("1".into()),
             project_id: None,
             loaders: vec!["forge".into()],

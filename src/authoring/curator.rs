@@ -88,16 +88,17 @@ pub fn read_mcmod_info(jar_bytes: &[u8]) -> Result<Option<McModInfo>> {
     Ok(parse_mcmod_info(&raw))
 }
 
-/// Decode + parse `mcmod.info` bytes (the zip-free core of [`read_mcmod_info`], so
-/// a single-pass jar reader can hand over the entry it already extracted).
-pub fn parse_mcmod_info(raw: &[u8]) -> Option<McModInfo> {
+/// Decode + parse every entry of an `mcmod.info`. A single 1.12 jar can declare
+/// several mods (ForgeMultipart ships forgemultipartcbe + minecraftmultipartcbe +
+/// microblockcbe; ReplayMod ships its submodules), and the array lists them all.
+fn parse_mcmod_entries(raw: &[u8]) -> Vec<McModInfo> {
     // mcmod.info comes from many authors over many years. Lossy UTF-8 decode
     // handles the occasional ISO-8859-1 file. BOM strip handles the occasional
     // UTF-8-BOM-prefixed file from Windows authors.
     let decoded = String::from_utf8_lossy(raw);
     let trimmed = decoded.trim_start_matches('\u{FEFF}').trim();
     if trimmed.is_empty() {
-        return None;
+        return Vec::new();
     }
     // Hand-authored mcmod.info files routinely embed raw newlines/tabs inside a
     // string value (a multi-line `description`, a `credits` block) -- invalid per
@@ -114,14 +115,30 @@ pub fn parse_mcmod_info(raw: &[u8]) -> Option<McModInfo> {
     //   1. JSON array of mod entries
     //   2. JSON object with a `modList` field containing the array
     if src.starts_with('[') {
-        serde_json::from_str::<Vec<McModInfo>>(&src)
-            .ok()
-            .and_then(|v| v.into_iter().next())
+        serde_json::from_str::<Vec<McModInfo>>(&src).unwrap_or_default()
     } else {
         serde_json::from_str::<McModInfoListWrap>(&src)
-            .ok()
-            .and_then(|w| w.mod_list.into_iter().next())
+            .map(|w| w.mod_list)
+            .unwrap_or_default()
     }
+}
+
+/// The first mod an `mcmod.info` declares -- the jar's primary identity (the
+/// zip-free core of [`read_mcmod_info`], so a single-pass jar reader can hand over
+/// the entry it already extracted).
+pub fn parse_mcmod_info(raw: &[u8]) -> Option<McModInfo> {
+    parse_mcmod_entries(raw).into_iter().next()
+}
+
+/// Every non-empty modid an `mcmod.info` declares. For a jar bundling several mods,
+/// each is a mod the jar provides -- registering them all lets a dependency on a
+/// bundled modid resolve to the jar that ships it.
+pub fn mcmod_modids(raw: &[u8]) -> Vec<String> {
+    parse_mcmod_entries(raw)
+        .into_iter()
+        .map(|e| e.modid)
+        .filter(|m| !m.is_empty())
+        .collect()
 }
 
 /// Version-bearing metadata files excluded from the content signature: bumping
