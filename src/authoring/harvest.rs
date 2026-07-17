@@ -811,6 +811,12 @@ pub async fn scan(
     // published builds + curator conflicts, per pack
     let mut packs = Vec::new();
     let mut filename_by_sha: HashMap<String, String> = HashMap::new();
+    // Modrinth-source mods a build declares (project_id, version_id), keyed by sha.
+    // A repackaged jar whose sha Modrinth does not recognize would otherwise get no
+    // project identity from the sha1 lookup, leaving the pack's own Modrinth mod
+    // (better-advancements, customskinloader) unresolved; the manifest names the
+    // project directly, so register from it.
+    let mut manifest_modrinth_by_sha: HashMap<String, (String, String)> = HashMap::new();
     for pid in storage.list_authoring_packs().await.map_err(ae)? {
         let Ok(manifest) = storage.load_latest_manifest(&pid).await else {
             continue; // unbuilt pack -> no published build to record
@@ -832,6 +838,15 @@ pub async fn scan(
                 required: m.required,
                 default_enabled: m.default_enabled,
             });
+            if let crate::domain::manifest::Source::Modrinth {
+                project_id,
+                version_id,
+            } = &m.source
+            {
+                manifest_modrinth_by_sha
+                    .entry(m.sha1.clone())
+                    .or_insert_with(|| (project_id.clone(), version_id.clone()));
+            }
         }
         // conflicts come from each mod's published display.incompatible_with
         // (set per-mod in the config now, not a curator table). sha_by_filename is
@@ -1017,7 +1032,9 @@ pub async fn scan(
                     .map(|i| i.version.clone())
                     .filter(|s| !s.is_empty())
                     .or_else(|| mrv.map(|v| v.version_number.clone())),
-                project_id: mrv.map(|v| v.project_id.clone()),
+                project_id: mrv
+                    .map(|v| v.project_id.clone())
+                    .or_else(|| manifest_modrinth_by_sha.get(&sha).map(|(p, _)| p.clone())),
                 // loader: Modrinth's set wins; else the jar's own marker
                 // (mcmod.info/mods.toml -> forge, fabric.mod.json -> fabric); else
                 // empty (-> 'any' downstream)
@@ -1044,7 +1061,9 @@ pub async fn scan(
                 name,
                 author,
                 slug,
-                modrinth_version_id: mrv.map(|v| v.id.clone()),
+                modrinth_version_id: mrv
+                    .map(|v| v.id.clone())
+                    .or_else(|| manifest_modrinth_by_sha.get(&sha).map(|(_, v)| v.clone())),
                 channel: mrv.and_then(|v| channel_from_version_type(&v.version_type)),
                 owned_packages: bc
                     .map(|b| b.owned.iter().cloned().collect())
