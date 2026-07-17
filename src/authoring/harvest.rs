@@ -160,6 +160,32 @@ const PSEUDO_DEPS: &[&str] = &[
     "quilt",
 ];
 
+/// Mods that expose an *optional* integration API -- item viewers and probe/
+/// tooltip mods. A jar references one of these from a plugin class (`@JeiPlugin`
+/// and the like) that the host loads only when present, so a *bytecode-inferred*
+/// reference to it is a dormant integration, not a hard dependency (FTB Library
+/// references JEI from its plugin but runs fine on REI). A mod that truly requires
+/// one declares it in its metadata, which yields a declared edge that stays hard --
+/// this downgrade only touches the inferred kind.
+const INTEGRATION_HOSTS: &[&str] = &[
+    "jei",
+    "roughlyenoughitems",
+    "emi",
+    "jade",
+    "waila",
+    "hwyla",
+    "wthit",
+    "theoneprobe",
+];
+
+/// Whether an edge selector names an [`INTEGRATION_HOSTS`] mod, ignoring a version
+/// window (`jei@[...]`) and the `modrinth:` namespace.
+fn is_integration_host(target: &str) -> bool {
+    let bare = target.split('@').next().unwrap_or(target);
+    let bare = bare.strip_prefix("modrinth:").unwrap_or(bare);
+    INTEGRATION_HOSTS.contains(&bare)
+}
+
 /// Map a Modrinth `version_type` (release/beta/alpha) to a registry channel.
 /// alpha collapses to beta (both pre-release); `dev` stays reserved for hand-set
 /// developer builds. Unknown types yield None (release stays `unknown`).
@@ -566,11 +592,38 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
     // came from (#48) each artifact simply states its own facts: a jar's own hard
     // reference suppresses its own soft one, and nothing leaks between builds.
     let mut hard_by_artifact: HashMap<i64, HashSet<String>> = HashMap::new();
+    let mut opt_by_artifact: HashMap<i64, HashSet<String>> = HashMap::new();
     for (from_mod_id, mod_version_id, jar) in &derivations {
-        let hard = hard_by_artifact.entry(*mod_version_id).or_default();
         for prefix in &jar.hard_refs {
-            if let Some(target) = resolve_edge_target(conn, prefix, *from_mod_id)?
-                && hard.insert(target.clone())
+            let Some(target) = resolve_edge_target(conn, prefix, *from_mod_id)? else {
+                continue;
+            };
+            // A bytecode reference to an optional-integration host (item viewer,
+            // probe) is a dormant plugin hook, not a hard dependency -- record it
+            // optional so it never reports missing. A genuine requirement is declared
+            // in the mod's metadata, whose higher-confidence edge wins over this one.
+            if is_integration_host(&target) {
+                if opt_by_artifact
+                    .entry(*mod_version_id)
+                    .or_default()
+                    .insert(target.clone())
+                    && upsert::upsert_relation(
+                        conn,
+                        *from_mod_id,
+                        Some(*mod_version_id),
+                        &target,
+                        None,
+                        RelKind::OptionalDep,
+                        Source::Inferred,
+                        now,
+                    )?
+                {
+                    inferred_optional += 1;
+                }
+            } else if hard_by_artifact
+                .entry(*mod_version_id)
+                .or_default()
+                .insert(target.clone())
                 && upsert::upsert_relation(
                     conn,
                     *from_mod_id,
@@ -587,7 +640,6 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         }
     }
     // Optional pass: skip any target this same artifact already references hard.
-    let mut opt_by_artifact: HashMap<i64, HashSet<String>> = HashMap::new();
     for (from_mod_id, mod_version_id, jar) in &derivations {
         for prefix in &jar.optional_refs {
             if let Some(target) = resolve_edge_target(conn, prefix, *from_mod_id)?
@@ -1807,6 +1859,51 @@ mod tests {
                 |r| r.get(0),
             )?;
             assert_eq!(total, 2, "no duplicate inferred edges after re-harvest");
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // FTB Library's bytecode references JEI from its @JeiPlugin -- an optional
+    // integration, not a hard dependency. A purely-inferred (bytecode) hard
+    // reference to an item viewer must land optional, so swapping JEI for REI does
+    // not report jei as a missing dependency.
+    #[test]
+    fn write_scan_downgrades_an_inferred_integration_host_to_optional() {
+        let r = Registry::open_in_memory().unwrap();
+        let scan = ScanData {
+            jars: vec![
+                dseed("sha_jei", "jei", &["mezz/jei"], &[], &[], None),
+                dseed(
+                    "sha_ftb",
+                    "ftblibrary",
+                    &["dev/ftb/mods/ftblibrary"],
+                    &["mezz/jei"], // hard bytecode ref to an item viewer
+                    &[],
+                    None,
+                ),
+            ],
+            packs: vec![],
+            modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
+        };
+        let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        assert_eq!(
+            rep.inferred_requires, 0,
+            "an inferred item-viewer reference is not a hard requirement"
+        );
+        assert_eq!(
+            rep.inferred_optional, 1,
+            "it lands as an optional integration"
+        );
+        r.with_conn(|c| {
+            let ftb = queries::mod_id_for_alias(c, "modid", "ftblibrary")?.unwrap();
+            let (target, kind): (String, String) = c.query_row(
+                "SELECT target_modid, kind FROM relation WHERE from_mod_id = ?1",
+                [ftb],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            assert_eq!((target.as_str(), kind.as_str()), ("jei", "optional_dep"));
             Ok(())
         })
         .unwrap();
