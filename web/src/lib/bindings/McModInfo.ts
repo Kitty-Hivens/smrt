@@ -15,6 +15,14 @@ export type McModInfo = { modid: string, name: string, version: string,
  */
 mcversion: string, description: string, url: string, dependencies: Array<string>, 
 /**
+ * Hard requirements (`requiredMods`): mods that must be present or the game
+ * crashes. When populated it is authoritative -- a modid in `dependencies` but
+ * not here is a load-order hint, not a hard dep (WorldEditCUI lists `worldedit`
+ * in `dependencies` but requires only forge). When empty the author did not
+ * distinguish, so `dependencies` is the best hard-dep signal there is.
+ */
+requiredMods: Array<string>, 
+/**
  * 1.12-era Forge spells the author list `authorList`. Harvest reads it as a
  * local, network-free author source (falling back to Modrinth only when the
  * jar carries none).

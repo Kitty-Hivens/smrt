@@ -179,6 +179,21 @@ fn channel_from_version_type(vt: &str) -> Option<String> {
 /// separators, drop the Forge ordering prefix and the version window, drop the
 /// platform, and keep only what reads as a modid -- so a bogus token never becomes
 /// a relation the resolver then reports missing (#10). Order-preserving, deduped.
+/// The hard-dependency modids a jar's `mcmod.info` declares. `requiredMods` is the
+/// hard-require list; when the author filled it, it is authoritative and a modid
+/// only in `dependencies` is a load-order hint, not a hard dep (WorldEditCUI
+/// requires only forge, listing `worldedit` in `dependencies` alone). When
+/// `requiredMods` is empty the author did not distinguish, so `dependencies` is the
+/// best hard-dep signal there is. Cleaned through [`filter_deps`] either way.
+fn mcmod_hard_deps(info: &McModInfo) -> Vec<String> {
+    let hard = if info.required_mods.is_empty() {
+        &info.dependencies
+    } else {
+        &info.required_mods
+    };
+    filter_deps(hard)
+}
+
 fn filter_deps(deps: &[String]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -1070,9 +1085,7 @@ pub async fn scan(
                         .into_iter()
                         .collect(),
                 },
-                requires: info
-                    .map(|i| filter_deps(&i.dependencies))
-                    .unwrap_or_default(),
+                requires: info.map(mcmod_hard_deps).unwrap_or_default(),
                 filename: filename_by_sha.get(&sha).cloned(),
                 name,
                 author,
@@ -1355,6 +1368,29 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    #[test]
+    fn mcmod_hard_deps_trusts_required_mods_when_present() {
+        // WorldEditCUI hard-requires only forge; worldedit is a load-order hint in
+        // `dependencies`, so it must not become a hard dependency (a false missing).
+        let cui = parse_mcmod_info(
+            br#"[{"modid":"worldeditcuife2","requiredMods":["forge@[14,)"],"dependencies":["forge@[14,)","worldedit"]}]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            mcmod_hard_deps(&cui),
+            Vec::<String>::new(),
+            "worldedit is load-order-only, not a hard dependency"
+        );
+        // GravitationSuite leaves requiredMods empty, so its `dependencies` ic2 is
+        // the only hard-dep signal and stays hard.
+        let gs = parse_mcmod_info(br#"[{"modid":"gravisuite","dependencies":["ic2"]}]"#).unwrap();
+        assert_eq!(
+            mcmod_hard_deps(&gs),
+            vec!["ic2".to_string()],
+            "no requiredMods -> dependencies is the hard signal"
+        );
     }
 
     #[test]

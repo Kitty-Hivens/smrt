@@ -49,6 +49,13 @@ pub struct McModInfo {
     pub url: String,
     #[serde(default)]
     pub dependencies: Vec<String>,
+    /// Hard requirements (`requiredMods`): mods that must be present or the game
+    /// crashes. When populated it is authoritative -- a modid in `dependencies` but
+    /// not here is a load-order hint, not a hard dep (WorldEditCUI lists `worldedit`
+    /// in `dependencies` but requires only forge). When empty the author did not
+    /// distinguish, so `dependencies` is the best hard-dep signal there is.
+    #[serde(default, rename = "requiredMods")]
+    pub required_mods: Vec<String>,
     /// 1.12-era Forge spells the author list `authorList`. Harvest reads it as a
     /// local, network-free author source (falling back to Modrinth only when the
     /// jar carries none).
