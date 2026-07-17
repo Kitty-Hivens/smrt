@@ -94,6 +94,9 @@ pub struct PackSeed {
 pub struct ScanData {
     pub jars: Vec<JarSeed>,
     pub packs: Vec<PackSeed>,
+    /// Forge modids learned this scan by fetching a Modrinth re-upload's jar (a
+    /// mod present only via Modrinth, whose bytes are not in the local cache).
+    pub modrinth_modids_learned: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -116,6 +119,10 @@ pub struct HarvestReport {
     /// Typed dependency edges taken from modern declared metadata (mods.toml /
     /// neoforge.mods.toml / fabric.mod.json) this harvest.
     pub declared_deps: i64,
+    /// Forge modids learned this harvest by reading a Modrinth re-upload's jar, so
+    /// a modid-keyed dependency (an addon requiring `ic2`) resolves to the mod the
+    /// pack ships from Modrinth. Fetched once per mod, then cached as an alias.
+    pub modrinth_modids_learned: usize,
 }
 
 // mcmod.info dependency lists routinely name the platform, not a real mod.
@@ -647,17 +654,25 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         sides_derived,
         modrinth_deps: modrinth_deps_written,
         declared_deps: declared_deps_written,
+        modrinth_modids_learned: scan.modrinth_modids_learned,
     })
 }
 
 /// Scan the storage tree + Modrinth into a [ScanData]. Async (FS reads + one
 /// batched Modrinth lookup); does not touch the registry.
-pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
+pub async fn scan(
+    storage: &Storage,
+    modrinth: &Modrinth,
+    known_modid_projects: &HashSet<String>,
+) -> Result<ScanData> {
     let inventory = storage.list_cache_inventory().await.map_err(ae)?;
     let mut size_by_sha: HashMap<String, i64> = inventory
         .iter()
         .map(|e| (e.sha1.clone(), e.size_bytes as i64))
         .collect();
+    // jars whose bytes are locally cached (read directly below); a Modrinth-only
+    // mod's sha is absent here, which is how the modid-fetch pass finds it.
+    let cache_shas: HashSet<String> = inventory.iter().map(|e| e.sha1.clone()).collect();
     let mut all_shas: HashSet<String> = inventory.iter().map(|e| e.sha1.clone()).collect();
 
     // read mcmod.info + derive jar facts (loader marker, content signature) +
@@ -800,6 +815,43 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
         }
     };
 
+    // Learn the forge modid of a Modrinth re-upload (a mod the pack ships from
+    // Modrinth, so its bytes are not in the local cache) by fetching its jar once
+    // and reading the modid. Without this, a dependency keyed on that modid (an
+    // IC2 addon requiring `ic2`) can never resolve, because the registry knows the
+    // re-upload only by its Modrinth project id. Skipped once a modid alias exists
+    // for the project, so the fetch is a one-time cost per mod, not per harvest.
+    let mut learned_modid: HashMap<String, String> = HashMap::new();
+    let fetch_targets: Vec<(String, String)> = modrinth_by_sha
+        .iter()
+        .filter(|(sha, _)| !cache_shas.contains(sha.as_str()))
+        .filter(|(_, v)| !known_modid_projects.contains(&v.project_id))
+        .filter_map(|(sha, v)| v.primary_file().map(|f| (sha.clone(), f.url.clone())))
+        .collect();
+    for (sha, url) in fetch_targets {
+        let bytes = match modrinth.fetch_bytes(&url).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(error = %e, url = %url, "modrinth jar fetch failed; modid unlearned");
+                continue;
+            }
+        };
+        let modid = tokio::task::spawn_blocking(move || {
+            let r = read_jar(&bytes);
+            r.mcmod
+                .map(|i| i.modid)
+                .filter(|s| !s.is_empty())
+                .or(r.modmeta.modid)
+                .or(r.bytecode.mod_id)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("modid read task: {e}"))?;
+        if let Some(modid) = modid {
+            learned_modid.insert(sha, modid);
+        }
+    }
+    let modrinth_modids_learned = learned_modid.len();
+
     let jars = all_shas
         .into_iter()
         .map(|sha| {
@@ -835,7 +887,8 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
                     .map(|i| i.modid.clone())
                     .filter(|s| !s.is_empty())
                     .or_else(|| mm.and_then(|m| m.modid.clone()))
-                    .or_else(|| bc.and_then(|b| b.mod_id.clone())),
+                    .or_else(|| bc.and_then(|b| b.mod_id.clone()))
+                    .or_else(|| learned_modid.get(&sha).cloned()),
                 version: info
                     .map(|i| i.version.clone())
                     .filter(|s| !s.is_empty())
@@ -907,7 +960,11 @@ pub async fn scan(storage: &Storage, modrinth: &Modrinth) -> Result<ScanData> {
         })
         .collect();
 
-    Ok(ScanData { jars, packs })
+    Ok(ScanData {
+        jars,
+        packs,
+        modrinth_modids_learned,
+    })
 }
 
 /// Full harvest: scan (async) then write (in a blocking transaction).
@@ -916,7 +973,14 @@ pub async fn run_harvest(
     modrinth: &Modrinth,
     registry: Arc<Registry>,
 ) -> Result<HarvestReport> {
-    let scan = scan(storage, modrinth).await?;
+    // Modrinth projects whose mod already carries a forge modid alias -- their jar
+    // was read once before, so the scan skips re-fetching it (the one-time cost).
+    let reg = registry.clone();
+    let known_modid_projects =
+        tokio::task::spawn_blocking(move || reg.with_conn(queries::modrinth_projects_with_modid))
+            .await
+            .map_err(|e| anyhow::anyhow!("known-modid query task: {e}"))??;
+    let scan = scan(storage, modrinth, &known_modid_projects).await?;
     let now = upsert::now_rfc3339();
     let report =
         tokio::task::spawn_blocking(move || registry.with_txn(|c| write_scan(c, &scan, &now)))
@@ -1023,6 +1087,7 @@ mod tests {
                 ],
                 conflicts: vec![("sha_a".into(), "sha_b".into())],
             }],
+            modrinth_modids_learned: 0,
         }
     }
 
@@ -1156,6 +1221,43 @@ mod tests {
         );
     }
 
+    // scan() learned a Modrinth re-upload's forge modid by fetching its jar (IC2,
+    // shipped from Modrinth, bytes not in the local cache): the seed then carries
+    // both the modid and the project id. write_scan must fold them into one mod so
+    // an addon's modid-keyed dependency (`ic2`) resolves to the Modrinth mod, and
+    // the project is thereafter known so the fetch never repeats.
+    #[test]
+    fn write_scan_merges_learned_modid_onto_modrinth_mod() {
+        let r = Registry::open_in_memory().unwrap();
+        let mut ic2 = jar("sha_ic2", "ic2", Some("2.8"), vec!["forge".into()]);
+        ic2.project_id = Some("wTncj5gs".into());
+        let mut addon = jar("sha_addon", "advmachines", Some("1"), vec!["forge".into()]);
+        addon.requires = vec!["ic2".into()];
+        let scan = ScanData {
+            jars: vec![ic2, addon],
+            packs: vec![],
+            modrinth_modids_learned: 1,
+        };
+        r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        r.with_conn(|c| {
+            let by_modid =
+                queries::mod_id_for_selector(c, "ic2")?.expect("ic2 selector resolves to a mod");
+            let by_project = queries::mod_id_for_alias(c, "modrinth", "wTncj5gs")?
+                .expect("the modrinth project alias exists");
+            assert_eq!(
+                by_modid, by_project,
+                "the forge modid and the modrinth project id name the same mod"
+            );
+            let known = queries::modrinth_projects_with_modid(c)?;
+            assert!(
+                known.contains("wTncj5gs"),
+                "the project now carries a modid alias, so the fetch is skipped next harvest"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
     fn jar(sha: &str, modid: &str, version: Option<&str>, loaders: Vec<String>) -> JarSeed {
         JarSeed {
             sha1: sha.into(),
@@ -1277,6 +1379,7 @@ mod tests {
                 ),
             ],
             packs: vec![],
+            modrinth_modids_learned: 0,
         };
 
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
@@ -1371,6 +1474,7 @@ mod tests {
                 dseed("sha_c", "modc", &["modc/core"], &["org/shaded"], &[], None),
             ],
             packs: vec![],
+            modrinth_modids_learned: 0,
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.inferred_requires, 0, "ambiguous prefix -> no edge");
@@ -1404,6 +1508,7 @@ mod tests {
                 dseed("sha_ae2", "ae2", &["appeng/api"], &[], &[], None),
             ],
             packs: vec![],
+            modrinth_modids_learned: 0,
         };
 
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
@@ -1479,6 +1584,7 @@ mod tests {
                 ],
             )],
             packs: vec![],
+            modrinth_modids_learned: 0,
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.declared_deps, 3);
@@ -1537,6 +1643,7 @@ mod tests {
                 dseed("sha_ae2", "ae2", &["appeng/api"], &[], &[], None),
             ],
             packs: vec![],
+            modrinth_modids_learned: 0,
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.modrinth_deps, 0);
@@ -1631,6 +1738,7 @@ mod tests {
                 jar("sha_y", "dup", None, vec!["forge".into()]),
             ],
             packs: vec![],
+            modrinth_modids_learned: 0,
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.mods, 1, "same modid -> one identity");
@@ -1659,6 +1767,7 @@ mod tests {
                 jar("sha_any", "tweak", Some("1"), vec![]),
             ],
             packs: vec![],
+            modrinth_modids_learned: 0,
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
@@ -1677,6 +1786,7 @@ mod tests {
         let scan2 = ScanData {
             jars: vec![jar("sha_multi", "multi", Some("1"), vec!["forge".into()])],
             packs: vec![],
+            modrinth_modids_learned: 0,
         };
         r.with_txn(|c| write_scan(c, &scan2, "T1")).unwrap();
         r.with_conn(|c| {
@@ -1700,6 +1810,7 @@ mod tests {
                 vec!["forge".into(), "fabric".into()],
             )],
             packs: vec![],
+            modrinth_modids_learned: 0,
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_txn(|c| {
@@ -1715,6 +1826,7 @@ mod tests {
         let scan2 = ScanData {
             jars: vec![jar("sha_p", "pmod", Some("1"), vec!["forge".into()])],
             packs: vec![],
+            modrinth_modids_learned: 0,
         };
         r.with_txn(|c| write_scan(c, &scan2, "T1")).unwrap();
         r.with_conn(|c| {
@@ -1742,6 +1854,7 @@ mod tests {
         let scan = ScanData {
             jars: vec![a],
             packs: vec![],
+            modrinth_modids_learned: 0,
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {

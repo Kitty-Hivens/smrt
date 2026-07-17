@@ -81,6 +81,26 @@ pub fn mod_id_for_alias(
         .optional()?)
 }
 
+/// Modrinth project ids whose mod already carries a forge `modid` alias. Harvest
+/// uses this to skip re-fetching a Modrinth re-upload's jar: once the modid is
+/// learned and stored as an alias, the mod is fully identified and the (bandwidth-
+/// heavy) jar fetch never runs again for it.
+pub fn modrinth_projects_with_modid(conn: &Connection) -> Result<HashSet<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT m.external_key
+         FROM mod_alias m
+         WHERE m.source = 'modrinth'
+           AND EXISTS (
+               SELECT 1 FROM mod_alias d
+               WHERE d.mod_id = m.mod_id AND d.source = 'modid'
+           )",
+    )?;
+    let rows = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+    Ok(rows)
+}
+
 /// A mod's primary `modid` alias, used to fill a `relation.target_modid`
 /// selector when the derivation knows the target only by its surrogate id.
 pub fn modid_for_mod(conn: &Connection, mod_id: i64) -> Result<Option<String>> {
