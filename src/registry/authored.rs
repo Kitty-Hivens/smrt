@@ -106,6 +106,27 @@ pub fn merge_mods(conn: &Connection, from_mod_id: i64, into_mod_id: i64, now: &s
         bail!("target mod {into_mod_id} not in registry");
     }
 
+    fold_mods(conn, from_mod_id, into_mod_id, now)?;
+    // mark the survivor precious so the deliberate merge decision is not undone by
+    // a later harvest.
+    conn.execute(
+        "UPDATE mods SET source = 'authored', updated_at = ?2 WHERE id = ?1",
+        params![into_mod_id, now],
+    )?;
+    Ok(())
+}
+
+/// The identity-repointing core of a merge: fold every row owned by `from_mod_id`
+/// onto `into_mod_id` (colliding releases merged, not violated) and delete the
+/// emptied source, without touching the survivor's `source`. Shared by the
+/// operator [`merge_mods`] (which then marks the survivor precious) and the
+/// harvest's automatic collision merge (which keeps it harvest-managed). A
+/// `from == into` call is a no-op.
+pub fn fold_mods(conn: &Connection, from_mod_id: i64, into_mod_id: i64, now: &str) -> Result<()> {
+    if from_mod_id == into_mod_id {
+        return Ok(());
+    }
+
     // 1. releases: fold a colliding (version_number, channel) into the target's
     //    release, repoint the rest.
     let from_releases: Vec<(i64, String, String)> = {
@@ -171,11 +192,7 @@ pub fn merge_mods(conn: &Connection, from_mod_id: i64, into_mod_id: i64, now: &s
         params![from_mod_id],
     )?;
 
-    // 6. mark the survivor precious and drop the empty source.
-    conn.execute(
-        "UPDATE mods SET source = 'authored', updated_at = ?2 WHERE id = ?1",
-        params![into_mod_id, now],
-    )?;
+    // 6. drop the emptied source.
     conn.execute("DELETE FROM mods WHERE id = ?1", params![from_mod_id])?;
     Ok(())
 }
@@ -529,6 +546,106 @@ mod tests {
         // self-merge and an unknown id are rejected
         assert!(r.merge_mods(b, b).is_err());
         assert!(r.merge_mods(9999, b).is_err());
+    }
+
+    #[test]
+    fn upsert_auto_folds_a_modid_and_project_split() {
+        // The mirror ships IC2 from a Modrinth re-upload (known by project id) while
+        // a separate row carries the same mod by its forge modid. A later seed whose
+        // jar bridges both identities must fold the two rows into one, so a modid dep
+        // and a project placement resolve to the same mod.
+        let r = Registry::open_in_memory().unwrap();
+        let survivor = r
+            .with_txn(|c| {
+                let a = upsert::upsert_mod_by_alias(c, &[("modid", "ic2")], "T0")?;
+                upsert::upsert_mod_version(c, a, "2.8", &["forge"], "sha_a", 1, None, None, "T0")?;
+                let b = upsert::upsert_mod_by_alias(c, &[("modrinth", "wTncj5gs")], "T0")?;
+                upsert::upsert_mod_version(c, b, "2.8", &["forge"], "sha_b", 1, None, None, "T0")?;
+                // the bridging seed carries both identities at once
+                upsert::upsert_mod_by_alias(c, &[("modid", "ic2"), ("modrinth", "wTncj5gs")], "T1")
+            })
+            .unwrap();
+
+        r.with_conn(|c| {
+            assert_eq!(
+                queries::mod_id_for_alias(c, "modid", "ic2")?,
+                Some(survivor)
+            );
+            assert_eq!(
+                queries::mod_id_for_alias(c, "modrinth", "wTncj5gs")?,
+                Some(survivor)
+            );
+            let mods: i64 = c.query_row("SELECT count(*) FROM mods", [], |r| r.get(0))?;
+            assert_eq!(mods, 1, "the split collapsed to one mod");
+            let files: i64 = c.query_row(
+                "SELECT count(*) FROM mod_version WHERE mod_id = ?1",
+                params![survivor],
+                |r| r.get(0),
+            )?;
+            assert_eq!(files, 2, "both artifacts under the survivor");
+            let src: String = c.query_row(
+                "SELECT source FROM mods WHERE id = ?1",
+                params![survivor],
+                |r| r.get(0),
+            )?;
+            assert_eq!(
+                src, "harvested",
+                "an automatic merge stays harvest-managed, not marked precious"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn upsert_auto_merge_keeps_a_precious_row() {
+        // An operator-authored identity must never be deleted by the automatic
+        // collision merge: it is the survivor, the harvested row folds into it.
+        let r = Registry::open_in_memory().unwrap();
+        let (harvested, authored) = r
+            .with_txn(|c| {
+                let a = upsert::upsert_mod_by_alias(c, &[("modid", "ic2")], "T0")?;
+                upsert::upsert_mod_version(c, a, "2.8", &["forge"], "sha_a", 1, None, None, "T0")?;
+                let b = upsert::upsert_mod_by_alias(c, &[("modrinth", "proj")], "T0")?;
+                c.execute(
+                    "UPDATE mods SET source = 'authored' WHERE id = ?1",
+                    params![b],
+                )?;
+                Ok((a, b))
+            })
+            .unwrap();
+
+        let survivor = r
+            .with_txn(|c| {
+                upsert::upsert_mod_by_alias(c, &[("modid", "ic2"), ("modrinth", "proj")], "T1")
+            })
+            .unwrap();
+        assert_eq!(survivor, authored, "the precious row survives");
+
+        r.with_conn(|c| {
+            assert!(
+                c.query_row(
+                    "SELECT 1 FROM mods WHERE id = ?1",
+                    params![harvested],
+                    |_| Ok(())
+                )
+                .optional()?
+                .is_none(),
+                "the harvested row was folded away"
+            );
+            assert_eq!(
+                queries::mod_id_for_alias(c, "modid", "ic2")?,
+                Some(authored)
+            );
+            let src: String = c.query_row(
+                "SELECT source FROM mods WHERE id = ?1",
+                params![authored],
+                |r| r.get(0),
+            )?;
+            assert_eq!(src, "authored", "the survivor keeps its precious source");
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]

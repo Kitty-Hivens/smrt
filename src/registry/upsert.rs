@@ -3,6 +3,7 @@
 //! never clobbered (the `WHERE source NOT IN (...)` on each upsert). Call inside
 //! `Registry::with_conn_mut` (a write transaction).
 
+use super::authored;
 use super::model::{RelKind, Source};
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -18,11 +19,14 @@ pub fn now_rfc3339() -> String {
 /// Resolve a logical mod from any of its external keys, creating it if none
 /// match, and attach any missing aliases. This is how a jar carrying both a
 /// `modid` and a Modrinth `project_id` collapses to one identity, and how two
-/// jars of the same mod share it. (First-found wins; if two supplied aliases
-/// already point at *different* mods they stay separate -- a true merge is a
-/// Phase 2 concern.)
+/// jars of the same mod share it. When the supplied aliases point at *different*
+/// existing mods, those rows are one mod split across identities (a Modrinth
+/// re-upload known by project id, the same mod known by its forge modid), so they
+/// are folded into one -- see [`merge_collided_mods`] for the precious-row
+/// safeguards.
 pub fn upsert_mod_by_alias(conn: &Connection, aliases: &[(&str, &str)], now: &str) -> Result<i64> {
-    let mut found: Option<i64> = None;
+    // every distinct existing mod any of the aliases already points at
+    let mut matched: Vec<i64> = Vec::new();
     for (src, key) in aliases {
         if let Some(id) = conn
             .query_row(
@@ -31,21 +35,26 @@ pub fn upsert_mod_by_alias(conn: &Connection, aliases: &[(&str, &str)], now: &st
                 |r| r.get::<_, i64>(0),
             )
             .optional()?
+            && !matched.contains(&id)
         {
-            found = Some(id);
-            break;
+            matched.push(id);
         }
     }
-    let mod_id = match found {
-        Some(id) => id,
-        None => {
-            conn.execute(
-                "INSERT INTO mods (source, confidence, created_at, updated_at)
-                 VALUES ('harvested', 10, ?1, ?1)",
-                params![now],
-            )?;
-            conn.last_insert_rowid()
-        }
+    let mod_id = if matched.is_empty() {
+        conn.execute(
+            "INSERT INTO mods (source, confidence, created_at, updated_at)
+             VALUES ('harvested', 10, ?1, ?1)",
+            params![now],
+        )?;
+        conn.last_insert_rowid()
+    } else if matched.len() == 1 {
+        matched[0]
+    } else {
+        // One artifact's aliases point at several mod rows: they are one mod split
+        // across identities -- a Modrinth re-upload known by its project id, the
+        // same mod known by its forge modid. Fold them into one so a modid-keyed
+        // dependency and a project-keyed placement resolve to the same mod.
+        merge_collided_mods(conn, &matched, now)?
     };
     for (src, key) in aliases {
         conn.execute(
@@ -55,6 +64,40 @@ pub fn upsert_mod_by_alias(conn: &Connection, aliases: &[(&str, &str)], now: &st
         )?;
     }
     Ok(mod_id)
+}
+
+/// Fold the collided identities in `matched` into one survivor and return it. An
+/// operator-authored/curator row is never deleted by this automatic merge: the
+/// survivor is a precious row when one is present, and when two or more precious
+/// rows collide the split is left for the operator to resolve rather than guessed.
+/// Otherwise the lowest id survives, for a stable outcome across harvests.
+fn merge_collided_mods(conn: &Connection, matched: &[i64], now: &str) -> Result<i64> {
+    let is_precious = |id: i64| -> Result<bool> {
+        let source: String =
+            conn.query_row("SELECT source FROM mods WHERE id = ?1", params![id], |r| {
+                r.get(0)
+            })?;
+        Ok(matches!(source.as_str(), "authored" | "curator"))
+    };
+    let mut precious: Vec<i64> = Vec::new();
+    for &id in matched {
+        if is_precious(id)? {
+            precious.push(id);
+        }
+    }
+    if precious.len() >= 2 {
+        return Ok(*precious.iter().min().unwrap());
+    }
+    let canonical = precious
+        .first()
+        .copied()
+        .unwrap_or_else(|| *matched.iter().min().unwrap());
+    for &other in matched {
+        if other != canonical {
+            authored::fold_mods(conn, other, canonical, now)?;
+        }
+    }
+    Ok(canonical)
 }
 
 /// Fill a mod's human metadata (display name, Modrinth slug, author) from a
