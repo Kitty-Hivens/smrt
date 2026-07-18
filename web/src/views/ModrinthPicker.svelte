@@ -9,6 +9,7 @@
     mc,
     loader,
     projectType = 'mod',
+    initialQuery,
     onPick,
     onClose,
   }: {
@@ -17,11 +18,14 @@
     // only compatible versions first
     loader?: string;
     projectType?: string;
+    // pre-filled search (a resolve-report suggestion); searched immediately
+    initialQuery?: string;
     onPick: (sel: { project_id: string; slug: string; version_id: string; title: string }) => void;
     onClose: () => void;
   } = $props();
 
-  let q = $state('');
+  // svelte-ignore state_referenced_locally -- a mount-time prefill by design
+  let q = $state(initialQuery ?? '');
   let hits = $state<ModrinthHit[]>([]);
   let busy = $state(false);
   let err = $state('');
@@ -37,6 +41,11 @@
   function onInput() {
     clearTimeout(timer);
     timer = setTimeout(search, 300);
+  }
+
+  // svelte-ignore state_referenced_locally -- fires once for the prefill
+  if (q.trim()) {
+    void search();
   }
 
   async function search() {

@@ -90,6 +90,9 @@ pub struct ResolveReport {
     /// Server-side mods in the pack: legitimate, but the client manifest ships
     /// them opted out (never required, default-disabled).
     pub server_side: Vec<String>,
+    /// `Recommends` targets absent from the pack -- curator suggestions with a
+    /// manual add action, never auto-added.
+    pub suggestions: Vec<String>,
 }
 
 /// One Modrinth-vs-bytecode side conflict on a declared mod.
@@ -542,6 +545,7 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
     let mut provides: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut version_issues: Vec<VersionIssue> = Vec::new();
     let mut forced_client: BTreeMap<String, ForcedClientEdge> = BTreeMap::new();
+    let mut suggestions: BTreeSet<String> = BTreeSet::new();
     let mut unchecked = 0usize;
 
     for (ai, a) in present.iter().enumerate() {
@@ -674,9 +678,18 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
                         .or_default()
                         .insert(a.filename.clone());
                 }
+                // a Recommends target the pack lacks is a curator suggestion
+                RelKind::Recommends => {
+                    let absent = queries::mod_id_for_selector(conn, &e.target)?
+                        .and_then(|id| by_mod_id.get(&id))
+                        .is_none();
+                    if absent && !is_loader_dep(&e.target) {
+                        suggestions.insert(e.target.clone());
+                    }
+                }
                 // a soft dependency absent from the pack is the normal case, not a
                 // problem to report
-                RelKind::OptionalDep | RelKind::Recommends => {}
+                RelKind::OptionalDep => {}
             }
         }
     }
@@ -813,6 +826,7 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
         side_disagreements,
         forced_client_attempts,
         server_side,
+        suggestions: suggestions.into_iter().collect(),
     })
 }
 

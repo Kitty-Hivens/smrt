@@ -2,7 +2,10 @@
   import { t } from '../lib/i18n.svelte';
   import type { ResolveReport } from '../lib/types';
 
-  let { report }: { report: ResolveReport } = $props();
+  let {
+    report,
+    onSuggest,
+  }: { report: ResolveReport; onSuggest?: (selector: string) => void } = $props();
 
   // a clean run has nothing in any of the finding lists
   const clean = $derived(
@@ -11,7 +14,8 @@
       report.version_issues.length === 0 &&
       report.overlaps.length === 0 &&
       report.loader_mismatch.length === 0 &&
-      report.unresolved.length === 0,
+      report.unresolved.length === 0 &&
+      report.forced_client_attempts.length === 0,
   );
 </script>
 
@@ -26,6 +30,12 @@
     {#if report.loader_mismatch.length}<span class="pill danger">{t('resolve.loaderMismatch', { n: report.loader_mismatch.length })}</span>{/if}
     {#if report.loader_bridged.length}<span class="pill faint">{t('resolve.loaderBridged', { n: report.loader_bridged.length })}</span>{/if}
     {#if report.unresolved.length}<span class="pill faint">{t('resolve.unresolved', { n: report.unresolved.length })}</span>{/if}
+    {#if report.forced_client_attempts.length}<span class="pill danger">{t('resolve.forcedClient', { n: report.forced_client_attempts.length })}</span>{/if}
+    {#if report.side_disagreements.length}<span class="pill warn">{t('resolve.sideDis', { n: report.side_disagreements.length })}</span>{/if}
+    {#if report.coremods.length}<span class="pill faint">{t('resolve.coremods', { n: report.coremods.length })}</span>{/if}
+    {#if report.unclassified.length}<span class="pill faint">{t('resolve.unclassified', { n: report.unclassified.length })}</span>{/if}
+    {#if report.server_side.length}<span class="pill faint">{t('resolve.serverSide', { n: report.server_side.length })}</span>{/if}
+    {#if report.suggestions.length}<span class="pill faint">{t('resolve.suggestions', { n: report.suggestions.length })}</span>{/if}
     {#if clean}<span class="pill ok">{t('resolve.clean')}</span>{/if}
   </div>
 
@@ -37,7 +47,33 @@
           <span class="mono strong">{m.target}</span>
           {#if m.version_range}<span class="mono faint">{m.version_range}</span>{/if}
           <span class="faint">{t('resolve.neededBy', { who: m.needed_by.join(', ') })}</span>
+          {#if m.reason === 'external'}<span class="pill warn">{t('resolve.external')}</span>{/if}
           <span class="src mono">{m.source}</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  {#if report.forced_client_attempts.length}
+    <div class="rlist">
+      <div class="rl-h danger">{t('resolve.forcedClientH')}</div>
+      {#each report.forced_client_attempts as f}
+        <div class="rl-row">
+          <span class="mono strong">{f.filename}</span>
+          <span class="faint">{t('resolve.neededBy', { who: f.needed_by.join(', ') })}</span>
+          <span class="src mono">{f.source}</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  {#if report.side_disagreements.length}
+    <div class="rlist">
+      <div class="rl-h warn">{t('resolve.sideDisH')}</div>
+      {#each report.side_disagreements as d}
+        <div class="rl-row">
+          <span class="mono strong">{d.filename}</span>
+          <span class="faint">{t('resolve.sideDisRow', { mr: d.modrinth_side, bc: d.bytecode_side })}</span>
         </div>
       {/each}
     </div>
@@ -131,6 +167,47 @@
     </div>
   {/if}
 
+  {#if report.server_side.length}
+    <div class="rlist">
+      <div class="rl-h faint">{t('resolve.serverSideH')}</div>
+      {#each report.server_side as f}
+        <div class="rl-row"><span class="mono">{f}</span></div>
+      {/each}
+    </div>
+  {/if}
+
+  {#if report.coremods.length}
+    <div class="rlist">
+      <div class="rl-h faint">{t('resolve.coremodsH')}</div>
+      {#each report.coremods as f}
+        <div class="rl-row"><span class="mono">{f}</span></div>
+      {/each}
+    </div>
+  {/if}
+
+  {#if report.unclassified.length}
+    <div class="rlist">
+      <div class="rl-h faint">{t('resolve.unclassifiedH')}</div>
+      {#each report.unclassified as f}
+        <div class="rl-row"><span class="mono">{f}</span></div>
+      {/each}
+    </div>
+  {/if}
+
+  {#if report.suggestions.length}
+    <div class="rlist">
+      <div class="rl-h faint">{t('resolve.suggestionsH')}</div>
+      {#each report.suggestions as sel}
+        <div class="rl-row">
+          <span class="mono">{sel}</span>
+          {#if onSuggest}
+            <button class="add" onclick={() => onSuggest(sel)}>{t('resolve.addSuggested')}</button>
+          {/if}
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   {#if report.version_windows_unchecked}
     <div class="rfoot faint">{t('resolve.unchecked', { n: report.version_windows_unchecked })}</div>
   {/if}
@@ -214,5 +291,18 @@
   .rfoot {
     margin-top: var(--space-3);
     font-size: 11px;
+  }
+  .add {
+    background: transparent;
+    border: 1px solid var(--seam);
+    color: var(--fg-dim);
+    font-size: 10.5px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .add:hover {
+    border-color: var(--accent, var(--fg));
+    color: var(--fg);
   }
 </style>

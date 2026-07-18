@@ -29,6 +29,16 @@
   let expanded = $state(false);
   const d = $derived(mod.display);
   const depCount = $derived(edges.length + missing.length);
+  // side badge for the toggleable classes; `required` is already the lock chip
+  const presenceKey = {
+    optional_client: 'mr.presenceClient',
+    optional_server: 'mr.presenceServer',
+    optional_both: 'mr.presenceBoth',
+    coremod: 'mr.presenceCoremod',
+  } as const;
+  const presence = $derived(
+    d?.presence && d.presence !== 'required' ? presenceKey[d.presence] : null,
+  );
 </script>
 
 <div class="row" class:alt class:off={!enabled}>
@@ -48,6 +58,7 @@
       {#if locked}<span class="chip req">{t('mr.required')}</span>{:else}<span class="chip opt"
           >{t('mr.optional')}</span
         >{/if}
+      {#if presence}<span class="chip side">{t(presence)}</span>{/if}
       {#if d?.license}<span class="chip lic">{d.license}</span>{/if}
       {#if conflicts.length}<span class="chip warn" title={t('mr.conflictsWith', { list: conflicts.join(', ') })}
           >{t('mr.conflicts')}</span
@@ -168,6 +179,10 @@
   .chip.warn {
     color: var(--p-danger);
     border-color: color-mix(in srgb, var(--p-danger) 50%, transparent);
+  }
+  .chip.side {
+    color: var(--p-fg-dim);
+    border-style: dashed;
   }
   .exp {
     flex: none;

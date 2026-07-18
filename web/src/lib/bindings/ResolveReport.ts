@@ -95,4 +95,9 @@ forced_client_attempts: Array<ForcedClientEdge>,
  * Server-side mods in the pack: legitimate, but the client manifest ships
  * them opted out (never required, default-disabled).
  */
-server_side: Array<string>, };
+server_side: Array<string>, 
+/**
+ * `Recommends` targets absent from the pack -- curator suggestions with a
+ * manual add action, never auto-added.
+ */
+suggestions: Array<string>, };

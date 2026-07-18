@@ -138,6 +138,8 @@
 
   // source picker: { src, row } -- row null means "add a new mod"
   let pick = $state<{ src: 'cache' | 'modrinth' | 'github'; row: number | null } | null>(null);
+  // a resolve-report suggestion routed into the Modrinth picker as its search
+  let suggestQuery = $state('');
   let dropBusy = $state(false);
   // asset Modrinth picker: which folder + Modrinth project kind
   let assetPick = $state<{ folder: string; projectType: 'resourcepack' | 'shader' } | null>(null);
@@ -529,6 +531,7 @@
       if (!m.filename) m.filename = `${sel.slug}.jar`;
     }
     pick = null;
+    suggestQuery = '';
   }
 
   function addAsset() {
@@ -661,7 +664,13 @@
         </div>
       {:else}
         {#if resErr}<div class="err mono">{resErr}</div>{/if}
-        {#if resReport}<ResolvePanel report={resReport} />{/if}
+        {#if resReport}<ResolvePanel
+            report={resReport}
+            onSuggest={(sel) => {
+              suggestQuery = sel.replace(/^modrinth:/, '');
+              pick = { src: 'modrinth', row: null };
+            }}
+          />{/if}
         {#if valErr}<div class="err mono">{valErr}</div>{/if}
         {#if valReport}
           <div class="panel valrep">
@@ -876,7 +885,11 @@
   <ModrinthPicker
     mc={cfg.minecraft_version}
     loader={cfg.loader.name}
-    onClose={() => (pick = null)}
+    initialQuery={suggestQuery}
+    onClose={() => {
+      pick = null;
+      suggestQuery = '';
+    }}
     onPick={onModrinthPick}
   />
 {/if}

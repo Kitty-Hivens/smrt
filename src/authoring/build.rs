@@ -5,8 +5,8 @@
 use super::modrinth::Modrinth;
 use super::sources::{ModrinthCache, resolve_asset, resolve_mod, sha1_hex};
 use crate::domain::{
-    AssetEntry, JavaSpec, LoaderSpec, MatchPolicy, MinecraftSpec, ModEntry, PackConfig,
-    PackManifest, PackSummary, SCHEMA_VERSION, SideClass,
+    AssetEntry, Display, JavaSpec, LoaderSpec, MatchPolicy, MinecraftSpec, ModEntry, PackConfig,
+    PackManifest, PackSummary, PresenceClass, SCHEMA_VERSION, SideClass,
 };
 use crate::registry::classify::Classification;
 use anyhow::{Result, bail};
@@ -209,6 +209,31 @@ fn derive_required(
 
     for (i, m) in mods.iter_mut().enumerate() {
         m.required = required.contains(&i);
+        // The advisory presence class, collapsing side + policy + the graph
+        // outcome for the launcher UI. Unclassified stays absent -- an old-style
+        // entry -- and a stale value from a previous build never lingers.
+        let presence = match classifications.get(&m.filename) {
+            Some(c) if c.is_non_mod() => Some(PresenceClass::Coremod),
+            Some(c) => match c.side {
+                Some(SideClass::Client) => Some(PresenceClass::OptionalClient),
+                Some(SideClass::Server) => Some(PresenceClass::OptionalServer),
+                _ if m.required => Some(PresenceClass::Required),
+                Some(SideClass::Both) if c.policy == Some(MatchPolicy::Tolerant) => {
+                    Some(PresenceClass::OptionalBoth)
+                }
+                _ => None,
+            },
+            None if m.required => Some(PresenceClass::Required),
+            None => None,
+        };
+        match presence {
+            Some(p) => m.display.get_or_insert_with(Display::default).presence = Some(p),
+            None => {
+                if let Some(d) = &mut m.display {
+                    d.presence = None;
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -443,7 +468,8 @@ mod tests {
 
     // The symptom-1 fix: a default-enabled content mod (must_match) is required
     // in itself, with no dependents needed; a tolerant top-level mod stays
-    // toggleable; the transitive hard deps of enabled mods stay locked.
+    // toggleable; the transitive hard deps of enabled mods stay locked. The
+    // presence class rides out on the display block.
     #[test]
     fn must_match_content_mod_is_required_without_dependents() {
         let mut mods = vec![
@@ -464,6 +490,21 @@ mod tests {
         ]);
         derive_required(&mut mods, &cl).unwrap();
         assert_eq!(required_set(&mods), vec!["ArsNouveau.jar", "lib.jar"]);
+
+        let presence = |f: &str| {
+            mods.iter()
+                .find(|m| m.filename == f)
+                .and_then(|m| m.display.as_ref())
+                .and_then(|d| d.presence)
+        };
+        assert_eq!(presence("ArsNouveau.jar"), Some(PresenceClass::Required));
+        assert_eq!(presence("JEI.jar"), Some(PresenceClass::OptionalBoth));
+        assert_eq!(
+            presence("lib.jar"),
+            Some(PresenceClass::Required),
+            "graph-locked without a classification still reads required"
+        );
+        assert_eq!(presence("addon.jar"), None, "unclassified stays absent");
     }
 
     // An opted-out must_match mod stays out: the curator removed it from the
