@@ -181,9 +181,25 @@ fn derive_required(
         }
         // The client invariant. Inferred edges were downgraded before the
         // graph was written, so reaching here means a DECLARED hard edge (or a
-        // must_match verdict) on a client-side mod -- bad data the curator
-        // must fix; shipping it would force-install a client mod.
+        // must_match verdict) on a client-side mod. When the client verdict is
+        // solid (explicit markers, Modrinth flags), that is bad data the
+        // curator must fix -- shipping it would force-install a client mod.
+        // When it came from the blanket-surface heuristic alone, the declared
+        // edge is the stronger evidence (a both-side mod hard-requiring the
+        // target means the target runs server-side too, the bspkrsCore-class
+        // library shape): the lock stands and the resolve report shows the
+        // pair as a forced-client attempt for the curator to settle.
         if side(m) == Some(SideClass::Client) {
+            if classifications
+                .get(&m.filename)
+                .is_some_and(|c| c.client_verdict_is_soft())
+            {
+                tracing::warn!(
+                    filename = %m.filename,
+                    "declared hard edges outweigh a low-confidence client verdict; locking required"
+                );
+                continue;
+            }
             let drivers: Vec<&str> = mods
                 .iter()
                 .filter(|o| {
@@ -215,7 +231,9 @@ fn derive_required(
         let presence = match classifications.get(&m.filename) {
             Some(c) if c.is_non_mod() => Some(PresenceClass::Coremod),
             Some(c) => match c.side {
-                Some(SideClass::Client) => Some(PresenceClass::OptionalClient),
+                // a required client survivor exists only via the soft-verdict
+                // override; it reads required, not client
+                Some(SideClass::Client) if !m.required => Some(PresenceClass::OptionalClient),
                 Some(SideClass::Server) => Some(PresenceClass::OptionalServer),
                 _ if m.required => Some(PresenceClass::Required),
                 Some(SideClass::Both) if c.policy == Some(MatchPolicy::Tolerant) => {
@@ -432,6 +450,7 @@ mod tests {
             provenance: Provenance::Bytecode,
             bytecode_side: side,
             bytecode_policy: policy,
+            side_confidence: side.map(|_| "high".to_string()),
         }
     }
 
@@ -555,6 +574,31 @@ mod tests {
         let err = derive_required(&mut mods, &cl).unwrap_err().to_string();
         assert!(err.contains("ctm.jar"), "names the client mod: {err}");
         assert!(err.contains("chisel.jar"), "names the driver: {err}");
+    }
+
+    // A low-confidence (surface-heuristic) client verdict yields to a declared
+    // hard edge: the mod locks required with a warning instead of failing the
+    // build -- the bspkrsCore-class library shape.
+    #[test]
+    fn soft_client_verdict_yields_to_a_declared_edge() {
+        let mut mods = vec![
+            entry("TreeCapitator.jar", true, &["bspkrsCore.jar"]),
+            entry("bspkrsCore.jar", true, &[]),
+        ];
+        let mut soft = cls(Some(SideClass::Client), Some(MatchPolicy::Tolerant));
+        soft.side_confidence = Some("low".into());
+        let cl = HashMap::from([("bspkrsCore.jar".to_string(), soft)]);
+        derive_required(&mut mods, &cl).unwrap();
+        assert!(
+            mods[1].required,
+            "the declared edge wins over the heuristic"
+        );
+        let presence = mods[1].display.as_ref().and_then(|d| d.presence);
+        assert_eq!(
+            presence,
+            Some(PresenceClass::Required),
+            "a required survivor reads required, not client"
+        );
     }
 
     // A coremod/library jar is never required, even when an edge points at it.

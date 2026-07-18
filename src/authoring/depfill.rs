@@ -406,7 +406,7 @@ mod tests {
         let a = add_artifact(&r, "chisel", "1.0", "sha_a", "chisel.jar");
         add_artifact(&r, "ctm", "1.0", "sha_ctm", "ctm.jar");
         r.with_conn_mut(|c| {
-            upsert::set_jar_class(c, "sha_ctm", "mod", Some("client"), Some("tolerant"))?;
+            upsert::set_jar_class(c, "sha_ctm", "mod", Some("client"), Some("tolerant"), None)?;
             upsert::upsert_relation(
                 c,
                 a,

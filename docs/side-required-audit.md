@@ -174,7 +174,66 @@ cannot actually join a Create server. The plan's priority (Modrinth over
 bytecode) therefore needs the E.3 disagreement advisory, not silent trust --
 Create is the flagship case the advisory must surface.
 
-## 6. Notes carried into stages B-I
+## 6. Stage I: end-to-end acceptance (2026-07-18, post-rework)
+
+Pipeline exercised on the replica exactly as production runs it: `registry
+harvest` (fresh, migrations 12-14 applied), `depfill` per pack (the same pass
+the panel runs on save; it pulled create_oxidized + collective for Create and
+malilib + theimpossiblelibrary for Industrial, and recorded 29 + 60 hard
+edges), then `build`.
+
+Required-set outcome, against the stage-A baseline ("what depfill +
+derive_required would have produced before the rework") and the legacy
+published manifests (hand-set flags):
+
+| pack | legacy published | pre-rework baseline | now | explanation |
+| --- | --- | --- | --- | --- |
+| Create | 43/50 | 11/50 | 39/52 | every content mod + addon required via must_match or the graph; client mods (ChatHeads, WorldEditCUI, Configured) and tolerant Both mods (Jade, REI, Xaeros, libs) toggleable; the 2 depfill-pulled mods unclassified until the next harvest |
+| Industrial | 52/91 | 20/90 | 45/93 | all 1.12 content mods required via bytecode content signals; 20 mods badged optional_client; server-side mods (Born In A Barn, Ksyxis, hit-indication) shipped default-off; ChickenASM presence=coremod, toggleable |
+
+Both plan symptoms verified closed on the real packs:
+
+- symptom 1: ArsNouveau, FTBQuests, every Create-* addon, Quark, RailCraft,
+  CustomNPCs, ... are required with zero hand-set flags;
+- symptom 2: ConnectedTexturesMod flipped baseline-required -> optional_client
+  (the inferred Chisel edge downgraded by the guard); WorldEditCUI, stuck
+  required=true in the legacy manifest, is optional_client now.
+
+The poisoned-data invariant test ran live: an authored hard edge onto `ctm`
+made the Industrial build refuse with "client-side mod ConnectedTexturesMod.jar
+would be locked required (hard-required by AppliedEnergistics2.jar)".
+
+One hardening landed during acceptance: the blanket client-surface heuristic
+had read bspkrsCore (a client-heavy library TreeCapitator hard-requires on both
+sides) as client, and the invariant blocked a legitimate build. Side verdicts
+now carry a confidence grade (`jar_class.side_confidence`, migration 0014):
+explicit markers and Modrinth flags are `high` and the invariant stands;
+the surface heuristic is `low`, and a declared hard edge outweighs it -- the
+mod locks with a warning and the resolve report shows the pair. The corpus
+ratios confirmed no threshold can separate that shape locally (bspkrsCore's
+client-surface ratio, 56%, exceeds genuinely-client WailaHarvestability's 50%).
+
+Corpus grading after the rework (tests/corpus_classify.rs over 57 labels):
+cascade 52/57, bytecode-only population 22/24, zero must_match verdicts on
+client-labeled jars. The five persistent misses are documented upstream-flag
+quirks (Create declares client=optional; Architectury/MixinBooter declare
+required/required for what are standalone-tolerant libraries -- the E-layer
+advisory surfaces exactly these) plus two safe unclassified degradations
+(Schematica, autoreglib's Block-base false content signal).
+
+Harvest cost: the per-jar parse (the full single-pass reader) measured 75-97
+ms/jar over the 147-jar corpus both before and after the classifier rework
+(debug profile, three runs each, identical ownership checksums) -- the v2
+signals stay constant-pool-bounded and the scan remains dominated by Modrinth
+round-trips. Instruments: `examples/parse_bench.rs`, `examples/evidence_dump.rs`.
+
+Left for the curator (the unclassified list on the replica registry --
+match policy undecided, shipped toggleable): BCFuelsForIC2, FTBLibrary, Hats,
+JEIBees, LunatriusCore, NBTEdit, ProjectRed-Integration, Schematica, WanionLib.
+Each would firm up from an authored classification or better upstream flags;
+none can be locked or force anything meanwhile.
+
+## 7. Notes carried into stages B-I
 
 - `RelKind::Recommends` needs only a producer decision + panel surfacing; the
   vocab, parser, and resolver skip-path already exist.

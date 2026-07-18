@@ -23,13 +23,15 @@ async fn send_with_backoff(req: reqwest::RequestBuilder) -> Result<reqwest::Resp
     if resp.status().as_u16() != 429 {
         return Ok(resp);
     }
+    // Cloudflare's 1015 ships Retry-After 0 (or none); a zero wait would retry
+    // into the same window, so the floor is 30s regardless.
     let wait = resp
         .headers()
         .get(reqwest::header::RETRY_AFTER)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(60)
-        .min(120);
+        .clamp(30, 120);
     tracing::warn!(wait, "modrinth rate limit hit; backing off once");
     tokio::time::sleep(Duration::from_secs(wait)).await;
     req.send().await.context("modrinth send (retry)")

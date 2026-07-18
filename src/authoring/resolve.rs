@@ -347,9 +347,12 @@ pub struct MissingTarget {
     pub version_range: Option<String>,
 }
 
-/// Classify each placed jar mod of the pack through the decision layer, keyed
-/// by filename -- the map the build consumes to seed required-ness and emit
-/// presence. A mod the registry cannot place is absent (unclassified).
+/// Classify each declared jar mod of the pack through the decision layer,
+/// keyed by filename -- the map the build consumes to seed required-ness and
+/// emit presence. An identity-less jar the harvest still read (a bare
+/// coremod/library) classifies by its jar_class row alone, so its coremod
+/// presence reaches the manifest; a jar the registry knows nothing about is
+/// absent (unclassified).
 pub fn classify_pack(
     conn: &Connection,
     cfg: &PackConfig,
@@ -359,6 +362,17 @@ pub fn classify_pack(
     for p in &placed.present {
         let c = classify_artifact(conn, Some(p.mod_id), p.sha1.as_deref())?;
         out.insert(p.filename.clone(), c);
+    }
+    for m in &cfg.mods {
+        if out.contains_key(&m.filename) {
+            continue;
+        }
+        if let SourceDecl::SmrtCache { sha1 } = &m.source {
+            let c = classify_artifact(conn, None, Some(sha1))?;
+            if c.kind.is_some() {
+                out.insert(m.filename.clone(), c);
+            }
+        }
     }
     Ok(out)
 }
@@ -1433,7 +1447,14 @@ mod tests {
         let chisel = add_mod(&r, "chisel", "1.0", "sha_chisel");
         add_mod(&r, "ctm", "1.0", "sha_ctm");
         r.with_conn_mut(|c| {
-            crate::registry::upsert::set_jar_class(c, "sha_ctm", "mod", Some("client"), None)?;
+            crate::registry::upsert::set_jar_class(
+                c,
+                "sha_ctm",
+                "mod",
+                Some("client"),
+                None,
+                None,
+            )?;
             Ok(())
         })
         .unwrap();
@@ -1481,6 +1502,7 @@ mod tests {
                 "mod",
                 Some("client"),
                 Some("tolerant"),
+                None,
             )?;
             Ok(())
         })
@@ -1512,7 +1534,14 @@ mod tests {
         let r = Registry::open_in_memory().unwrap();
         // a bare ASM library: jar_class row, no registry identity
         r.with_conn_mut(|c| {
-            crate::registry::upsert::set_jar_class(c, &"a".repeat(40), "library", None, None)?;
+            crate::registry::upsert::set_jar_class(
+                c,
+                &"a".repeat(40),
+                "library",
+                None,
+                None,
+                None,
+            )?;
             Ok(())
         })
         .unwrap();
@@ -1529,6 +1558,7 @@ mod tests {
                 "mod",
                 Some("server"),
                 Some("tolerant"),
+                None,
             )?;
             crate::registry::upsert::set_mod_env_flags(
                 c,
@@ -1543,6 +1573,7 @@ mod tests {
                 "mod",
                 Some("both"),
                 Some("must_match"),
+                None,
             )?;
             Ok(())
         })

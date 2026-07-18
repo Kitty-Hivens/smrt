@@ -60,13 +60,14 @@ fn like_escape(s: &str) -> String {
 pub fn jar_class_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<JarClassRow>> {
     Ok(conn
         .query_row(
-            "SELECT kind, side, match_policy FROM jar_class WHERE sha1 = ?1",
+            "SELECT kind, side, match_policy, side_confidence FROM jar_class WHERE sha1 = ?1",
             params![sha1],
             |r| {
                 Ok(JarClassRow {
                     kind: r.get(0)?,
                     side: r.get(1)?,
                     match_policy: r.get(2)?,
+                    side_confidence: r.get(3)?,
                 })
             },
         )

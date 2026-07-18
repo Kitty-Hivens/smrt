@@ -358,14 +358,17 @@ pub fn set_jar_class(
     kind: &str,
     side: Option<&str>,
     match_policy: Option<&str>,
+    side_confidence: Option<&str>,
 ) -> Result<()> {
     conn.execute(
-        "INSERT INTO jar_class (sha1, kind, side, match_policy) VALUES (?1, ?2, ?3, ?4)
+        "INSERT INTO jar_class (sha1, kind, side, match_policy, side_confidence)
+         VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(sha1) DO UPDATE SET
            kind = excluded.kind,
            side = excluded.side,
-           match_policy = excluded.match_policy",
-        params![sha1, kind, side, match_policy],
+           match_policy = excluded.match_policy,
+           side_confidence = excluded.side_confidence",
+        params![sha1, kind, side, match_policy, side_confidence],
     )?;
     Ok(())
 }

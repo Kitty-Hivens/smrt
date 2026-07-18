@@ -47,6 +47,27 @@ impl JarKind {
     }
 }
 
+/// How solid a side verdict is: `High` -- an explicit marker decided it (@Mod
+/// side flags, fabric env/entrypoints, a dist blanket, content registration);
+/// `Low` -- the blanket client-surface heuristic, which reads a client-heavy
+/// library (bspkrsCore-class) as client. The client invariant refuses a build
+/// only over a high-confidence verdict; a declared hard edge outweighs a low
+/// one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SideConfidence {
+    High,
+    Low,
+}
+
+impl SideConfidence {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SideConfidence::High => "high",
+            SideConfidence::Low => "low",
+        }
+    }
+}
+
 /// Meta-level signals the zip walk collects beside the classes, feeding the
 /// classification.
 #[derive(Debug, Clone, Default)]
@@ -105,6 +126,8 @@ pub struct JarBytecode {
     pub optional_refs: BTreeSet<String>,
     /// Derived side, or `None` when the signals do not decide it.
     pub side: Option<SideClass>,
+    /// How solid the side verdict is; `None` when there is no side.
+    pub side_confidence: Option<SideConfidence>,
     /// Derived server-match policy, or `None` when undecided. A `None` policy
     /// on a Mod-kind jar is what the resolve layer reports `unclassified`.
     pub match_policy: Option<MatchPolicy>,
@@ -363,12 +386,13 @@ pub(crate) fn aggregate(classes: &[ClassInfo], signals: &JarSignals) -> JarBytec
         .cloned()
         .collect();
 
-    let (side, match_policy, kind, evidence) = classify(classes, signals);
+    let (side, side_confidence, match_policy, kind, evidence) = classify(classes, signals);
     JarBytecode {
         owned,
         hard_refs,
         optional_refs,
         side,
+        side_confidence,
         match_policy,
         kind: Some(kind),
         mod_id: classes.iter().find_map(|c| c.mod_id.clone()),
@@ -380,10 +404,15 @@ pub(crate) fn aggregate(classes: &[ClassInfo], signals: &JarSignals) -> JarBytec
 /// side + match policy for a mod. Signal priority inside the bytecode branch:
 /// explicit side annotations > fabric env > content registration > blanket
 /// client analysis; an axis nothing decides stays `None` (never a guess).
-fn classify(
-    classes: &[ClassInfo],
-    signals: &JarSignals,
-) -> (Option<SideClass>, Option<MatchPolicy>, JarKind, Evidence) {
+type Verdict = (
+    Option<SideClass>,
+    Option<SideConfidence>,
+    Option<MatchPolicy>,
+    JarKind,
+    Evidence,
+);
+
+fn classify(classes: &[ClassInfo], signals: &JarSignals) -> Verdict {
     let mut ev = Evidence {
         classes: classes.len(),
         sided_proxy: classes.iter().any(|c| c.sided_proxy),
@@ -438,7 +467,7 @@ fn classify(
     };
     if kind != JarKind::Mod {
         // not a mod: presence is the coremod branch, side/policy undecided
-        return (None, None, kind, ev);
+        return (None, None, None, kind, ev);
     }
 
     // 1. Explicit @Mod side flags (1.7-1.12), folded across bundled mods. A
@@ -448,6 +477,7 @@ fn classify(
     if ann_client && !ann_server {
         return (
             Some(SideClass::Client),
+            Some(SideConfidence::High),
             Some(MatchPolicy::Tolerant),
             kind,
             ev,
@@ -456,6 +486,7 @@ fn classify(
     if ann_server && !ann_client {
         return (
             Some(SideClass::Server),
+            Some(SideConfidence::High),
             Some(MatchPolicy::Tolerant),
             kind,
             ev,
@@ -470,6 +501,7 @@ fn classify(
         Some(SideClass::Client) => {
             return (
                 Some(SideClass::Client),
+                Some(SideConfidence::High),
                 Some(MatchPolicy::Tolerant),
                 kind,
                 ev,
@@ -478,6 +510,7 @@ fn classify(
         Some(SideClass::Server) => {
             return (
                 Some(SideClass::Server),
+                Some(SideConfidence::High),
                 Some(MatchPolicy::Tolerant),
                 kind,
                 ev,
@@ -500,23 +533,47 @@ fn classify(
         } else {
             MatchPolicy::MustMatch
         };
-        return (Some(SideClass::Both), Some(policy), kind, ev);
+        return (
+            Some(SideClass::Both),
+            Some(SideConfidence::High),
+            Some(policy),
+            kind,
+            ev,
+        );
     }
 
     // A declared tolerance marker without content: both-side, tolerant (the
     // JEI shape -- runs everywhere, server may lack it).
     if tolerant_marker {
-        return (Some(SideClass::Both), Some(MatchPolicy::Tolerant), kind, ev);
+        return (
+            Some(SideClass::Both),
+            Some(SideConfidence::High),
+            Some(MatchPolicy::Tolerant),
+            kind,
+            ev,
+        );
     }
 
     // 4. Blanket client analysis: no content, and the mod's Minecraft surface
     // is the client. A Fabric client entrypoint with no main one is the same
     // shape (intermediary names defeat the package check there).
-    let client_only_shape = (ev.client_classes > 0 && ev.dist_server_classes == 0)
-        || (signals.fabric_client_entrypoint && !signals.fabric_main_entrypoint);
+    // A fabric client entrypoint with no main one is an author declaration;
+    // the package-surface ratio alone is a heuristic that misreads a
+    // client-heavy library (bspkrsCore-class) as client, so it grades Low.
+    if signals.fabric_client_entrypoint && !signals.fabric_main_entrypoint {
+        return (
+            Some(SideClass::Client),
+            Some(SideConfidence::High),
+            Some(MatchPolicy::Tolerant),
+            kind,
+            ev,
+        );
+    }
+    let client_only_shape = ev.client_classes > 0 && ev.dist_server_classes == 0;
     if client_only_shape && ev.client_classes * 2 >= ev.mc_touching {
         return (
             Some(SideClass::Client),
+            Some(SideConfidence::Low),
             Some(MatchPolicy::Tolerant),
             kind,
             ev,
@@ -528,7 +585,8 @@ fn classify(
     if signals.fabric_env == Some(SideClass::Both) {
         side_pin = side_pin.or(Some(SideClass::Both));
     }
-    (side_pin, None, kind, ev)
+    let conf = side_pin.map(|_| SideConfidence::High);
+    (side_pin, conf, None, kind, ev)
 }
 
 /// Classes that touch Minecraft at all (reference `net/minecraft/**`), the

@@ -68,6 +68,7 @@ pub struct JarSeed {
     // bytes), which is different from a scanned jar the classifier could not
     // decide (kind present, side/policy None).
     pub side: Option<String>,
+    pub side_confidence: Option<String>,
     pub match_policy: Option<String>,
     pub kind: Option<String>,
     // Modrinth `version.dependencies` for a Modrinth-identified jar. This is
@@ -511,6 +512,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                 kind,
                 jar.side.as_deref(),
                 jar.match_policy.as_deref(),
+                jar.side_confidence.as_deref(),
             )?;
             if jar.side.is_some() {
                 sides_derived += 1;
@@ -1319,6 +1321,9 @@ pub async fn scan(
                     .map(|b| b.optional_refs.iter().cloned().collect())
                     .unwrap_or_default(),
                 side: bc.and_then(|b| b.side).map(|s| s.as_str().to_string()),
+                side_confidence: bc
+                    .and_then(|b| b.side_confidence)
+                    .map(|c| c.as_str().to_string()),
                 match_policy: bc
                     .and_then(|b| b.match_policy)
                     .map(|p| p.as_str().to_string()),
@@ -1426,6 +1431,7 @@ mod tests {
                     hard_refs: vec![],
                     optional_refs: vec![],
                     side: None,
+                    side_confidence: None,
                     match_policy: None,
                     kind: None,
                     modrinth_deps: vec![],
@@ -1451,6 +1457,7 @@ mod tests {
                     hard_refs: vec![],
                     optional_refs: vec![],
                     side: None,
+                    side_confidence: None,
                     match_policy: None,
                     kind: None,
                     modrinth_deps: vec![],
@@ -1476,6 +1483,7 @@ mod tests {
                     hard_refs: vec![],
                     optional_refs: vec![],
                     side: None,
+                    side_confidence: None,
                     match_policy: None,
                     kind: None,
                     modrinth_deps: vec![],
@@ -1877,6 +1885,7 @@ mod tests {
             hard_refs: vec![],
             optional_refs: vec![],
             side: None,
+            side_confidence: None,
             match_policy: None,
             kind: None,
             modrinth_deps: vec![],
@@ -1914,6 +1923,7 @@ mod tests {
             hard_refs: strs(hard),
             optional_refs: strs(opt),
             side: side.map(String::from),
+            side_confidence: side.map(|_| "high".to_string()),
             match_policy: None,
             kind: Some("mod".into()),
             modrinth_deps: vec![],

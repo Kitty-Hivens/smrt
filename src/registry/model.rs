@@ -100,6 +100,8 @@ pub struct JarClassRow {
     pub kind: String,
     pub side: Option<String>,
     pub match_policy: Option<String>,
+    /// 'high' | 'low' -- see the 0014 migration comment.
+    pub side_confidence: Option<String>,
 }
 
 /// One edge out of a mod in the dependency graph, as the resolver reads it:

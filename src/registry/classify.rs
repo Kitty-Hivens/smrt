@@ -55,6 +55,10 @@ pub struct Classification {
     /// side disagreement can be reported rather than silently overridden.
     pub bytecode_side: Option<SideClass>,
     pub bytecode_policy: Option<MatchPolicy>,
+    /// Confidence of the winning side verdict: Modrinth flags and explicit
+    /// bytecode markers are `high`; the blanket client-surface heuristic is
+    /// `low`. `None` when there is no side.
+    pub side_confidence: Option<String>,
 }
 
 impl Classification {
@@ -71,6 +75,15 @@ impl Classification {
             (Provenance::ModrinthEnv, Some(win), Some(bc)) if win != bc => Some((win, bc)),
             _ => None,
         }
+    }
+
+    /// A client verdict soft enough for a declared hard edge to outweigh: the
+    /// blanket-surface heuristic only. Explicit markers and Modrinth flags are
+    /// never overridden.
+    pub fn client_verdict_is_soft(&self) -> bool {
+        self.side == Some(SideClass::Client)
+            && self.provenance == Provenance::Bytecode
+            && self.side_confidence.as_deref() == Some("low")
     }
 }
 
@@ -90,6 +103,7 @@ pub fn classify_artifact(
         .as_ref()
         .and_then(|j| j.side.as_deref())
         .and_then(SideClass::parse);
+    let bytecode_confidence = jar.as_ref().and_then(|j| j.side_confidence.clone());
     let bytecode_policy = jar
         .as_ref()
         .and_then(|j| j.match_policy.as_deref())
@@ -116,6 +130,7 @@ pub fn classify_artifact(
             provenance: Provenance::JarKind,
             bytecode_side,
             bytecode_policy,
+            side_confidence: None,
         }
     } else if let Some((side, policy)) = modrinth {
         Classification {
@@ -125,6 +140,7 @@ pub fn classify_artifact(
             provenance: Provenance::ModrinthEnv,
             bytecode_side,
             bytecode_policy,
+            side_confidence: Some("high".to_string()),
         }
     } else if bytecode_side.is_some() || bytecode_policy.is_some() {
         Classification {
@@ -134,6 +150,7 @@ pub fn classify_artifact(
             provenance: Provenance::Bytecode,
             bytecode_side,
             bytecode_policy,
+            side_confidence: bytecode_confidence,
         }
     } else {
         Classification {
@@ -143,6 +160,7 @@ pub fn classify_artifact(
             provenance: Provenance::Unclassified,
             bytecode_side,
             bytecode_policy,
+            side_confidence: None,
         }
     };
     tracing::debug!(
@@ -178,7 +196,7 @@ mod tests {
                     upsert::set_mod_env_flags(c, id, Some(client), Some(server), NOW)?;
                 }
                 if let Some((kind, side, policy)) = jar {
-                    upsert::set_jar_class(c, &sha, kind, side, policy)?;
+                    upsert::set_jar_class(c, &sha, kind, side, policy, None)?;
                 }
                 Ok(id)
             })
