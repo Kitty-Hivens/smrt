@@ -127,6 +127,32 @@ pub fn set_mod_meta(
     Ok(())
 }
 
+/// Record a Modrinth project's declared environment flags on its mod. The
+/// modrinth layer is rebuildable, so a fresh value overwrites a stale one --
+/// but `COALESCE(new, existing)` keeps a known flag when a harvest could not
+/// reach Modrinth (both slots None short-circuits to a no-op anyway), and
+/// precious rows are skipped like every other enrichment write.
+pub fn set_mod_env_flags(
+    conn: &Connection,
+    mod_id: i64,
+    client_env: Option<&str>,
+    server_env: Option<&str>,
+    now: &str,
+) -> Result<()> {
+    if client_env.is_none() && server_env.is_none() {
+        return Ok(());
+    }
+    conn.execute(
+        "UPDATE mods SET
+           client_env = COALESCE(?2, client_env),
+           server_env = COALESCE(?3, server_env),
+           updated_at = ?4
+         WHERE id = ?1 AND source NOT IN ('curator', 'authored')",
+        params![mod_id, client_env, server_env, now],
+    )?;
+    Ok(())
+}
+
 /// Find-or-create the release (version node) grouping a mod's files that share
 /// `(version_number, channel)`. Harvested releases default to channel 'unknown';
 /// the authored layer sets a real channel. Idempotent -- a re-harvest reuses the

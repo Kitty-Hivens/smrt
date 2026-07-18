@@ -93,6 +93,23 @@ pub fn modrinth_project_aliases(conn: &Connection) -> Result<HashSet<String>> {
     Ok(rows)
 }
 
+/// Modrinth project ids whose owning mod has no environment flags recorded yet.
+/// The scan refetches these projects so a mod that acquired its alias after the
+/// fact (the self-host slug bridge) or predates the env columns still gets its
+/// flags on the next harvest; the set shrinks to nothing once the registry is
+/// warm.
+pub fn modrinth_aliases_without_env(conn: &Connection) -> Result<HashSet<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT a.external_key
+         FROM mod_alias a JOIN mods m ON m.id = a.mod_id
+         WHERE a.source = 'modrinth' AND m.client_env IS NULL",
+    )?;
+    let rows = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+    Ok(rows)
+}
+
 /// Modrinth project ids whose mod already carries a forge `modid` alias. Harvest
 /// uses this to skip re-fetching a Modrinth re-upload's jar: once the modid is
 /// learned and stored as an alias, the mod is fully identified and the (bandwidth-

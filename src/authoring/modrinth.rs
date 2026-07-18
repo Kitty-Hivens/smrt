@@ -318,6 +318,14 @@ pub struct Project {
     pub slug: String,
     pub title: String,
     pub team: String,
+    /// Declared environment flags: `required` | `optional` | `unsupported`
+    /// (upstream also ships `unknown`). Authored by the project owner, so they
+    /// can be wrong -- the classifier maps them with priority but the resolve
+    /// report surfaces disagreements with the bytecode derivation.
+    #[serde(default)]
+    pub client_side: String,
+    #[serde(default)]
+    pub server_side: String,
 }
 
 #[derive(Deserialize)]
@@ -376,7 +384,10 @@ pub struct Version {
 
 /// A Modrinth version dependency. `project_id` is the target (Modrinth
 /// namespace); `version_id` pins an exact version when set; `dependency_type` is
-/// required|optional|incompatible|embedded.
+/// required|optional|incompatible|embedded. `file_name` is Modrinth's slot for
+/// an external dependency (`project_id` null): the file the mod needs that
+/// lives outside Modrinth -- the hybrid-resolution key for matching it against
+/// the mirror's own cache.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dependency {
     #[serde(default)]
@@ -385,6 +396,8 @@ pub struct Dependency {
     pub version_id: Option<String>,
     #[serde(default)]
     pub dependency_type: String,
+    #[serde(default)]
+    pub file_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

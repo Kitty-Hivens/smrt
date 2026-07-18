@@ -19,7 +19,7 @@ use super::bytecode;
 use super::classfile::parse_class;
 use super::curator::{JarFacts, McModInfo, clean_mc_version, mcmod_modids, parse_mcmod_info};
 use super::modmeta;
-use super::modrinth::Modrinth;
+use super::modrinth::{Modrinth, Project};
 use crate::registry::model::{RelKind, Source};
 use crate::registry::{Registry, queries, upsert};
 use crate::storage::Storage;
@@ -30,6 +30,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// A cached/manifested jar reduced to the facts the registry needs.
+#[derive(Clone)]
 pub struct JarSeed {
     pub sha1: String,
     pub size_bytes: i64,
@@ -106,6 +107,11 @@ pub struct ScanData {
     /// target, so `write_scan` can link a `modrinth:<project>` dependency to a
     /// self-hosted provider whose forge modid matches the project slug.
     pub dep_project_slugs: HashMap<String, String>,
+    /// `project_id -> (client_side, server_side)` for every project object this
+    /// scan fetched. Applied by `write_scan` through the `modrinth` alias once
+    /// aliases are settled, so the flags land on whatever mod owns the project
+    /// -- including a self-hosted provider linked to it by slug.
+    pub project_envs: HashMap<String, (String, String)>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -806,6 +812,21 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         }
     }
 
+    // Environment flags, applied per project through the alias -- after the
+    // link/reconcile steps above so a self-hosted provider that just acquired
+    // the project alias gets its flags in the same run.
+    for (pid, (client, server)) in &scan.project_envs {
+        if let Some(mod_id) = queries::mod_id_for_alias(conn, "modrinth", pid)? {
+            upsert::set_mod_env_flags(
+                conn,
+                mod_id,
+                (!client.is_empty()).then_some(client.as_str()),
+                (!server.is_empty()).then_some(server.as_str()),
+                now,
+            )?;
+        }
+    }
+
     // drop the provisional 'unknown' releases left empty once files moved to
     // their channel / content-signature release
     upsert::prune_empty_releases(conn)?;
@@ -837,6 +858,7 @@ pub async fn scan(
     modrinth: &Modrinth,
     known_modid_projects: &HashSet<String>,
     known_project_aliases: &HashSet<String>,
+    envless_project_aliases: &HashSet<String>,
 ) -> Result<ScanData> {
     let inventory = storage.list_cache_inventory().await.map_err(ae)?;
     let mut size_by_sha: HashMap<String, i64> = inventory
@@ -966,23 +988,33 @@ pub async fn scan(
         }
     };
 
-    // enrich human metadata (name/slug/author) for Modrinth-identified jars: one
-    // batched project lookup for title+slug+team, then one batched team lookup for
-    // the owner username. Both degrade to empty on failure -- jar-meta still fills
-    // name/author where present, identity harvest is unaffected.
+    // enrich metadata for Modrinth-identified jars: one batched project lookup
+    // (title, slug, team, environment flags), then one batched team lookup for
+    // the owner username. Both degrade to empty on failure -- jar-meta still
+    // fills name/author where present, identity harvest is unaffected.
     //
-    // Privacy: only hit Modrinth for a sha whose local jar-meta is missing a name
-    // or author. A jar that already names itself + its authors needs no project or
-    // team call -- the egress stays limited to what the mirror cannot answer from
-    // the bytes it already holds (a slug, only Modrinth has, is the tradeoff).
+    // The project batch covers EVERY identified project: only the project
+    // object carries the client_side/server_side environment flags, and those
+    // are the priority-1 side source for classification. Egress note: the ids
+    // sent here already reached Modrinth in the sha1 lookup above, so no new
+    // information leaves the machine. The team (author) lookup keeps the
+    // narrow privacy gate: only projects whose jar-meta lacks a name or author.
     let needs_enrich = |sha: &str| match mcmod_by_sha.get(sha) {
         Some(i) => i.name.trim().is_empty() || i.authors.is_empty(),
         None => true,
     };
-    let project_ids: Vec<String> = modrinth_by_sha
+    let enrich_projects: HashSet<String> = modrinth_by_sha
         .iter()
         .filter(|(sha, _)| needs_enrich(sha))
         .map(|(_, v)| v.project_id.clone())
+        .collect();
+    let project_ids: Vec<String> = modrinth_by_sha
+        .values()
+        .map(|v| v.project_id.clone())
+        .chain(manifest_modrinth_by_sha.values().map(|(p, _)| p.clone()))
+        // aliased projects still missing env flags (an alias the self-host slug
+        // bridge attached after the fact, or rows predating the env columns)
+        .chain(envless_project_aliases.iter().cloned())
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
@@ -1007,23 +1039,34 @@ pub async fn scan(
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
-    let dep_project_slugs: HashMap<String, String> = if dep_projects.is_empty() {
+    let dep_project_objects: HashMap<String, Project> = if dep_projects.is_empty() {
         HashMap::new()
     } else {
         match modrinth.projects_by_ids(&dep_projects).await {
-            Ok(m) => m
-                .into_iter()
-                .filter(|(_, p)| !p.slug.is_empty())
-                .map(|(pid, p)| (pid, p.slug))
-                .collect(),
+            Ok(m) => m,
             Err(e) => {
                 tracing::warn!(error = %e, "modrinth dep-project slug lookup failed; self-host links skipped");
                 HashMap::new()
             }
         }
     };
+    let dep_project_slugs: HashMap<String, String> = dep_project_objects
+        .iter()
+        .filter(|(_, p)| !p.slug.is_empty())
+        .map(|(pid, p)| (pid.clone(), p.slug.clone()))
+        .collect();
+
+    // Environment flags of every project object this scan saw, keyed by project
+    // id; write_scan lands them through the alias once identities are settled.
+    let mut project_envs: HashMap<String, (String, String)> = HashMap::new();
+    for p in projects.values().chain(dep_project_objects.values()) {
+        if !p.client_side.is_empty() || !p.server_side.is_empty() {
+            project_envs.insert(p.id.clone(), (p.client_side.clone(), p.server_side.clone()));
+        }
+    }
     let team_ids: Vec<String> = projects
         .values()
+        .filter(|p| enrich_projects.contains(&p.id))
         .map(|p| p.team.clone())
         .collect::<HashSet<_>>()
         .into_iter()
@@ -1081,7 +1124,12 @@ pub async fn scan(
             let facts = facts_by_sha.get(&sha);
             let bc = bytecode_by_sha.get(&sha);
             let mm = modmeta_by_sha.get(&sha);
-            let project = mrv.and_then(|v| projects.get(&v.project_id));
+            // Modrinth identity: the sha1 match, else the project the manifest
+            // itself declares (a repackaged jar Modrinth does not know by hash).
+            let project_id = mrv
+                .map(|v| v.project_id.clone())
+                .or_else(|| manifest_modrinth_by_sha.get(&sha).map(|(p, _)| p.clone()));
+            let project = project_id.as_deref().and_then(|p| projects.get(p));
             // name: jar-meta name wins (local), else Modrinth title
             let name = info
                 .map(|i| i.name.clone())
@@ -1115,9 +1163,7 @@ pub async fn scan(
                     .map(|i| i.version.clone())
                     .filter(|s| !s.is_empty())
                     .or_else(|| mrv.map(|v| v.version_number.clone())),
-                project_id: mrv
-                    .map(|v| v.project_id.clone())
-                    .or_else(|| manifest_modrinth_by_sha.get(&sha).map(|(p, _)| p.clone())),
+                project_id,
                 // loader: Modrinth's set wins; else the jar's own marker
                 // (mcmod.info/mods.toml -> forge, fabric.mod.json -> fabric); else
                 // empty (-> 'any' downstream)
@@ -1189,6 +1235,7 @@ pub async fn scan(
         packs,
         modrinth_modids_learned,
         dep_project_slugs,
+        project_envs,
     })
 }
 
@@ -1201,21 +1248,24 @@ pub async fn run_harvest(
     // Modrinth projects whose mod already carries a forge modid alias -- their jar
     // was read once before, so the scan skips re-fetching it (the one-time cost).
     let reg = registry.clone();
-    let (known_modid_projects, known_project_aliases) = tokio::task::spawn_blocking(move || {
-        reg.with_conn(|c| {
-            Ok((
-                queries::modrinth_projects_with_modid(c)?,
-                queries::modrinth_project_aliases(c)?,
-            ))
+    let (known_modid_projects, known_project_aliases, envless_project_aliases) =
+        tokio::task::spawn_blocking(move || {
+            reg.with_conn(|c| {
+                Ok((
+                    queries::modrinth_projects_with_modid(c)?,
+                    queries::modrinth_project_aliases(c)?,
+                    queries::modrinth_aliases_without_env(c)?,
+                ))
+            })
         })
-    })
-    .await
-    .map_err(|e| anyhow::anyhow!("known-modid query task: {e}"))??;
+        .await
+        .map_err(|e| anyhow::anyhow!("known-modid query task: {e}"))??;
     let scan = scan(
         storage,
         modrinth,
         &known_modid_projects,
         &known_project_aliases,
+        &envless_project_aliases,
     )
     .await?;
     let now = upsert::now_rfc3339();
@@ -1329,6 +1379,7 @@ mod tests {
             }],
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         }
     }
 
@@ -1502,6 +1553,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 1,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
@@ -1540,6 +1592,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: HashMap::from([("NvZ9ZhwE".to_string(), "autoreglib".to_string())]),
+            project_envs: Default::default(),
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.modrinth_selfhost_links, 1);
@@ -1572,6 +1625,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
@@ -1610,6 +1664,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: HashMap::from([("NvZ9ZhwE".to_string(), "autoreglib".to_string())]),
+            project_envs: Default::default(),
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T1")).unwrap();
         assert_eq!(
@@ -1651,6 +1706,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
@@ -1796,6 +1852,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         };
 
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
@@ -1886,6 +1943,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(
@@ -1937,6 +1995,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.inferred_requires, 0, "ambiguous prefix -> no edge");
@@ -1972,6 +2031,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         };
 
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
@@ -2049,6 +2109,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.declared_deps, 3);
@@ -2109,6 +2170,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.modrinth_deps, 0);
@@ -2205,6 +2267,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.mods, 1, "same modid -> one identity");
@@ -2235,6 +2298,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
@@ -2255,6 +2319,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         };
         r.with_txn(|c| write_scan(c, &scan2, "T1")).unwrap();
         r.with_conn(|c| {
@@ -2280,6 +2345,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_txn(|c| {
@@ -2297,6 +2363,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         };
         r.with_txn(|c| write_scan(c, &scan2, "T1")).unwrap();
         r.with_conn(|c| {
@@ -2308,6 +2375,105 @@ mod tests {
                 t,
                 vec!["fabric".to_string(), "forge".to_string()],
                 "authored targets survive re-harvest"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // The Modrinth environment flags land on the mods row through the project
+    // alias, refresh when upstream changes them, survive a flagless re-scan,
+    // reach a self-host-linked provider in the same run, and never touch an
+    // authored row.
+    #[test]
+    fn write_scan_records_and_refreshes_env_flags() {
+        let r = Registry::open_in_memory().unwrap();
+        let mut a = jar("sha_env", "envmod", Some("1"), vec!["forge".into()]);
+        a.project_id = Some("PROJ_ENV".into());
+        let scan_with = |envs: &[(&str, &str, &str)]| ScanData {
+            jars: vec![a.clone()],
+            packs: vec![],
+            modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
+            project_envs: envs
+                .iter()
+                .map(|(p, c, s)| (p.to_string(), (c.to_string(), s.to_string())))
+                .collect(),
+        };
+        let env = |r: &Registry| -> (Option<String>, Option<String>) {
+            r.with_conn(|c| {
+                Ok(c.query_row(
+                    "SELECT client_env, server_env FROM mods LIMIT 1",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?)
+            })
+            .unwrap()
+        };
+
+        let s0 = scan_with(&[("PROJ_ENV", "required", "unsupported")]);
+        r.with_txn(|c| write_scan(c, &s0, "T0")).unwrap();
+        assert_eq!(
+            env(&r),
+            (Some("required".into()), Some("unsupported".into()))
+        );
+
+        // upstream corrected the flags -> refreshed
+        let s1 = scan_with(&[("PROJ_ENV", "optional", "optional")]);
+        r.with_txn(|c| write_scan(c, &s1, "T1")).unwrap();
+        assert_eq!(env(&r), (Some("optional".into()), Some("optional".into())));
+
+        // a scan that could not reach Modrinth (no env objects) keeps the known ones
+        let s2 = scan_with(&[]);
+        r.with_txn(|c| write_scan(c, &s2, "T2")).unwrap();
+        assert_eq!(env(&r), (Some("optional".into()), Some("optional".into())));
+
+        // an authored mods row is precious: the flags do not move
+        r.with_txn(|c| {
+            c.execute("UPDATE mods SET source = 'authored'", [])?;
+            Ok(())
+        })
+        .unwrap();
+        let s3 = scan_with(&[("PROJ_ENV", "unsupported", "required")]);
+        r.with_txn(|c| write_scan(c, &s3, "T3")).unwrap();
+        assert_eq!(
+            env(&r),
+            (Some("optional".into()), Some("optional".into())),
+            "authored row untouched"
+        );
+    }
+
+    // A self-hosted provider that acquires its project alias through the slug
+    // bridge gets that project's env flags in the same write_scan run.
+    #[test]
+    fn selfhost_link_applies_env_flags_in_the_same_run() {
+        let r = Registry::open_in_memory().unwrap();
+        let scan = ScanData {
+            jars: vec![jar(
+                "sha_arl",
+                "autoreglib",
+                Some("1"),
+                vec!["forge".into()],
+            )],
+            packs: vec![],
+            modrinth_modids_learned: 0,
+            dep_project_slugs: HashMap::from([("NvZ9ZhwE".to_string(), "autoreglib".to_string())]),
+            project_envs: HashMap::from([(
+                "NvZ9ZhwE".to_string(),
+                ("required".to_string(), "required".to_string()),
+            )]),
+        };
+        r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        r.with_conn(|c| {
+            let (client, server): (Option<String>, Option<String>) = c.query_row(
+                "SELECT client_env, server_env FROM mods LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            assert_eq!(
+                (client.as_deref(), server.as_deref()),
+                (Some("required"), Some("required")),
+                "the dep project's flags land on the linked self-hosted mod"
             );
             Ok(())
         })
@@ -2326,6 +2492,7 @@ mod tests {
             packs: vec![],
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
