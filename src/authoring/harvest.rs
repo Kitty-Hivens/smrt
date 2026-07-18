@@ -70,16 +70,27 @@ pub struct JarSeed {
     pub side: Option<String>,
     pub match_policy: Option<String>,
     pub kind: Option<String>,
-    // Modrinth `version.dependencies` (target project_id, dependency_type, pinned
-    // version_id if any), for a Modrinth-identified jar. This is Modrinth's curated
-    // dependency graph -- more reliable than either a jar declaration or bytecode --
-    // so it is authoritative and suppresses every other dependency source for the
-    // same mod.
-    pub modrinth_deps: Vec<(String, String, Option<String>)>,
+    // Modrinth `version.dependencies` for a Modrinth-identified jar. This is
+    // Modrinth's curated dependency graph -- more reliable than either a jar
+    // declaration or bytecode -- so it is authoritative and suppresses every
+    // other dependency source for the same mod. Includes external dependencies
+    // (no target project, a bare file name): the hybrid case.
+    pub modrinth_deps: Vec<ModrinthDepSeed>,
     // Modern declared deps (mods.toml / neoforge.mods.toml / fabric.mod.json):
     // typed, version-ranged. Emitted for a non-Modrinth jar; the target modid,
     // its relation kind, and an optional version range.
     pub declared_deps: Vec<(String, RelKind, Option<String>)>,
+}
+
+/// One Modrinth version dependency as the seed carries it: the target project
+/// (`None` for an external dependency), its type, a pinned version id, and the
+/// external file name when the target lives outside Modrinth.
+#[derive(Clone, Default)]
+pub struct ModrinthDepSeed {
+    pub project_id: Option<String>,
+    pub dep_type: String,
+    pub version_id: Option<String>,
+    pub file_name: Option<String>,
 }
 
 pub struct BuildModSeed {
@@ -302,6 +313,27 @@ fn resolve_edge_target(
     Ok(queries::modrinth_id_for_mod(conn, owner)?.map(|pid| format!("modrinth:{pid}")))
 }
 
+/// Resolve a Modrinth EXTERNAL dependency's file name to a registry selector:
+/// an artifact the mirror knows by that exact filename (its mod's modid, else
+/// its `modrinth:` alias), else the filename stem as a case-insensitive modid
+/// (`CustomNPCs-1.12.jar` -> `customnpcs`). `None` -> genuinely external.
+fn external_dep_selector(conn: &Connection, file_name: &str) -> Result<Option<String>> {
+    if let Some(owner) = queries::mod_id_for_filename(conn, file_name)? {
+        if let Some(modid) = queries::modid_for_mod(conn, owner)? {
+            return Ok(Some(modid));
+        }
+        if let Some(pid) = queries::modrinth_id_for_mod(conn, owner)? {
+            return Ok(Some(format!("modrinth:{pid}")));
+        }
+    }
+    let stem = file_name.trim_end_matches(".jar");
+    let stem = stem.split(['-', '_', ' ']).next().unwrap_or(stem);
+    if !stem.is_empty() && queries::mod_id_for_selector(conn, stem)?.is_some() {
+        return Ok(Some(stem.to_string()));
+    }
+    Ok(None)
+}
+
 /// Map a Modrinth `dependency_type` to a relation kind. `embedded` (a bundled
 /// jar-in-jar library) is not an external requirement and yields no edge; an
 /// unknown type is ignored.
@@ -465,6 +497,8 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
     // second pass once every jar's packages are in the index.
     let mut derivations: Vec<(i64, i64, &JarSeed)> = Vec::new();
 
+    // external Modrinth deps deferred past jar registration (the hybrid case)
+    let mut external_deps: Vec<(i64, i64, RelKind, String)> = Vec::new();
     let mut no_identity = 0usize;
     for jar in &scan.jars {
         // Per-jar classification, keyed by content hash -- recorded for every
@@ -598,27 +632,45 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         let owned: Vec<&str> = jar.owned_packages.iter().map(String::as_str).collect();
         upsert::set_mod_packages(conn, mod_id, &owned)?;
 
-        // Emit Modrinth's curated deps whenever the jar is Modrinth-identified. The
-        // target lives in the `modrinth:<project_id>` selector namespace, and for
-        // such an edge the version slot carries the exact pinned Modrinth
-        // version_id (when Modrinth pins one), not a Maven range.
+        // Emit Modrinth's curated deps whenever the jar is Modrinth-identified.
+        // A project-keyed dep targets the `modrinth:<project_id>` selector
+        // namespace, with the exact pinned version_id (when pinned) in the
+        // version slot rather than a Maven range. An EXTERNAL dep (no target
+        // project, a bare file name -- the hybrid case) resolves through the
+        // mirror's own knowledge: an artifact by that exact filename, else a
+        // modid guessed from the stem; unresolved it lands in the
+        // `external:<file_name>` namespace so the resolver reports it as an
+        // out-of-ecosystem dependency instead of a resolver bug.
         if let Some(pid) = jar.project_id.as_deref() {
-            for (dep_pid, dep_type, version_id) in &jar.modrinth_deps {
-                if dep_pid == pid {
-                    continue; // a project never depends on itself
-                }
-                if let Some(kind) = modrinth_rel_kind(dep_type)
-                    && upsert::upsert_relation(
-                        conn,
-                        mod_id,
-                        Some(mod_version_id),
-                        &format!("modrinth:{dep_pid}"),
-                        version_id.as_deref(),
-                        kind,
-                        Source::Modrinth,
-                        now,
-                    )?
-                {
+            for dep in &jar.modrinth_deps {
+                let Some(kind) = modrinth_rel_kind(&dep.dep_type) else {
+                    continue;
+                };
+                let (target, range) = match (&dep.project_id, &dep.file_name) {
+                    (Some(dep_pid), _) => {
+                        if dep_pid == pid {
+                            continue; // a project never depends on itself
+                        }
+                        (format!("modrinth:{dep_pid}"), dep.version_id.as_deref())
+                    }
+                    (None, Some(fname)) => {
+                        // resolved after the loop: the filename bridge needs
+                        // every jar registered first
+                        external_deps.push((mod_id, mod_version_id, kind, fname.clone()));
+                        continue;
+                    }
+                    (None, None) => continue, // nothing to key the target on
+                };
+                if upsert::upsert_relation(
+                    conn,
+                    mod_id,
+                    Some(mod_version_id),
+                    &target,
+                    range,
+                    kind,
+                    Source::Modrinth,
+                    now,
+                )? {
                     modrinth_deps_written += 1;
                 }
             }
@@ -852,6 +904,26 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                 params![mod_id, dep_pid],
             )?;
             modrinth_selfhost_links += inserted as i64;
+        }
+    }
+
+    // External Modrinth deps (the hybrid case) resolve once every jar is
+    // registered: the filename bridge needs the full artifact table, and the
+    // identity folds above may have just settled the selector it lands on.
+    for (from_mod, from_mv, kind, fname) in &external_deps {
+        let target =
+            external_dep_selector(conn, fname)?.unwrap_or_else(|| format!("external:{fname}"));
+        if upsert::upsert_relation(
+            conn,
+            *from_mod,
+            Some(*from_mv),
+            &target,
+            None,
+            *kind,
+            Source::Modrinth,
+            now,
+        )? {
+            modrinth_deps_written += 1;
         }
     }
 
@@ -1258,10 +1330,12 @@ pub async fn scan(
                     .map(|v| {
                         v.dependencies
                             .iter()
-                            .filter_map(|d| {
-                                d.project_id
-                                    .clone()
-                                    .map(|p| (p, d.dependency_type.clone(), d.version_id.clone()))
+                            .filter(|d| d.project_id.is_some() || d.file_name.is_some())
+                            .map(|d| ModrinthDepSeed {
+                                project_id: d.project_id.clone(),
+                                dep_type: d.dependency_type.clone(),
+                                version_id: d.version_id.clone(),
+                                file_name: d.file_name.clone(),
                             })
                             .collect()
                     })
@@ -1859,7 +1933,12 @@ mod tests {
         s.project_id = Some(project_id.into());
         s.modrinth_deps = deps
             .iter()
-            .map(|(p, t, v)| (p.to_string(), t.to_string(), v.map(String::from)))
+            .map(|(p, t, v)| ModrinthDepSeed {
+                project_id: Some(p.to_string()),
+                dep_type: t.to_string(),
+                version_id: v.map(String::from),
+                file_name: None,
+            })
             .collect();
         s
     }
@@ -2144,6 +2223,60 @@ mod tests {
                     ),
                 ],
                 "typed Modrinth edges with a version pin; embedded + self dropped; no inferred edge"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // The hybrid case: a Modrinth mod's external dependency (no target project,
+    // a bare file name) resolves against the mirror's own knowledge -- an
+    // artifact by that exact filename, else the filename stem as a modid --
+    // and an unresolvable one lands in the external: namespace so the resolver
+    // can report it as out-of-ecosystem.
+    #[test]
+    fn write_scan_resolves_external_deps_through_the_mirror() {
+        let r = Registry::open_in_memory().unwrap();
+        let mut host = mseed("sha_host", "hostmod", "PROJ_H", &[]);
+        host.modrinth_deps = vec![
+            ModrinthDepSeed {
+                project_id: None,
+                dep_type: "required".into(),
+                version_id: None,
+                file_name: Some("CustomNPCs.jar".into()),
+            },
+            ModrinthDepSeed {
+                project_id: None,
+                dep_type: "required".into(),
+                version_id: None,
+                file_name: Some("Unknown-1.0.jar".into()),
+            },
+        ];
+        let mut npc = jar("sha_npc", "customnpcs", Some("1"), vec!["forge".into()]);
+        npc.filename = Some("CustomNPCs.jar".into());
+        let scan = ScanData {
+            jars: vec![host, npc],
+            packs: vec![],
+            modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
+        };
+        r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        r.with_conn(|c| {
+            let host_id = queries::mod_id_for_alias(c, "modid", "hostmod")?.unwrap();
+            let mut stmt = c.prepare(
+                "SELECT target_modid FROM relation WHERE from_mod_id = ?1 ORDER BY target_modid",
+            )?;
+            let targets = stmt
+                .query_map([host_id], |r| r.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            assert_eq!(
+                targets,
+                vec![
+                    "customnpcs".to_string(),
+                    "external:Unknown-1.0.jar".to_string()
+                ],
+                "known filename bridges to the mod's selector; unknown stays external"
             );
             Ok(())
         })

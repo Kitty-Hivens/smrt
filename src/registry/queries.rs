@@ -73,6 +73,19 @@ pub fn jar_class_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<JarCla
         .optional()?)
 }
 
+/// The mod owning an artifact with this exact filename (case-insensitive),
+/// newest artifact first -- the external-dependency filename bridge.
+pub fn mod_id_for_filename(conn: &Connection, file_name: &str) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT mod_id FROM mod_version WHERE filename = ?1 COLLATE NOCASE
+             ORDER BY id DESC LIMIT 1",
+            params![file_name],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
 /// The content hash of a harvested artifact row.
 pub fn sha1_for_mod_version(conn: &Connection, mod_version_id: i64) -> Result<Option<String>> {
     Ok(conn

@@ -5,4 +5,10 @@
  * (a modid, or `modrinth:<project_id>`); `needed_by` are the filenames that
  * require it; `source` is the provenance of the authoritative edge.
  */
-export type MissingDep = { target: string, needed_by: Array<string>, version_range?: string, source: string, };
+export type MissingDep = { target: string, needed_by: Array<string>, version_range?: string, source: string, 
+/**
+ * Why the dependency cannot be satisfied automatically, when known:
+ * `external` -- a Modrinth dependency naming only a file, living outside
+ * both Modrinth and the mirror. Not a resolver bug; curator material.
+ */
+reason?: string, };

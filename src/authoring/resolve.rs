@@ -127,6 +127,12 @@ pub struct MissingDep {
     #[ts(optional)]
     pub version_range: Option<String>,
     pub source: String,
+    /// Why the dependency cannot be satisfied automatically, when known:
+    /// `external` -- a Modrinth dependency naming only a file, living outside
+    /// both Modrinth and the mirror. Not a resolver bug; curator material.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reason: Option<String>,
 }
 
 /// Two present mods the graph marks incompatible. `breaks` distinguishes the
@@ -320,11 +326,22 @@ struct PlacedMods {
 /// present mod (an edge, for `display.requires`) and the ones nothing satisfies
 /// (candidates to auto-add).
 pub struct DepFillPlan {
-    /// Hard-dep selectors (a modid or `modrinth:<project>`) no present mod covers.
-    pub missing: Vec<String>,
+    /// Hard dependencies no present mod covers -- the auto-pull candidates.
+    pub missing: Vec<MissingTarget>,
     /// `(mod filename, its hard-dep filename)` among present mods -- the graph
     /// `display.requires` records so the build can derive required-ness.
     pub requires: Vec<(String, String)>,
+    /// `Recommends` targets absent from the pack: shown to the curator as
+    /// suggestions with a manual add action, never auto-added.
+    pub suggested: Vec<String>,
+}
+
+/// One unsatisfied hard dependency: the graph selector plus the requirer's
+/// version window (checked against a cache candidate before auto-adding it).
+#[derive(Debug, Clone)]
+pub struct MissingTarget {
+    pub selector: String,
+    pub version_range: Option<String>,
 }
 
 /// Classify each placed jar mod of the pack through the decision layer, keyed
@@ -379,12 +396,27 @@ pub fn dependency_fill_plan(conn: &Connection, cfg: &PackConfig) -> Result<DepFi
     }
     // target-mod classifications, resolved lazily once per mod id
     let mut target_class: HashMap<i64, Classification> = HashMap::new();
-    let mut missing: BTreeSet<String> = BTreeSet::new();
+    let mut missing: BTreeMap<String, Option<String>> = BTreeMap::new();
     let mut requires: Vec<(String, String)> = Vec::new();
+    let mut suggested: BTreeSet<String> = BTreeSet::new();
     for a in &placed.present {
         let mut seen: HashSet<String> = HashSet::new();
         for e in queries::relations_for_artifact(conn, a.mod_version_id.unwrap_or(-1), a.mod_id)? {
-            if e.kind != RelKind::Requires || !seen.insert(e.target.clone()) {
+            if !seen.insert(format!("{}\x1f{}", e.kind.as_str(), e.target)) {
+                continue;
+            }
+            // a Recommends target the pack lacks is a curator suggestion,
+            // never an auto-add
+            if e.kind == RelKind::Recommends {
+                let absent = queries::mod_id_for_selector(conn, &e.target)?
+                    .and_then(|id| by_mod_id.get(&id))
+                    .is_none();
+                if absent && !is_loader_dep(&e.target) {
+                    suggested.insert(e.target.clone());
+                }
+                continue;
+            }
+            if e.kind != RelKind::Requires {
                 continue;
             }
             if is_loader_dep(&e.target) {
@@ -411,14 +443,24 @@ pub fn dependency_fill_plan(conn: &Connection, cfg: &PackConfig) -> Result<DepFi
                     {
                         continue;
                     }
-                    missing.insert(e.target.clone());
+                    // first requirer's window wins (highest-confidence edge)
+                    missing
+                        .entry(e.target.clone())
+                        .or_insert(e.version_range.clone());
                 }
             }
         }
     }
     Ok(DepFillPlan {
-        missing: missing.into_iter().collect(),
+        missing: missing
+            .into_iter()
+            .map(|(selector, version_range)| MissingTarget {
+                selector,
+                version_range,
+            })
+            .collect(),
         requires,
+        suggested: suggested.into_iter().collect(),
     })
 }
 
@@ -588,6 +630,10 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
                                 missing
                                     .entry(e.target.clone())
                                     .or_insert_with(|| MissingDep {
+                                        reason: e
+                                            .target
+                                            .starts_with("external:")
+                                            .then(|| "external".to_string()),
                                         target: e.target.clone(),
                                         needed_by: Vec::new(),
                                         version_range: e.version_range.clone(),
@@ -920,8 +966,11 @@ mod tests {
         ]);
         let plan = r.with_conn(|c| dependency_fill_plan(c, &cfg)).unwrap();
         assert_eq!(
-            plan.missing,
-            vec!["modc".to_string()],
+            plan.missing
+                .iter()
+                .map(|t| t.selector.as_str())
+                .collect::<Vec<_>>(),
+            vec!["modc"],
             "modc is not in the pack"
         );
         assert_eq!(
@@ -1509,6 +1558,28 @@ mod tests {
             ),
             ("disputed.jar", "client", "both")
         );
+    }
+
+    // An external dependency (out of both ecosystems) reports missing with the
+    // external reason, so the curator sees it is not a resolver bug.
+    #[test]
+    fn external_missing_dep_carries_its_reason() {
+        use crate::registry::model::Source;
+        let r = Registry::open_in_memory().unwrap();
+        let a = add_mod(&r, "hostmod", "1.0", "sha_h");
+        relate(
+            &r,
+            a,
+            "external:OptiFine.jar",
+            None,
+            RelKind::Requires,
+            Source::Modrinth,
+        );
+        let cfg = config(vec![declared("host.jar", true, cache("sha_h"))]);
+        let rep = r.with_conn(|c| resolve_pack(c, &cfg)).unwrap();
+        assert_eq!(rep.missing.len(), 1);
+        assert_eq!(rep.missing[0].target, "external:OptiFine.jar");
+        assert_eq!(rep.missing[0].reason.as_deref(), Some("external"));
     }
 
     #[test]

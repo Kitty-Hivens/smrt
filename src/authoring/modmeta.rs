@@ -286,7 +286,10 @@ pub fn parse_fabric_json(bytes: &[u8]) -> ModMeta {
         }
     };
     add(parsed.depends, RelKind::Requires);
-    add(parsed.recommends, RelKind::OptionalDep);
+    // `recommends` is the "works much better with" tier -- the Recommends
+    // kind, surfaced to the curator as a suggestion, never auto-added;
+    // `suggests` is weaker and stays a plain optional dependency.
+    add(parsed.recommends, RelKind::Recommends);
     add(parsed.suggests, RelKind::OptionalDep);
     add(parsed.breaks, RelKind::Conflicts);
     add(parsed.conflicts, RelKind::Breaks);
@@ -447,7 +450,7 @@ mod tests {
             find("cloth-config").unwrap().version_range.as_deref(),
             Some(">=11.0")
         );
-        assert_eq!(find("modmenu").map(|d| d.kind), Some(RelKind::OptionalDep));
+        assert_eq!(find("modmenu").map(|d| d.kind), Some(RelKind::Recommends));
         assert_eq!(find("oldmod").map(|d| d.kind), Some(RelKind::Conflicts));
         assert_eq!(find("grumpymod").map(|d| d.kind), Some(RelKind::Breaks));
         // minecraft filtered
