@@ -1,0 +1,1717 @@
+{
+ "Create": {
+  "mods": [
+   {
+    "filename": "Architectury.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": null,
+    "required_by": [
+     "FTBLibrary.jar",
+     "FTBQuests.jar",
+     "FTBTeams.jar",
+     "REI.jar"
+    ]
+   },
+   {
+    "filename": "ArsNouveau.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "BrewinAndChewin.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "ChatHeads.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "ClothConfig.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": null,
+    "required_by": [
+     "REI.jar"
+    ]
+   },
+   {
+    "filename": "Configured.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Copycats.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Create-Aeronautics.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Create-CraftsnAdditions.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Create-Desires2Dreams.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Create-DragonsPlus.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": null,
+    "required_by": [
+     "Create-EnchantmentIndustry.jar"
+    ]
+   },
+   {
+    "filename": "Create-EnchantmentIndustry.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Create-FactoryLogistics.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Create-Interiors.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Create-MechanicalSpawner.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Create-PowerLoader.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Create-SliceAndDice.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Create-StuffnAdditions.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Create-TFMG.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Create-TrialAndError.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Create-UltimateFactory.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Create.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": null,
+    "required_by": [
+     "Copycats.jar",
+     "Create-Aeronautics.jar",
+     "Create-CraftsnAdditions.jar",
+     "Create-Desires2Dreams.jar",
+     "Create-DragonsPlus.jar",
+     "Create-MechanicalSpawner.jar",
+     "Create-PowerLoader.jar",
+     "Create-SliceAndDice.jar",
+     "Create-StuffnAdditions.jar",
+     "Create-TFMG.jar",
+     "Create-TrialAndError.jar",
+     "Create-UltimateFactory.jar",
+     "SophisticatedBackpacksCreateIntegration.jar"
+    ]
+   },
+   {
+    "filename": "Curios.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "DungeonsDelight.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "DynamicTorches.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "EndsDelight.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "FTBLibrary.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": null,
+    "required_by": [
+     "FTBQuests.jar",
+     "FTBTeams.jar"
+    ]
+   },
+   {
+    "filename": "FTBQuests.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "FTBTeams.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": null,
+    "required_by": [
+     "FTBQuests.jar"
+    ]
+   },
+   {
+    "filename": "FarmersDelight.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": null,
+    "required_by": [
+     "EndsDelight.jar",
+     "MyNethersDelight.jar"
+    ]
+   },
+   {
+    "filename": "GeckoLib.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "IronChest.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Jade.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Jupiter.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "KotlinForForge.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Mechanicals.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": null,
+    "required_by": [
+     "Create-MechanicalSpawner.jar"
+    ]
+   },
+   {
+    "filename": "MyNethersDelight.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "REI.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Runiclib.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Sable.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": null,
+    "required_by": [
+     "Create-Aeronautics.jar"
+    ]
+   },
+   {
+    "filename": "SophisticatedBackpacks.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": null,
+    "required_by": [
+     "SophisticatedBackpacksCreateIntegration.jar"
+    ]
+   },
+   {
+    "filename": "SophisticatedBackpacksCreateIntegration.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "SophisticatedCore.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": null,
+    "required_by": [
+     "SophisticatedBackpacks.jar",
+     "SophisticatedBackpacksCreateIntegration.jar"
+    ]
+   },
+   {
+    "filename": "StackRefill.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "StorageDrawers.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Uranus.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "WorldEditCUI.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "XaerosMinimap.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "XaerosWorldMap.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "open-smrt-network-1.21.1.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   }
+  ],
+  "missing": [
+   "modrinth:X9kjRZeX",
+   "modrinth:e0M1UDsY"
+  ],
+  "edges": [
+   [
+    "Copycats.jar",
+    "Create.jar",
+    "modrinth"
+   ],
+   [
+    "Create-Aeronautics.jar",
+    "Create.jar",
+    "modrinth"
+   ],
+   [
+    "Create-Aeronautics.jar",
+    "Sable.jar",
+    "modrinth"
+   ],
+   [
+    "Create-CraftsnAdditions.jar",
+    "Create.jar",
+    "modrinth"
+   ],
+   [
+    "Create-Desires2Dreams.jar",
+    "Create.jar",
+    "modrinth"
+   ],
+   [
+    "Create-DragonsPlus.jar",
+    "Create.jar",
+    "modrinth"
+   ],
+   [
+    "Create-EnchantmentIndustry.jar",
+    "Create-DragonsPlus.jar",
+    "modrinth"
+   ],
+   [
+    "Create-MechanicalSpawner.jar",
+    "Create.jar",
+    "modrinth"
+   ],
+   [
+    "Create-MechanicalSpawner.jar",
+    "Mechanicals.jar",
+    "modrinth"
+   ],
+   [
+    "Create-PowerLoader.jar",
+    "Create.jar",
+    "modrinth"
+   ],
+   [
+    "Create-SliceAndDice.jar",
+    "Create.jar",
+    "modrinth"
+   ],
+   [
+    "Create-StuffnAdditions.jar",
+    "Create.jar",
+    "modrinth"
+   ],
+   [
+    "Create-TFMG.jar",
+    "Create.jar",
+    "modrinth"
+   ],
+   [
+    "Create-TrialAndError.jar",
+    "Create.jar",
+    "modrinth"
+   ],
+   [
+    "Create-UltimateFactory.jar",
+    "Create.jar",
+    "modrinth"
+   ],
+   [
+    "EndsDelight.jar",
+    "FarmersDelight.jar",
+    "modrinth"
+   ],
+   [
+    "FTBLibrary.jar",
+    "Architectury.jar",
+    "jar-meta"
+   ],
+   [
+    "FTBQuests.jar",
+    "Architectury.jar",
+    "jar-meta"
+   ],
+   [
+    "FTBQuests.jar",
+    "FTBLibrary.jar",
+    "jar-meta"
+   ],
+   [
+    "FTBQuests.jar",
+    "FTBTeams.jar",
+    "jar-meta"
+   ],
+   [
+    "FTBTeams.jar",
+    "Architectury.jar",
+    "jar-meta"
+   ],
+   [
+    "FTBTeams.jar",
+    "FTBLibrary.jar",
+    "jar-meta"
+   ],
+   [
+    "MyNethersDelight.jar",
+    "FarmersDelight.jar",
+    "modrinth"
+   ],
+   [
+    "REI.jar",
+    "Architectury.jar",
+    "modrinth"
+   ],
+   [
+    "REI.jar",
+    "ClothConfig.jar",
+    "modrinth"
+   ],
+   [
+    "SophisticatedBackpacks.jar",
+    "SophisticatedCore.jar",
+    "modrinth"
+   ],
+   [
+    "SophisticatedBackpacksCreateIntegration.jar",
+    "SophisticatedCore.jar",
+    "modrinth"
+   ],
+   [
+    "SophisticatedBackpacksCreateIntegration.jar",
+    "SophisticatedBackpacks.jar",
+    "modrinth"
+   ],
+   [
+    "SophisticatedBackpacksCreateIntegration.jar",
+    "Create.jar",
+    "modrinth"
+   ]
+  ]
+ },
+ "Industrial": {
+  "mods": [
+   {
+    "filename": "!mixinbooter-10.7.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": false,
+    "side": null,
+    "required_by": [
+     "entityculling-1.12.2-1.6.3.jar",
+     "relictium.jar"
+    ]
+   },
+   {
+    "filename": "AE2Stuff.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "AdvancedMachines.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "AdvancedSolarPanels.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "AmbientSounds_v3.1.5_mc1.12.2.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "AppleSkin-mc1.12-1.0.14.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "AppliedEnergistics2.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": "both",
+    "required_by": [
+     "AE2Stuff.jar",
+     "ExtraCells.jar"
+    ]
+   },
+   {
+    "filename": "ArmorHUD-1.1-1.12.2.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "BCFuelsForIC2.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "BdLib.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": "both",
+    "required_by": [
+     "AE2Stuff.jar"
+    ]
+   },
+   {
+    "filename": "Born In A Barn 1.8-1.12-1.2.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "Chisel.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": "both",
+    "required_by": [
+     "PowerChisels.jar"
+    ]
+   },
+   {
+    "filename": "Clumps-3.1.2.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "CoFHCore.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": "both",
+    "required_by": [
+     "ExtraCells.jar",
+     "RedstoneArsenal.jar",
+     "ThermalCultivation.jar",
+     "ThermalDynamics.jar",
+     "ThermalExpansion.jar",
+     "ThermalFoundation.jar",
+     "ThermalInnovation.jar"
+    ]
+   },
+   {
+    "filename": "CoFHWorld.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "CodeChickenLib.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": "both",
+    "required_by": [
+     "ForgeMultipart.jar",
+     "MrTJPCore.jar",
+     "ProjectRed-Base.jar",
+     "ProjectRed-Integration.jar",
+     "ProjectRed-Lighting.jar",
+     "ProjectRed-World.jar",
+     "ThermalDynamics.jar",
+     "ThermalExpansion.jar"
+    ]
+   },
+   {
+    "filename": "ConnectedTexturesMod.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": false,
+    "side": "client",
+    "required_by": [
+     "Chisel.jar"
+    ]
+   },
+   {
+    "filename": "Controlling-3.0.12.2.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "CraftingTweaks_1.12.2-8.1.9.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "CreativeCore_v1.10.62_mc1.12.2.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "CustomNPCs.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "DamageIndicators.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "DiscordRP.jar",
+    "default_enabled": false,
+    "required_next_build": false,
+    "published_required": false,
+    "side": "client",
+    "required_by": []
+   },
+   {
+    "filename": "EnergyControl.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "EnergyConverters.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "ExtraCells.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "Forestry.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": "both",
+    "required_by": [
+     "JEIBees.jar",
+     "RailCraft.jar"
+    ]
+   },
+   {
+    "filename": "ForgeMultipart.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": null,
+    "required_by": [
+     "ProjectRed-Base.jar"
+    ]
+   },
+   {
+    "filename": "GravitationSuite.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "HatStand.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "Hats.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "InventoryTweaks.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": false,
+    "side": "both",
+    "required_by": [
+     "AppliedEnergistics2.jar",
+     "Forestry.jar",
+     "IronChest.jar"
+    ]
+   },
+   {
+    "filename": "IronChest.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "JEI.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": false,
+    "side": null,
+    "required_by": [
+     "JER.jar"
+    ]
+   },
+   {
+    "filename": "JEIBees.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "JER.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": "client",
+    "required_by": []
+   },
+   {
+    "filename": "Ksyxis-1.4.3.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "LunatriusCore.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "MalisisCore.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": "both",
+    "required_by": [
+     "MalisisDoors.jar"
+    ]
+   },
+   {
+    "filename": "MalisisDoors.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "MoreOverlays.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": "client",
+    "required_by": []
+   },
+   {
+    "filename": "MouseTweaks.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": "client",
+    "required_by": []
+   },
+   {
+    "filename": "MrTJPCore.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": "both",
+    "required_by": [
+     "ProjectRed-Base.jar",
+     "ProjectRed-Integration.jar",
+     "ProjectRed-Lighting.jar",
+     "ProjectRed-World.jar"
+    ]
+   },
+   {
+    "filename": "NBTEdit.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "NoRecipeBook.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": "client",
+    "required_by": []
+   },
+   {
+    "filename": "PotionCore.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "PowerChisels.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "ProjectRed-Base.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": "both",
+    "required_by": [
+     "ProjectRed-Integration.jar",
+     "ProjectRed-Lighting.jar",
+     "ProjectRed-World.jar"
+    ]
+   },
+   {
+    "filename": "ProjectRed-Integration.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "ProjectRed-Lighting.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "ProjectRed-World.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "Quark.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "RailCraft.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": "both",
+    "required_by": [
+     "AdvancedMachines.jar",
+     "AdvancedSolarPanels.jar",
+     "AppliedEnergistics2.jar",
+     "BCFuelsForIC2.jar",
+     "EnergyControl.jar",
+     "Forestry.jar",
+     "GravitationSuite.jar"
+    ]
+   },
+   {
+    "filename": "RedstoneArsenal.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "RedstoneFlux.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": "both",
+    "required_by": [
+     "CoFHCore.jar",
+     "EnergyControl.jar",
+     "RedstoneArsenal.jar",
+     "ThermalDynamics.jar",
+     "ThermalExpansion.jar"
+    ]
+   },
+   {
+    "filename": "ReplayMod.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": "client",
+    "required_by": []
+   },
+   {
+    "filename": "Schematica.jar",
+    "default_enabled": false,
+    "required_next_build": false,
+    "published_required": false,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "TexFix.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "ThermalCultivation.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "ThermalDynamics.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "ThermalExpansion.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "ThermalFoundation.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": "both",
+    "required_by": [
+     "ThermalCultivation.jar",
+     "ThermalDynamics.jar",
+     "ThermalExpansion.jar",
+     "ThermalInnovation.jar"
+    ]
+   },
+   {
+    "filename": "ThermalInnovation.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "Tips-1.12.2-1.0.9.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "ToroHealth.jar",
+    "default_enabled": false,
+    "required_next_build": false,
+    "published_required": false,
+    "side": "client",
+    "required_by": []
+   },
+   {
+    "filename": "TreeCapitator.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "VariedCommodities.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "WailaHarvestability.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": "client",
+    "required_by": []
+   },
+   {
+    "filename": "WanionLib.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "WorldEditCUI.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "client",
+    "required_by": []
+   },
+   {
+    "filename": "autoreglib.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": "both",
+    "required_by": [
+     "Quark.jar"
+    ]
+   },
+   {
+    "filename": "bspkrsCore.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": "both",
+    "required_by": [
+     "TreeCapitator.jar"
+    ]
+   },
+   {
+    "filename": "buildcraft.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "crash-assistant.jar",
+    "default_enabled": false,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "entityculling-1.12.2-1.6.3.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "fusion-connected-textures.jar",
+    "default_enabled": false,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "hit-indication.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "hwyala.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "iChunUtil.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": true,
+    "side": "both",
+    "required_by": []
+   },
+   {
+    "filename": "industrial-craft.jar",
+    "default_enabled": true,
+    "required_next_build": true,
+    "published_required": true,
+    "side": null,
+    "required_by": [
+     "AdvancedMachines.jar",
+     "AdvancedSolarPanels.jar",
+     "GravitationSuite.jar"
+    ]
+   },
+   {
+    "filename": "journeymap.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "litematica.jar",
+    "default_enabled": false,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "lunary-mod.jar",
+    "default_enabled": false,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "musictriggers-7.0.4.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "open-smrt-network-forge-1.12.2-0.1.0.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": "client",
+    "required_by": []
+   },
+   {
+    "filename": "relictium.jar",
+    "default_enabled": true,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "xaerolib.jar",
+    "default_enabled": false,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "xaeros-minimap-fair.jar",
+    "default_enabled": false,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "xaeros-minimap.jar",
+    "default_enabled": false,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   },
+   {
+    "filename": "xaeros-world-map.jar",
+    "default_enabled": false,
+    "required_next_build": false,
+    "published_required": false,
+    "side": null,
+    "required_by": []
+   }
+  ],
+  "missing": [
+   "modrinth:GcWjdA9I",
+   "modrinth:ZyFWSztU"
+  ],
+  "edges": [
+   [
+    "AE2Stuff.jar",
+    "AppliedEnergistics2.jar",
+    "inferred"
+   ],
+   [
+    "AE2Stuff.jar",
+    "BdLib.jar",
+    "inferred"
+   ],
+   [
+    "AdvancedMachines.jar",
+    "industrial-craft.jar",
+    "jar-meta"
+   ],
+   [
+    "AdvancedMachines.jar",
+    "RailCraft.jar",
+    "inferred"
+   ],
+   [
+    "AdvancedSolarPanels.jar",
+    "industrial-craft.jar",
+    "jar-meta"
+   ],
+   [
+    "AdvancedSolarPanels.jar",
+    "RailCraft.jar",
+    "inferred"
+   ],
+   [
+    "AppliedEnergistics2.jar",
+    "RailCraft.jar",
+    "inferred"
+   ],
+   [
+    "AppliedEnergistics2.jar",
+    "InventoryTweaks.jar",
+    "inferred"
+   ],
+   [
+    "BCFuelsForIC2.jar",
+    "RailCraft.jar",
+    "inferred"
+   ],
+   [
+    "Chisel.jar",
+    "ConnectedTexturesMod.jar",
+    "inferred"
+   ],
+   [
+    "CoFHCore.jar",
+    "RedstoneFlux.jar",
+    "inferred"
+   ],
+   [
+    "EnergyControl.jar",
+    "RedstoneFlux.jar",
+    "inferred"
+   ],
+   [
+    "EnergyControl.jar",
+    "RailCraft.jar",
+    "inferred"
+   ],
+   [
+    "ExtraCells.jar",
+    "AppliedEnergistics2.jar",
+    "inferred"
+   ],
+   [
+    "ExtraCells.jar",
+    "CoFHCore.jar",
+    "inferred"
+   ],
+   [
+    "Forestry.jar",
+    "RailCraft.jar",
+    "inferred"
+   ],
+   [
+    "Forestry.jar",
+    "InventoryTweaks.jar",
+    "inferred"
+   ],
+   [
+    "ForgeMultipart.jar",
+    "CodeChickenLib.jar",
+    "modrinth"
+   ],
+   [
+    "GravitationSuite.jar",
+    "industrial-craft.jar",
+    "jar-meta"
+   ],
+   [
+    "GravitationSuite.jar",
+    "RailCraft.jar",
+    "inferred"
+   ],
+   [
+    "IronChest.jar",
+    "InventoryTweaks.jar",
+    "inferred"
+   ],
+   [
+    "JEIBees.jar",
+    "Forestry.jar",
+    "inferred"
+   ],
+   [
+    "JER.jar",
+    "JEI.jar",
+    "jar-meta"
+   ],
+   [
+    "MalisisDoors.jar",
+    "MalisisCore.jar",
+    "inferred"
+   ],
+   [
+    "MrTJPCore.jar",
+    "CodeChickenLib.jar",
+    "jar-meta"
+   ],
+   [
+    "PowerChisels.jar",
+    "Chisel.jar",
+    "jar-meta"
+   ],
+   [
+    "ProjectRed-Base.jar",
+    "MrTJPCore.jar",
+    "jar-meta"
+   ],
+   [
+    "ProjectRed-Base.jar",
+    "CodeChickenLib.jar",
+    "jar-meta"
+   ],
+   [
+    "ProjectRed-Base.jar",
+    "ForgeMultipart.jar",
+    "jar-meta"
+   ],
+   [
+    "ProjectRed-Integration.jar",
+    "ProjectRed-Base.jar",
+    "jar-meta"
+   ],
+   [
+    "ProjectRed-Integration.jar",
+    "CodeChickenLib.jar",
+    "inferred"
+   ],
+   [
+    "ProjectRed-Integration.jar",
+    "MrTJPCore.jar",
+    "inferred"
+   ],
+   [
+    "ProjectRed-Lighting.jar",
+    "ProjectRed-Base.jar",
+    "jar-meta"
+   ],
+   [
+    "ProjectRed-Lighting.jar",
+    "CodeChickenLib.jar",
+    "inferred"
+   ],
+   [
+    "ProjectRed-Lighting.jar",
+    "MrTJPCore.jar",
+    "inferred"
+   ],
+   [
+    "ProjectRed-World.jar",
+    "ProjectRed-Base.jar",
+    "jar-meta"
+   ],
+   [
+    "ProjectRed-World.jar",
+    "CodeChickenLib.jar",
+    "inferred"
+   ],
+   [
+    "ProjectRed-World.jar",
+    "MrTJPCore.jar",
+    "inferred"
+   ],
+   [
+    "Quark.jar",
+    "autoreglib.jar",
+    "modrinth"
+   ],
+   [
+    "RailCraft.jar",
+    "Forestry.jar",
+    "inferred"
+   ],
+   [
+    "RedstoneArsenal.jar",
+    "CoFHCore.jar",
+    "jar-meta"
+   ],
+   [
+    "RedstoneArsenal.jar",
+    "RedstoneFlux.jar",
+    "inferred"
+   ],
+   [
+    "Schematica.jar",
+    "LunatriusCore.jar",
+    "jar-meta"
+   ],
+   [
+    "ThermalCultivation.jar",
+    "CoFHCore.jar",
+    "jar-meta"
+   ],
+   [
+    "ThermalCultivation.jar",
+    "ThermalFoundation.jar",
+    "jar-meta"
+   ],
+   [
+    "ThermalDynamics.jar",
+    "CoFHCore.jar",
+    "jar-meta"
+   ],
+   [
+    "ThermalDynamics.jar",
+    "ThermalFoundation.jar",
+    "jar-meta"
+   ],
+   [
+    "ThermalDynamics.jar",
+    "CodeChickenLib.jar",
+    "inferred"
+   ],
+   [
+    "ThermalDynamics.jar",
+    "RedstoneFlux.jar",
+    "inferred"
+   ],
+   [
+    "ThermalExpansion.jar",
+    "CodeChickenLib.jar",
+    "jar-meta"
+   ],
+   [
+    "ThermalExpansion.jar",
+    "CoFHCore.jar",
+    "jar-meta"
+   ],
+   [
+    "ThermalExpansion.jar",
+    "ThermalFoundation.jar",
+    "jar-meta"
+   ],
+   [
+    "ThermalExpansion.jar",
+    "RedstoneFlux.jar",
+    "inferred"
+   ],
+   [
+    "ThermalFoundation.jar",
+    "CoFHCore.jar",
+    "jar-meta"
+   ],
+   [
+    "ThermalInnovation.jar",
+    "CoFHCore.jar",
+    "jar-meta"
+   ],
+   [
+    "ThermalInnovation.jar",
+    "ThermalFoundation.jar",
+    "jar-meta"
+   ],
+   [
+    "TreeCapitator.jar",
+    "bspkrsCore.jar",
+    "jar-meta"
+   ],
+   [
+    "entityculling-1.12.2-1.6.3.jar",
+    "!mixinbooter-10.7.jar",
+    "modrinth"
+   ],
+   [
+    "relictium.jar",
+    "!mixinbooter-10.7.jar",
+    "modrinth"
+   ],
+   [
+    "xaeros-minimap.jar",
+    "xaerolib.jar",
+    "modrinth"
+   ],
+   [
+    "xaeros-world-map.jar",
+    "xaerolib.jar",
+    "modrinth"
+   ]
+  ]
+ },
+ "hard_edges_into_client_mods": [
+  {
+   "from": "Chisel",
+   "target": "ctm",
+   "source": "inferred"
+  }
+ ]
+}

@@ -1,0 +1,522 @@
+# Golden side/policy labels for the corpus jars (docs/side-required-audit.md).
+# Ground truth for the D-stage bytecode classifier and the F-stage presence
+# categories. sha1 pins the exact artifact; jars live outside the repo and are
+# re-fetchable with testdata/corpus/fetch.py.
+#
+# side: client | server | both        (axis A)
+# policy: must_match | tolerant       (axis B; must_match = both sides need it to join)
+# kind: mod | coremod_with_mod | library
+# category: required | optional_client | optional_server | optional_both | coremod
+#
+# optional_server and coremod are under-represented in the two published packs;
+# stage D tops these categories up with fetched reference jars + synthetic classes.
+
+[[mods]]
+filename = "Create.jar"
+pack = "Create"
+sha1 = "0e97e49837bed766e6f28a4c95b04885d6acc353"
+side = "both"
+policy = "must_match"
+kind = "mod"
+category = "required"
+note = "content; Modrinth env says client=optional which is wrong for joint play -- expect side_disagreement advisory"
+
+[[mods]]
+filename = "ArsNouveau.jar"
+pack = "Create"
+sha1 = "45d88e93b74f1cf8bab5941460a8194083ed7382"
+side = "both"
+policy = "must_match"
+kind = "mod"
+category = "required"
+note = "content; env req/req"
+
+[[mods]]
+filename = "FarmersDelight.jar"
+pack = "Create"
+sha1 = "93f4de62fce2b90ee8c87e4f6d9b82edb132003d"
+side = "both"
+policy = "must_match"
+kind = "mod"
+category = "required"
+note = "content; env req/req"
+
+[[mods]]
+filename = "FTBQuests.jar"
+pack = "Create"
+sha1 = "639f0dce54c986d84e787c231b68ab1696d9aee8"
+side = "both"
+policy = "must_match"
+kind = "mod"
+category = "required"
+note = "content, server-synced quests; NeoForge cache jar -- bytecode-only case"
+
+[[mods]]
+filename = "StorageDrawers.jar"
+pack = "Create"
+sha1 = "b8e11e3d1fd63fd1a0d9277ec3f966c7e5cff385"
+side = "both"
+policy = "must_match"
+kind = "mod"
+category = "required"
+note = "content; env req/req"
+
+[[mods]]
+filename = "Quark.jar"
+pack = "Industrial"
+sha1 = "35521fd8911b6ef893afbfe7d0d5d04962b3360d"
+side = "both"
+policy = "must_match"
+kind = "mod"
+category = "required"
+note = "content; env req/req"
+
+[[mods]]
+filename = "industrial-craft.jar"
+pack = "Industrial"
+sha1 = "7b1263c23b3a276ae7bee4ef9b07b0a96cb397b1"
+side = "both"
+policy = "must_match"
+kind = "mod"
+category = "required"
+note = "IC2; content; env req/req"
+
+[[mods]]
+filename = "buildcraft.jar"
+pack = "Industrial"
+sha1 = "bcea1e36e907f5dd3cd949071cad06c4d33b0781"
+side = "both"
+policy = "must_match"
+kind = "mod"
+category = "required"
+note = "content; env req/req"
+
+[[mods]]
+filename = "AppliedEnergistics2.jar"
+pack = "Industrial"
+sha1 = "4a1bfbb88c4de54be0ec8a42d8c3556361ceb27d"
+side = "both"
+policy = "must_match"
+kind = "mod"
+category = "required"
+note = "content; 1.12 cache jar"
+
+[[mods]]
+filename = "Forestry.jar"
+pack = "Industrial"
+sha1 = "87ca44c447b1264846f0686769f0603ceea161a9"
+side = "both"
+policy = "must_match"
+kind = "mod"
+category = "required"
+note = "content; 1.12 cache jar"
+
+[[mods]]
+filename = "RailCraft.jar"
+pack = "Industrial"
+sha1 = "ea2085a509b816bb9a3cdd79f2f44175b588737a"
+side = "both"
+policy = "must_match"
+kind = "mod"
+category = "required"
+note = "content; bundles ic2/thaumcraft APIs (false-ownership source)"
+
+[[mods]]
+filename = "ThermalExpansion.jar"
+pack = "Industrial"
+sha1 = "122f481bd3b2db38bcfd68ae189117a032b856bb"
+side = "both"
+policy = "must_match"
+kind = "mod"
+category = "required"
+note = "content"
+
+[[mods]]
+filename = "CustomNPCs.jar"
+pack = "Industrial"
+sha1 = "5f4602438d7548430a2570873f805de7cdc79e45"
+side = "both"
+policy = "must_match"
+kind = "mod"
+category = "required"
+note = "content"
+
+[[mods]]
+filename = "IronChest.jar"
+pack = "Industrial"
+sha1 = "cdd561cb1bb6ffb172600a69437745fb6111a988"
+side = "both"
+policy = "must_match"
+kind = "mod"
+category = "required"
+note = "content; 1.12 cache jar"
+
+[[mods]]
+filename = "ConnectedTexturesMod.jar"
+pack = "Industrial"
+sha1 = "892e0788531269bfa2f356e4e12825e19d4e5412"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "client rendering; today locked required via inferred Chisel edge (symptom 2)"
+
+[[mods]]
+filename = "JER.jar"
+pack = "Industrial"
+sha1 = "3d4c9b8bb4ad948c7e26b7becd1c836f8cb34d07"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "client recipe/resource viewer"
+
+[[mods]]
+filename = "MoreOverlays.jar"
+pack = "Industrial"
+sha1 = "b308fe363f23343d0b073d04883c5fca63b08d0b"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "client overlays"
+
+[[mods]]
+filename = "MouseTweaks.jar"
+pack = "Industrial"
+sha1 = "0d3b0589021905b2eab8ba93805e9fdef463288e"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "client input tweak"
+
+[[mods]]
+filename = "NoRecipeBook.jar"
+pack = "Industrial"
+sha1 = "699a1235d426775c87123ea34c5bad3bb51fc03e"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "client UI tweak"
+
+[[mods]]
+filename = "ReplayMod.jar"
+pack = "Industrial"
+sha1 = "984489e9ec23c1b4e6c4ff5a00b35eef1be8dde8"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "client recorder"
+
+[[mods]]
+filename = "ToroHealth.jar"
+pack = "Industrial"
+sha1 = "6302c65f1c4fd28266d2c4ea33e12c8783e84c9b"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "client damage numbers"
+
+[[mods]]
+filename = "WailaHarvestability.jar"
+pack = "Industrial"
+sha1 = "7e1abc8dd61390285167284a5eb3bf0e57a52760"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "client tooltip addon"
+
+[[mods]]
+filename = "WorldEditCUI.jar"
+pack = "Industrial"
+sha1 = "9d450df21dd6cb44e8a8c03642f8a931b18b4a72"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "client visualizer; published manifest still carries legacy required=true"
+
+[[mods]]
+filename = "DiscordRP.jar"
+pack = "Industrial"
+sha1 = "b92e6ac304f35b07395254c721afc6e4ebb0a487"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "client presence"
+
+[[mods]]
+filename = "Schematica.jar"
+pack = "Industrial"
+sha1 = "cc8c851bc47ecf314c3974e3b90acfa1a62105ac"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "client-only in truth; current @Mod-flag derivation says both -- hard D case"
+
+[[mods]]
+filename = "InventoryTweaks.jar"
+pack = "Industrial"
+sha1 = "6e00827d1a009da39fa6db5afd2a3d6b024abfe9"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "client sorter in truth; @Mod says both; target of annotation-only false hard edges"
+
+[[mods]]
+filename = "open-smrt-network-forge-1.12.2-0.1.0.jar"
+pack = "Industrial"
+sha1 = "9d126de7d1655d614a5d5786deb042a1c060e1ea"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "own mod; @Mod clientSideOnly=true"
+
+[[mods]]
+filename = "litematica.jar"
+pack = "Industrial"
+sha1 = "f0daa84a8a235e3e441152e9517d4368968b99f6"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "env req/uns"
+
+[[mods]]
+filename = "ChatHeads.jar"
+pack = "Create"
+sha1 = "86abc08fbfa8eb3e2a41aa4403a6bd52543ea665"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "env req/uns"
+
+[[mods]]
+filename = "AmbientSounds_v3.1.5_mc1.12.2.jar"
+pack = "Industrial"
+sha1 = "9357964cdbfbe97fb16cbfc33eab8c847a03ccb4"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "env req/uns"
+
+[[mods]]
+filename = "XaerosMinimap.jar"
+pack = "Create"
+sha1 = "21b3232e62dabcbb5bf28866481e8de2c0ccb780"
+side = "client"
+policy = "tolerant"
+kind = "mod"
+category = "optional_client"
+note = "client map; server part optional"
+
+[[mods]]
+filename = "Born In A Barn 1.8-1.12-1.2.jar"
+pack = "Industrial"
+sha1 = "2a19c174eb4989d7ca33e6fcc543f44158ae8949"
+side = "server"
+policy = "tolerant"
+kind = "mod"
+category = "optional_server"
+note = "village door AI fix; env uns/req"
+
+[[mods]]
+filename = "Ksyxis-1.4.3.jar"
+pack = "Industrial"
+sha1 = "6f4b2ea7827da8136bdf436457a2ba3fcdb2120e"
+side = "server"
+policy = "tolerant"
+kind = "mod"
+category = "optional_server"
+note = "world-load speedup; env uns/req"
+
+[[mods]]
+filename = "JEI.jar"
+pack = "Industrial"
+sha1 = "3e88d2896ca868c3cedb65e117ad3a1b82488fa8"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "item viewer; env opt/opt"
+
+[[mods]]
+filename = "hwyala.jar"
+pack = "Industrial"
+sha1 = "c1e5baf116be10539bb5f4d5b67be6b2d2a2150c"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "waila fork; env opt/opt"
+
+[[mods]]
+filename = "AppleSkin-mc1.12-1.0.14.jar"
+pack = "Industrial"
+sha1 = "d798af79de48be0f00c772943e5ec5a2fb5659fa"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "env opt/opt"
+
+[[mods]]
+filename = "Jade.jar"
+pack = "Create"
+sha1 = "d5bf134b3dbde9f5258666823900e21341dc0a50"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "env opt/opt"
+
+[[mods]]
+filename = "REI.jar"
+pack = "Create"
+sha1 = "58e3de0cd7d559a6caf924c25992382677bc03f9"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "env opt/opt"
+
+[[mods]]
+filename = "CraftingTweaks_1.12.2-8.1.9.jar"
+pack = "Industrial"
+sha1 = "be42bf244d4864f6832890ef2a2ade59f44a3f8b"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "env opt/opt"
+
+[[mods]]
+filename = "journeymap.jar"
+pack = "Industrial"
+sha1 = "1d3975dd5399c9511f2913b98e98356437bd00bf"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "client map with optional server component; env opt/opt"
+
+[[mods]]
+filename = "ClothConfig.jar"
+pack = "Create"
+sha1 = "c3e5733ba4503b102589a026000fd5ce0212f6f2"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "config lib; env opt/opt"
+
+[[mods]]
+filename = "KotlinForForge.jar"
+pack = "Create"
+sha1 = "8ad166a365c1917fceca3533cdcb74e5149f200c"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "language provider lib; env opt/opt"
+
+[[mods]]
+filename = "CodeChickenLib.jar"
+pack = "Industrial"
+sha1 = "b6a7e3b889c354216059a3bfad298e30a1e46a2d"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "library; env opt/opt"
+
+[[mods]]
+filename = "Clumps-3.1.2.jar"
+pack = "Industrial"
+sha1 = "6ea78bea8006e3924bc37c2aef0115134c8af07b"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "env opt/opt"
+
+[[mods]]
+filename = "CreativeCore_v1.10.62_mc1.12.2.jar"
+pack = "Industrial"
+sha1 = "ffc8e5ac94598c65917cdba235ce6dff1a2e3ada"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "library; env req/opt"
+
+[[mods]]
+filename = "LunatriusCore.jar"
+pack = "Industrial"
+sha1 = "f70b39168f2a02d47792cf29bef432e20d0bcd57"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "library"
+
+[[mods]]
+filename = "Architectury.jar"
+pack = "Create"
+sha1 = "6ca11d3cc136bf69bb8f4d56982481eb85b5100b"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "library; env req/req but standalone-tolerant lib"
+
+[[mods]]
+filename = "FTBLibrary.jar"
+pack = "Create"
+sha1 = "10a0674a76a6f5d736ee43d4179512f22fce5d03"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "library; NeoForge cache jar"
+
+[[mods]]
+filename = "autoreglib.jar"
+pack = "Industrial"
+sha1 = "40d6e2c987096f6ac35ffe3d4e85efa45ce7ae7a"
+side = "both"
+policy = "tolerant"
+kind = "mod"
+category = "optional_both"
+note = "library"
+
+[[mods]]
+filename = "!mixinbooter-10.7.jar"
+pack = "Industrial"
+sha1 = "3fdfffe4fd446461ea9c3cb044484588997b9dbc"
+side = "both"
+policy = "tolerant"
+kind = "coremod_with_mod"
+category = "optional_both"
+note = "FMLCorePlugin + mcmod.info identity -> mod branch"
+
+[[mods]]
+filename = "ChickenASM-1.12-1.0.2.7.jar"
+pack = "Industrial"
+sha1 = "ed72a18e64a7eb628ec14832a7e02128904cc6f7"
+side = "both"
+policy = "tolerant"
+kind = "library"
+category = "coremod"
+note = "pure ASM library: no @Mod, no mcmod.info, no FMLCorePlugin, no identity"
