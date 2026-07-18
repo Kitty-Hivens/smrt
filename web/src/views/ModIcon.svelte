@@ -10,12 +10,17 @@
     name,
     iconUrl = null,
     source,
+    sha1 = null,
     size = 34,
     mono = false,
   }: {
     name: string;
     iconUrl?: string | null;
     source: Source | SourceDecl;
+    // the artifact's sha1 where the caller knows it (manifest entries, registry
+    // rows): unlocks the jar-embedded icon fallback for Modrinth-sourced mods
+    // whose bytes the mirror caches anyway
+    sha1?: string | null;
     size?: number;
     // monochrome letter fallback for the control panel; the launcher preview
     // keeps the hashed colour
@@ -26,24 +31,28 @@
   const explicit = $derived(iconUrl?.trim() || null);
   // Modrinth project icon, resolved lazily when there is no explicit icon_url.
   let modrinth = $state<string | null>(null);
-  let broken = $state(false);
-  // a self-hosted jar's own embedded icon, extracted + served by the mirror; the
-  // <img> onerror falls back to the letter avatar when the jar carries none (404)
-  const cacheIcon = $derived(
-    source.type === 'smrt_cache' && 'sha1' in source && source.sha1
-      ? `/v1/cache/icon/${source.sha1}`
-      : null,
+  // index into the candidate chain; a load error advances to the next candidate
+  // instead of giving up, so an unreachable Modrinth CDN degrades to the jar's
+  // own embedded icon (served by the mirror) before the letter avatar
+  let failed = $state(0);
+  const cacheSha = $derived(
+    source.type === 'smrt_cache' && 'sha1' in source && source.sha1 ? source.sha1 : sha1,
   );
-  const src = $derived(broken ? null : (explicit ?? modrinth ?? cacheIcon));
+  const candidates = $derived(
+    [explicit, modrinth, cacheSha ? `/v1/cache/icon/${cacheSha}` : null].filter(
+      (c): c is string => !!c,
+    ),
+  );
+  const src = $derived(candidates[failed] ?? null);
 
   // Mirror ModIconResolver: only fall back to the project icon when no explicit
   // icon_url is set and the source is Modrinth (cached in the api layer). This
   // also re-runs when `source` changes -- a list row may be reused for a
-  // different mod (sort / re-point), so reset the resolved/broken state first
+  // different mod (sort / re-point), so reset the resolved/failed state first
   // instead of carrying the previous mod's icon over.
   $effect(() => {
     void source; // re-run on identity change
-    broken = false;
+    failed = 0;
     modrinth = null;
     if (explicit || source.type !== 'modrinth') return;
     let alive = true;
@@ -63,7 +72,7 @@
     {src}
     alt={name}
     loading="lazy"
-    onerror={() => (broken = true)}
+    onerror={() => (failed = failed + 1)}
   />
 {:else}
   <span

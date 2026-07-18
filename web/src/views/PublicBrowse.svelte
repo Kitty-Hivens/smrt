@@ -160,6 +160,7 @@
                       name={modName(m)}
                       source={m.source}
                       iconUrl={m.display?.icon_url ?? null}
+                      sha1={m.sha1}
                       size={24}
                       mono
                     />

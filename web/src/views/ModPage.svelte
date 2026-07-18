@@ -61,6 +61,11 @@
       ? { type: 'modrinth', project_id: detail.modrinth_project_id, version_id: '' }
       : ({ type: 'smrt_static', url: '' } as Source),
   );
+  // any cached artifact's sha1 -- the embedded-icon leg of the chain, and the
+  // whole icon when the mod has no Modrinth identity
+  const iconSha1 = $derived(
+    detail?.releases.flatMap((r) => r.files).find((f) => f.cached)?.sha1 ?? null,
+  );
 
   // edge kind -> stroke colour, matching the graph legend
   const KIND_COLOR: Record<string, string> = {
@@ -130,7 +135,7 @@
     <div class="muted s">{t('common.loading')}</div>
   {:else if detail}
     <header class="head">
-      <ModIcon name={detail.name} source={iconSource} size={52} mono />
+      <ModIcon name={detail.name} source={iconSource} sha1={iconSha1} size={52} mono />
       <div class="hinfo">
         <h1 class="hname">
           {detail.name}{#if detail.author}<span class="hby">{t('mm.by', { author: detail.author })}</span>{/if}

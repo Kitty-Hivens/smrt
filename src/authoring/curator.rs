@@ -202,10 +202,11 @@ pub fn clean_mc_version(raw: &str) -> Option<String> {
 }
 
 /// Extract a mod's embedded icon from its jar bytes: the Forge `mcmod.info`
-/// `logoFile`, else a `fabric.mod.json` `icon`, else a conventional `pack.png` /
-/// `icon.png` / `logo.png` at the jar root. Returns the image bytes plus a
-/// content-type guessed from the entry name. `Ok(None)` when the jar has no
-/// recognizable icon or isn't a readable zip.
+/// `logoFile`, else the modern declared icon (`mods.toml` /
+/// `neoforge.mods.toml` `logoFile`, `fabric.mod.json` `icon`), else a
+/// conventional `pack.png` / `icon.png` / `logo.png` at the jar root. Returns
+/// the image bytes plus a content-type guessed from the entry name. `Ok(None)`
+/// when the jar has no recognizable icon or isn't a readable zip.
 pub fn jar_icon(jar_bytes: &[u8]) -> Result<Option<(Vec<u8>, &'static str)>> {
     let mut zip = match zip::ZipArchive::new(Cursor::new(jar_bytes)) {
         Ok(z) => z,
@@ -219,8 +220,8 @@ pub fn jar_icon(jar_bytes: &[u8]) -> Result<Option<(Vec<u8>, &'static str)>> {
             candidates.push(lf.to_string());
         }
     }
-    if let Some(icon) = fabric_icon(jar_bytes) {
-        candidates.push(icon);
+    if let Some(logo) = super::modmeta::read_mod_meta(jar_bytes).logo_file {
+        candidates.push(logo);
     }
     for d in ["pack.png", "icon.png", "logo.png"] {
         candidates.push(d.to_string());
@@ -241,22 +242,6 @@ pub fn jar_icon(jar_bytes: &[u8]) -> Result<Option<(Vec<u8>, &'static str)>> {
         }
     }
     Ok(None)
-}
-
-/// `fabric.mod.json` `icon` -- a string path, or a `{ "<size>": "path" }` map
-/// from which any entry serves.
-fn fabric_icon(jar_bytes: &[u8]) -> Option<String> {
-    let mut zip = zip::ZipArchive::new(Cursor::new(jar_bytes)).ok()?;
-    let mut entry = zip.by_name("fabric.mod.json").ok()?;
-    let size = entry.size();
-    let raw = read_zip_entry(&mut entry, size, "fabric.mod.json").ok()?;
-    let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
-    let path = match v.get("icon")? {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Object(m) => m.values().find_map(|x| x.as_str())?.to_string(),
-        _ => return None,
-    };
-    Some(path.trim_start_matches('/').to_string())
 }
 
 fn content_type_for(name: &str) -> &'static str {

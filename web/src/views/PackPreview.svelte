@@ -305,6 +305,7 @@
                 name={a.dest.split('/').pop() ?? a.dest}
                 iconUrl={a.display?.icon_url}
                 source={a.source}
+                sha1={a.sha1}
                 size={28}
               />
               <span class="anm">{assetName(a)}</span>

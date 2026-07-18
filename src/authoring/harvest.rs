@@ -225,6 +225,25 @@ fn is_integration_host(target: &str) -> bool {
 /// Map a Modrinth `version_type` (release/beta/alpha) to a registry channel.
 /// alpha collapses to beta (both pre-release); `dev` stays reserved for hand-set
 /// developer builds. Unknown types yield None (release stays `unknown`).
+/// `Implementation-Version` from a jar MANIFEST.MF -- the value gradle's
+/// `${file.jarVersion}` placeholder stands for. Header names are
+/// case-insensitive per the jar spec; continuation lines are not handled (a
+/// version string never needs one).
+fn manifest_implementation_version(raw: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(raw).ok()?;
+    for line in text.lines() {
+        if let Some((key, value)) = line.split_once(':')
+            && key.trim().eq_ignore_ascii_case("Implementation-Version")
+        {
+            let v = value.trim();
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
 fn channel_from_version_type(vt: &str) -> Option<String> {
     match vt {
         "release" => Some("release".to_string()),
@@ -390,7 +409,9 @@ pub fn read_jar(bytes: &[u8]) -> JarReadout {
     let mut mods_toml: Option<Vec<u8>> = None; // neoforge.mods.toml wins over mods.toml
     let mut fabric_json: Option<Vec<u8>> = None;
     let mut has_forge = false;
+    let mut has_neoforge = false;
     let mut has_fabric = false;
+    let mut impl_version: Option<String> = None;
     let mut signals = bytecode::JarSignals::default();
     for i in 0..zip.len() {
         let Ok(mut entry) = zip.by_index(i) else {
@@ -424,7 +445,7 @@ pub fn read_jar(bytes: &[u8]) -> JarReadout {
                 }
             }
             "META-INF/neoforge.mods.toml" => {
-                has_forge = true;
+                has_neoforge = true;
                 mods_toml = read_zip_entry(&mut entry, size, &name).ok();
             }
             "fabric.mod.json" => {
@@ -436,13 +457,14 @@ pub fn read_jar(bytes: &[u8]) -> JarReadout {
                     let (coremod, tweaker) = bytecode::manifest_markers(&raw);
                     signals.manifest_coremod = coremod;
                     signals.manifest_tweaker = tweaker;
+                    impl_version = manifest_implementation_version(&raw);
                 }
             }
             _ => {}
         }
     }
 
-    let modmeta = if let Some(t) = mods_toml.as_deref() {
+    let mut modmeta = if let Some(t) = mods_toml.as_deref() {
         std::str::from_utf8(t)
             .map(modmeta::parse_mods_toml)
             .unwrap_or_default()
@@ -451,6 +473,12 @@ pub fn read_jar(bytes: &[u8]) -> JarReadout {
     } else {
         modmeta::ModMeta::default()
     };
+    // A gradle placeholder version (`${file.jarVersion}`) resolves to the jar
+    // manifest's Implementation-Version; an unresolvable placeholder is no
+    // version at all, never a literal `${...}` string in the registry.
+    if modmeta.version.as_deref().is_some_and(|v| v.contains("${")) {
+        modmeta.version = impl_version.clone();
+    }
     let mcmod = mcmod_raw
         .as_deref()
         .and_then(parse_mcmod_info)
@@ -461,7 +489,11 @@ pub fn read_jar(bytes: &[u8]) -> JarReadout {
     let bytecode = bytecode::aggregate(&classes, &signals);
     // `@Mod` is a Forge-specific annotation, so a jar carrying one is Forge even
     // when it ships no mcmod.info / mods.toml marker file (older mods often do not).
-    let loader = if has_forge || bytecode.mod_id.is_some() {
+    // The NeoForge marker file is the one loader signal that separates a NeoForge
+    // build from a Forge one, so it wins over everything.
+    let loader = if has_neoforge {
+        Some("neoforge".to_string())
+    } else if has_forge || bytecode.mod_id.is_some() {
         Some("forge".to_string())
     } else if has_fabric {
         Some("fabric".to_string())
@@ -1272,10 +1304,12 @@ pub async fn scan(
                 .map(|v| v.project_id.clone())
                 .or_else(|| manifest_modrinth_by_sha.get(&sha).map(|(p, _)| p.clone()));
             let project = project_id.as_deref().and_then(|p| projects.get(p));
-            // name: jar-meta name wins (local), else Modrinth title
+            // name: jar-meta name wins (local: mcmod.info, else the modern
+            // declared displayName), else Modrinth title
             let name = info
                 .map(|i| i.name.clone())
                 .filter(|s| !s.trim().is_empty())
+                .or_else(|| mm.and_then(|m| m.display_name.clone()))
                 .or_else(|| {
                     project
                         .map(|p| p.title.clone())
@@ -1304,6 +1338,7 @@ pub async fn scan(
                 version: info
                     .map(|i| i.version.clone())
                     .filter(|s| !s.is_empty())
+                    .or_else(|| mm.and_then(|m| m.version.clone()))
                     .or_else(|| mrv.map(|v| v.version_number.clone())),
                 project_id,
                 // loader: Modrinth's set wins; else the jar's own marker
@@ -1314,7 +1349,8 @@ pub async fn scan(
                     None => facts.and_then(|f| f.loader.clone()).into_iter().collect(),
                 },
                 // mc: Modrinth's set wins; else the jar's declared mcversion when
-                // it looks like a real version (not a gradle token)
+                // it looks like a real version (not a gradle token); else the
+                // modern manifest's minecraft dependency lower bound
                 mc_versions: match mrv
                     .map(|v| v.game_versions.clone())
                     .filter(|g| !g.is_empty())
@@ -1322,6 +1358,7 @@ pub async fn scan(
                     Some(g) => g,
                     None => info
                         .and_then(|i| clean_mc_version(&i.mcversion))
+                        .or_else(|| mm.and_then(|m| m.mc.clone()))
                         .into_iter()
                         .collect(),
                 },
@@ -2482,7 +2519,8 @@ mod tests {
             ),
         ]);
         let r = read_jar(&bytes);
-        assert_eq!(r.facts.loader.as_deref(), Some("forge"));
+        // the NeoForge marker file separates a NeoForge build from a Forge one
+        assert_eq!(r.facts.loader.as_deref(), Some("neoforge"));
         assert!(r.bytecode.owned.contains("mymod"));
         assert!(r.bytecode.hard_refs.contains("appeng/api"));
         assert_eq!(r.mcmod.map(|i| i.modid), Some("mymod".to_string()));

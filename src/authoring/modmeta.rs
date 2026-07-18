@@ -47,6 +47,15 @@ pub struct ModMeta {
     /// The mod's own id, when declared. Fallback identity for a jar without an
     /// `mcmod.info` and without a Modrinth match.
     pub modid: Option<String>,
+    /// Declared human-readable name (`displayName` / fabric `name`).
+    pub display_name: Option<String>,
+    /// Declared version, verbatim -- may be a gradle placeholder like
+    /// `${file.jarVersion}`; the jar reader resolves that against the
+    /// MANIFEST.MF `Implementation-Version` before use.
+    pub version: Option<String>,
+    /// Declared icon path inside the jar (`logoFile` / fabric `icon`),
+    /// normalized to no leading slash.
+    pub logo_file: Option<String>,
     /// The Minecraft version the jar targets, from its `minecraft` dependency
     /// range (the first concrete version in it). Used by the upload gate to check
     /// Modrinth coverage; `None` when no usable version is declared.
@@ -108,6 +117,10 @@ fn read_named(zip: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Option<Ve
 struct ModsToml {
     #[serde(default)]
     mods: Vec<ModsTomlMod>,
+    /// Top-level `logoFile` -- the standard spelling; NeoForge also allows a
+    /// per-mod one, which wins when both are present.
+    #[serde(rename = "logoFile", default)]
+    logo_file: Option<String>,
     /// `[[dependencies.<owner-modid>]]` -- keyed by the mod the deps belong to.
     #[serde(default)]
     dependencies: HashMap<String, Vec<ModsTomlDep>>,
@@ -117,6 +130,12 @@ struct ModsToml {
 struct ModsTomlMod {
     #[serde(rename = "modId", alias = "modid", default)]
     mod_id: Option<String>,
+    #[serde(rename = "displayName", default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(rename = "logoFile", default)]
+    logo_file: Option<String>,
     #[serde(rename = "displayTest", default)]
     display_test: Option<String>,
 }
@@ -143,17 +162,27 @@ pub fn parse_mods_toml(text: &str) -> ModMeta {
     let Ok(parsed) = toml::from_str::<ModsToml>(text) else {
         return ModMeta::default();
     };
+    let clean = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     let mut modid = None;
+    let mut display_name = None;
+    let mut version = None;
+    let mut logo_file = None;
     let mut display_test = None;
     for m in parsed.mods {
         if modid.is_none() {
             modid = m.mod_id.filter(|s| !s.trim().is_empty());
+            display_name = clean(m.display_name);
+            version = clean(m.version);
+            logo_file = clean(m.logo_file);
             display_test = m
                 .display_test
                 .map(|s| s.trim().to_ascii_uppercase())
                 .filter(|s| !s.is_empty());
         }
     }
+    let logo_file = logo_file
+        .or_else(|| clean(parsed.logo_file))
+        .map(|s| s.trim_start_matches('/').to_string());
     let mut deps = Vec::new();
     let mut mc = None;
     for entry in parsed.dependencies.into_values().flatten() {
@@ -192,6 +221,9 @@ pub fn parse_mods_toml(text: &str) -> ModMeta {
     }
     ModMeta {
         modid,
+        display_name,
+        version,
+        logo_file,
         mc,
         deps,
         display_test,
@@ -223,6 +255,13 @@ fn forge_dep_kind(dep: &ModsTomlDep) -> Option<RelKind> {
 struct FabricModJson {
     #[serde(default)]
     id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    version: Option<String>,
+    /// A string path, or a `{ "<size>": "path" }` map from which any entry serves.
+    #[serde(default)]
+    icon: Option<serde_json::Value>,
     #[serde(default)]
     environment: Option<String>,
     #[serde(default)]
@@ -301,8 +340,24 @@ pub fn parse_fabric_json(bytes: &[u8]) -> ModMeta {
             .and_then(|v| v.as_array())
             .is_some_and(|a| !a.is_empty())
     };
+    let icon = parsed.icon.as_ref().and_then(|v| match v {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Object(m) => m.values().find_map(|x| x.as_str()).map(str::to_string),
+        _ => None,
+    });
     ModMeta {
         modid: parsed.id.filter(|s| !s.trim().is_empty()),
+        display_name: parsed
+            .name
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        version: parsed
+            .version
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        logo_file: icon
+            .map(|s| s.trim().trim_start_matches('/').to_string())
+            .filter(|s| !s.is_empty()),
         mc,
         deps,
         environment: parsed.environment.filter(|s| !s.trim().is_empty()),
@@ -377,6 +432,7 @@ mod tests {
         "#;
         let m = parse_mods_toml(toml);
         assert_eq!(m.modid.as_deref(), Some("examplemod"));
+        assert_eq!(m.version.as_deref(), Some("1.0.0"));
         let mut got: Vec<_> = m
             .deps
             .iter()
@@ -455,6 +511,36 @@ mod tests {
         assert_eq!(find("grumpymod").map(|d| d.kind), Some(RelKind::Breaks));
         // minecraft filtered
         assert!(find("minecraft").is_none());
+    }
+
+    #[test]
+    fn extracts_display_name_version_and_logo() {
+        // per-mod logoFile wins over the top-level one; placeholder version
+        // passes through verbatim (resolved later against the jar manifest)
+        let toml = r#"
+            logoFile="assets/top.png"
+            [[mods]]
+            modId="configured"
+            displayName="Configured"
+            version="${file.jarVersion}"
+            logoFile="/configured.png"
+        "#;
+        let m = parse_mods_toml(toml);
+        assert_eq!(m.display_name.as_deref(), Some("Configured"));
+        assert_eq!(m.version.as_deref(), Some("${file.jarVersion}"));
+        assert_eq!(m.logo_file.as_deref(), Some("configured.png"));
+
+        // top-level logo serves when the mod entry has none
+        let top = parse_mods_toml("logoFile=\"logo.png\"\n[[mods]]\nmodId=\"m\"");
+        assert_eq!(top.logo_file.as_deref(), Some("logo.png"));
+
+        // fabric: name/version/icon (map form picks any entry)
+        let f = parse_fabric_json(
+            br#"{"id":"sodium","name":"Sodium","version":"0.6.13","icon":{"32":"/assets/sodium/icon.png"}}"#,
+        );
+        assert_eq!(f.display_name.as_deref(), Some("Sodium"));
+        assert_eq!(f.version.as_deref(), Some("0.6.13"));
+        assert_eq!(f.logo_file.as_deref(), Some("assets/sodium/icon.png"));
     }
 
     #[test]

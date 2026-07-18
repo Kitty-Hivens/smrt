@@ -364,7 +364,7 @@
           }}
         >
           <span class="chev" aria-hidden="true">&#9656;</span>
-          <ModIcon name={m.name} source={iconSource(m)} size={32} mono />
+          <ModIcon name={m.name} source={iconSource(m)} sha1={m.icon_sha1 ?? null} size={32} mono />
           <div class="minfo">
             <div class="mname">
               <button
