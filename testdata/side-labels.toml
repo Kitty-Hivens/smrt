@@ -265,11 +265,11 @@ note = "client-only in truth; current @Mod-flag derivation says both -- hard D c
 filename = "InventoryTweaks.jar"
 pack = "Industrial"
 sha1 = "6e00827d1a009da39fa6db5afd2a3d6b024abfe9"
-side = "client"
+side = "both"
 policy = "tolerant"
 kind = "mod"
-category = "optional_client"
-note = "client sorter in truth; @Mod says both; target of annotation-only false hard edges"
+category = "optional_both"
+note = "client-leaning but author-declared acceptableRemoteVersions * and a server integration exist; target of annotation-only false hard edges"
 
 [[mods]]
 filename = "open-smrt-network-forge-1.12.2-0.1.0.jar"
@@ -315,11 +315,11 @@ note = "env req/uns"
 filename = "XaerosMinimap.jar"
 pack = "Create"
 sha1 = "21b3232e62dabcbb5bf28866481e8de2c0ccb780"
-side = "client"
+side = "both"
 policy = "tolerant"
 kind = "mod"
-category = "optional_client"
-note = "client map; server part optional"
+category = "optional_both"
+note = "client map with an optional server part: env required/optional maps to a tolerant Both per the section-2 formula"
 
 [[mods]]
 filename = "Born In A Barn 1.8-1.12-1.2.jar"
@@ -520,3 +520,66 @@ policy = "tolerant"
 kind = "library"
 category = "coremod"
 note = "pure ASM library: no @Mod, no mcmod.info, no FMLCorePlugin, no identity"
+
+# -- optional_server top-up: reference jars fetched by testdata/corpus/topup.py
+# (the two published packs carry almost no server-side mods)
+
+[[mods]]
+filename = "vanish-1.6.15+26.2.jar"
+pack = "(reference)"
+sha1 = "b63f7b86de54853631fa8a465d0b9aefa292f8ea"
+side = "server"
+policy = "tolerant"
+kind = "mod"
+category = "optional_server"
+note = "vanish: admin invisibility; env uns/req; fabric server mod"
+
+[[mods]]
+filename = "ledger-1.3.23.jar"
+pack = "(reference)"
+sha1 = "a650ccbd03c436c217cb243d7d8e278b2b6fef09"
+side = "server"
+policy = "tolerant"
+kind = "mod"
+category = "optional_server"
+note = "ledger: server-side action logger; env uns/req"
+
+[[mods]]
+filename = "servux-fabric-1.21-0.3.17.jar"
+pack = "(reference)"
+sha1 = "7910de01e095256c77bef3aa03686b53ba1444c6"
+side = "server"
+policy = "tolerant"
+kind = "mod"
+category = "optional_server"
+note = "servux: serves litematics/minihud data; env uns/req"
+
+[[mods]]
+filename = "essential_commands-0.40.0-beta1-mc26.2-rc-2.jar"
+pack = "(reference)"
+sha1 = "d2f609a2392a27c543d9a2257b04d1d3d2c36ec3"
+side = "server"
+policy = "tolerant"
+kind = "mod"
+category = "optional_server"
+note = "essential-commands: homes/warps; env uns/req"
+
+[[mods]]
+filename = "styled-chat-2.13.0+26.2.jar"
+pack = "(reference)"
+sha1 = "1b29da288b42b129a0f9d74cf80a053106e28649"
+side = "server"
+policy = "tolerant"
+kind = "mod"
+category = "optional_server"
+note = "styled-chat: server chat formatting; env uns/req"
+
+[[mods]]
+filename = "skinrestorer-2.9.0+26.1-fabric.jar"
+pack = "(reference)"
+sha1 = "08da5c99ea64e32fe6e9463f8d0024fc241a7915"
+side = "server"
+policy = "tolerant"
+kind = "mod"
+category = "optional_server"
+note = "skinrestorer: server-side skins; env uns/req"

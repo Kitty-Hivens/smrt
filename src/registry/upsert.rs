@@ -349,22 +349,23 @@ pub fn set_mod_packages(conn: &Connection, mod_id: i64, prefixes: &[&str]) -> Re
     Ok(())
 }
 
-/// Set a jar's derived side (by sha1). `COALESCE` so an undecided re-derivation
-/// never erases a known side; skipped for precious (`curator`/`authored`) rows.
-/// No-op when the derivation yielded nothing.
-pub fn set_mod_version_side(
+/// Record a scanned jar's classification (kind + side + match policy), keyed
+/// by content hash. Purely derived like `mod_package`: the harvest rewrites
+/// the row each run, for every scanned jar whether or not it has an identity.
+pub fn set_jar_class(
     conn: &Connection,
     sha1: &str,
+    kind: &str,
     side: Option<&str>,
-    now: &str,
+    match_policy: Option<&str>,
 ) -> Result<()> {
-    let Some(side) = side else {
-        return Ok(());
-    };
     conn.execute(
-        "UPDATE mod_version SET side = COALESCE(?2, side), updated_at = ?3
-         WHERE sha1 = ?1 AND source NOT IN ('curator', 'authored')",
-        params![sha1, side, now],
+        "INSERT INTO jar_class (sha1, kind, side, match_policy) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(sha1) DO UPDATE SET
+           kind = excluded.kind,
+           side = excluded.side,
+           match_policy = excluded.match_policy",
+        params![sha1, kind, side, match_policy],
     )?;
     Ok(())
 }

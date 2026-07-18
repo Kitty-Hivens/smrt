@@ -57,6 +57,10 @@ const MIGRATIONS: &[(u32, Migration)] = &[
         12,
         Migration::Sql(include_str!("schema/0012_side_class.sql")),
     ),
+    (
+        13,
+        Migration::Sql(include_str!("schema/0013_jar_class.sql")),
+    ),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its

@@ -55,6 +55,24 @@ fn like_escape(s: &str) -> String {
     out
 }
 
+/// A scanned jar's classification, or `None` when the harvest never read the
+/// jar's bytes (a Modrinth-only artifact).
+pub fn jar_class_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<JarClassRow>> {
+    Ok(conn
+        .query_row(
+            "SELECT kind, side, match_policy FROM jar_class WHERE sha1 = ?1",
+            params![sha1],
+            |r| {
+                Ok(JarClassRow {
+                    kind: r.get(0)?,
+                    side: r.get(1)?,
+                    match_policy: r.get(2)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
 /// The `mod` row id owning the artifact with this sha1, if harvested.
 pub fn mod_id_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<i64>> {
     Ok(conn

@@ -30,13 +30,15 @@ const PLATFORM_MODIDS: &[&str] = &[
     "lowcodefml",
 ];
 
-/// A declared dependency: the target modid, its kind, and an optional version
-/// range (Maven-style for Forge, semver-ish for Fabric).
+/// A declared dependency: the target modid, its kind, an optional version
+/// range (Maven-style for Forge, semver-ish for Fabric), and the side the
+/// dependency is needed on (`BOTH`/`CLIENT`/`SERVER`, Forge/NeoForge only).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeclaredDep {
     pub modid: String,
     pub kind: RelKind,
     pub version_range: Option<String>,
+    pub side: Option<String>,
 }
 
 /// A jar's modern declared metadata.
@@ -50,6 +52,29 @@ pub struct ModMeta {
     /// Modrinth coverage; `None` when no usable version is declared.
     pub mc: Option<String>,
     pub deps: Vec<DeclaredDep>,
+    /// `fabric.mod.json` `environment` verbatim (`*` | `client` | `server`).
+    pub environment: Option<String>,
+    /// Whether `entrypoints.client` / `entrypoints.main`+`entrypoints.server`
+    /// are declared (Fabric): a client entrypoint with no main/server one is a
+    /// client-side shape.
+    pub client_entrypoint: bool,
+    pub main_entrypoint: bool,
+    /// `mods.toml` / `neoforge.mods.toml` `displayTest` verbatim
+    /// (MATCH_VERSION | IGNORE_SERVER_VERSION | IGNORE_ALL_VERSION | NONE).
+    /// Anything but the default MATCH_VERSION means the mod tolerates a server
+    /// that lacks it -- the modern spelling of `acceptableRemoteVersions="*"`.
+    pub display_test: Option<String>,
+}
+
+impl ModMeta {
+    /// True when the declared `displayTest` marks the mod tolerant of a
+    /// mismatched/absent remote side.
+    pub fn display_test_tolerant(&self) -> bool {
+        matches!(
+            self.display_test.as_deref(),
+            Some("IGNORE_SERVER_VERSION") | Some("IGNORE_ALL_VERSION") | Some("NONE")
+        )
+    }
 }
 
 /// Read a jar's modern metadata: try the Forge/NeoForge TOML first, then Fabric
@@ -92,6 +117,8 @@ struct ModsToml {
 struct ModsTomlMod {
     #[serde(rename = "modId", alias = "modid", default)]
     mod_id: Option<String>,
+    #[serde(rename = "displayTest", default)]
+    display_test: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -106,6 +133,9 @@ struct ModsTomlDep {
     dep_type: Option<String>,
     #[serde(rename = "versionRange", alias = "versionrange", default)]
     version_range: Option<String>,
+    /// Which side needs the dependency: BOTH (default) | CLIENT | SERVER.
+    #[serde(default)]
+    side: Option<String>,
 }
 
 /// Parse a `mods.toml` / `neoforge.mods.toml` body.
@@ -113,11 +143,17 @@ pub fn parse_mods_toml(text: &str) -> ModMeta {
     let Ok(parsed) = toml::from_str::<ModsToml>(text) else {
         return ModMeta::default();
     };
-    let modid = parsed
-        .mods
-        .into_iter()
-        .find_map(|m| m.mod_id)
-        .filter(|s| !s.trim().is_empty());
+    let mut modid = None;
+    let mut display_test = None;
+    for m in parsed.mods {
+        if modid.is_none() {
+            modid = m.mod_id.filter(|s| !s.trim().is_empty());
+            display_test = m
+                .display_test
+                .map(|s| s.trim().to_ascii_uppercase())
+                .filter(|s| !s.is_empty());
+        }
+    }
     let mut deps = Vec::new();
     let mut mc = None;
     for entry in parsed.dependencies.into_values().flatten() {
@@ -148,9 +184,19 @@ pub fn parse_mods_toml(text: &str) -> ModMeta {
             modid: target,
             kind,
             version_range: clean_range(entry.version_range),
+            side: entry
+                .side
+                .map(|s| s.trim().to_ascii_uppercase())
+                .filter(|s| !s.is_empty()),
         });
     }
-    ModMeta { modid, mc, deps }
+    ModMeta {
+        modid,
+        mc,
+        deps,
+        display_test,
+        ..ModMeta::default()
+    }
 }
 
 /// Kind of a Forge/NeoForge dependency: `type` when present, else the legacy
@@ -177,6 +223,10 @@ fn forge_dep_kind(dep: &ModsTomlDep) -> Option<RelKind> {
 struct FabricModJson {
     #[serde(default)]
     id: Option<String>,
+    #[serde(default)]
+    environment: Option<String>,
+    #[serde(default)]
+    entrypoints: HashMap<String, serde_json::Value>,
     #[serde(default)]
     depends: HashMap<String, VersionPredicate>,
     #[serde(default)]
@@ -231,6 +281,7 @@ pub fn parse_fabric_json(bytes: &[u8]) -> ModMeta {
                 version_range: pred.range(),
                 modid,
                 kind,
+                side: None,
             });
         }
     };
@@ -240,10 +291,21 @@ pub fn parse_fabric_json(bytes: &[u8]) -> ModMeta {
     add(parsed.breaks, RelKind::Conflicts);
     add(parsed.conflicts, RelKind::Breaks);
     deps.sort_by(|a, b| a.modid.cmp(&b.modid));
+    let has_entry = |k: &str| {
+        parsed
+            .entrypoints
+            .get(k)
+            .and_then(|v| v.as_array())
+            .is_some_and(|a| !a.is_empty())
+    };
     ModMeta {
         modid: parsed.id.filter(|s| !s.trim().is_empty()),
         mc,
         deps,
+        environment: parsed.environment.filter(|s| !s.trim().is_empty()),
+        client_entrypoint: has_entry("client"),
+        main_entrypoint: has_entry("main") || has_entry("server"),
+        display_test: None,
     }
 }
 

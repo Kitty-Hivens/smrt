@@ -92,6 +92,16 @@ impl RelKind {
     }
 }
 
+/// A scanned jar's classification row (`jar_class`): what the jar is, and the
+/// side/match-policy verdict where decided. `None` axes mean the classifier
+/// refused to guess, which the resolve layer reports as unclassified.
+#[derive(Debug, Clone)]
+pub struct JarClassRow {
+    pub kind: String,
+    pub side: Option<String>,
+    pub match_policy: Option<String>,
+}
+
 /// One edge out of a mod in the dependency graph, as the resolver reads it:
 /// the target selector (a bare modid, or `modrinth:<project_id>`), an optional
 /// Maven/semver version window, the kind, and the provenance -- `confidence`

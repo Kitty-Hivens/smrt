@@ -3,15 +3,23 @@
 //! the graph never relies on what a mod's author declared.
 //!
 //! Per class we extract:
-//!   - the class's own binary name (so we learn which packages a jar OWNS);
+//!   - the class's own binary name (so we learn which packages a jar OWNS), its
+//!     superclass and interfaces (content-registration signals: a class
+//!     extending Block/Item/Entity registers content);
 //!   - every referenced type's binary name (so a reference to another mod's
 //!     package becomes a dependency edge);
 //!   - whether the class is *conditionally-loaded integration code* -- it guards
 //!     on a `Loader.isModLoaded` check, or carries an `@Optional` / integration
 //!     plugin marker. A reference made only from such classes is a soft (optional)
 //!     dependency, not a hard one;
-//!   - the `@Mod(clientSideOnly=.., serverSideOnly=..)` element values, when the
-//!     class carries the Forge `@Mod` annotation, as a client/server side hint.
+//!   - the `@Mod` element values, when the class carries a Forge/NeoForge `@Mod`
+//!     annotation: `clientSideOnly` / `serverSideOnly` as a side hint, `modid`
+//!     as identity, `acceptableRemoteVersions` as the 1.12-era server-match
+//!     tolerance marker (`"*"` = the mod joins a server without it);
+//!   - a class-level dist annotation (`@SideOnly` / `@OnlyIn` / `@Environment`),
+//!     the per-class side marker across loader eras;
+//!   - whether the class implements a coremod loading plugin, or carries a
+//!     `@SidedProxy` field (a client/server split -- a both-sides shape).
 //!
 //! All of the above is answerable from the constant pool plus the class-level
 //! annotations, so we never walk the `Code` attribute's instruction stream:
@@ -25,12 +33,38 @@
 
 use std::collections::BTreeSet;
 
-/// The Forge `@Mod` annotation descriptor (1.12.2 `net.minecraftforge` and the
-/// older 1.7.10 `cpw.mods` spelling), carrying the `clientSideOnly` /
-/// `serverSideOnly` side flags.
+/// The Forge/NeoForge `@Mod` annotation descriptor (modern Forge kept the
+/// 1.8-1.12 `net.minecraftforge` name; 1.7.10 spelled it `cpw.mods`; NeoForge
+/// moved it). Carries `clientSideOnly` / `serverSideOnly` (1.7-1.12), `modid`,
+/// and `acceptableRemoteVersions` (1.12).
 const MOD_DESCRIPTORS: &[&str] = &[
     "Lnet/minecraftforge/fml/common/Mod;",
     "Lcpw/mods/fml/common/Mod;",
+    "Lnet/neoforged/fml/common/Mod;",
+];
+
+/// Class-level dist annotations across loader eras: Forge 1.7/1.8-1.12
+/// `@SideOnly(Side.X)`, modern Forge/NeoForge `@OnlyIn(Dist.X)`, Fabric
+/// `@Environment(EnvType.X)`. The enum constant name tells the side.
+const DIST_DESCRIPTORS: &[&str] = &[
+    "Lcpw/mods/fml/relauncher/SideOnly;",
+    "Lnet/minecraftforge/fml/relauncher/SideOnly;",
+    "Lnet/minecraftforge/api/distmarker/OnlyIn;",
+    "Lnet/fabricmc/api/Environment;",
+];
+
+/// `@SidedProxy` field-annotation descriptors (Forge 1.7-1.12). Presence in the
+/// pool means the mod splits into client/server proxies -- a both-sides shape.
+const SIDED_PROXY_DESCRIPTORS: &[&str] = &[
+    "Lnet/minecraftforge/fml/common/SidedProxy;",
+    "Lcpw/mods/fml/common/SidedProxy;",
+];
+
+/// Coremod loading-plugin interfaces: a class implementing one is launch-time
+/// transformer code, not a mod.
+const LOADING_PLUGIN_INTERFACES: &[&str] = &[
+    "net/minecraftforge/fml/relauncher/IFMLLoadingPlugin",
+    "cpw/mods/fml/relauncher/IFMLLoadingPlugin",
 ];
 
 /// Annotation descriptors that mark a class/method as conditionally-loaded
@@ -67,11 +101,23 @@ const MOD_LOADED_GUARDS: &[(&str, &str)] = &[
     ("org/quiltmc/loader/api/QuiltLoader", "isModLoaded"), // Quilt
 ];
 
+/// The side a class-level dist annotation pins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dist {
+    Client,
+    Server,
+}
+
 /// The facts one `.class` yields for derivation.
 #[derive(Debug, Clone)]
 pub struct ClassInfo {
     /// Binary name of the class, `/`-separated (e.g. `appeng/core/AppEng`).
     pub this_class: String,
+    /// Binary name of the direct superclass (`None` for Object itself or a
+    /// malformed entry). A content signal when it is a Block/Item/Entity base.
+    pub super_name: Option<String>,
+    /// Binary names of the directly implemented interfaces.
+    pub interfaces: Vec<String>,
     /// Binary names of every type this class references (owners, supertypes,
     /// field/method signature types, constant-pool class entries). Deduped.
     pub referenced: BTreeSet<String>,
@@ -86,6 +132,18 @@ pub struct ClassInfo {
     /// identity only here (the annotation value is a compile-time constant, so a
     /// `modid = MOD_ID` reference is already inlined to its literal in the bytes).
     pub mod_id: Option<String>,
+    /// The `acceptableRemoteVersions` element of an `@Mod` annotation, when the
+    /// class declares one. `"*"` is the 1.12-era "the server may lack this mod"
+    /// marker (JEI-style), i.e. a tolerant match policy.
+    pub acceptable_remote_versions: Option<String>,
+    /// The class-level dist annotation (`@SideOnly` / `@OnlyIn` /
+    /// `@Environment`), when present.
+    pub dist: Option<Dist>,
+    /// True when the pool carries a `@SidedProxy` descriptor -- the mod splits
+    /// into client/server proxies, a both-sides shape.
+    pub sided_proxy: bool,
+    /// True when the class implements a coremod loading-plugin interface.
+    pub loading_plugin: bool,
 }
 
 /// Constant-pool entries, reduced to what derivation reads. `Skip` is the dead
@@ -226,9 +284,20 @@ pub fn parse_class(bytes: &[u8]) -> Option<ClassInfo> {
     c.u2()?; // access_flags
     let this_class_index = c.u2()?;
     let this_class = class_name(&cp, this_class_index)?.to_string();
-    c.u2()?; // super_class
+    let super_index = c.u2()?;
+    // Object's own super_class is 0; a bare Object super is uninformative.
+    let super_name = (super_index != 0)
+        .then(|| class_name(&cp, super_index).map(str::to_string))
+        .flatten()
+        .filter(|s| s != "java/lang/Object");
     let interfaces_count = c.u2()?;
-    c.skip(interfaces_count as usize * 2)?;
+    let mut interfaces = Vec::with_capacity(interfaces_count as usize);
+    for _ in 0..interfaces_count {
+        let idx = c.u2()?;
+        if let Some(n) = class_name(&cp, idx) {
+            interfaces.push(n.to_string());
+        }
+    }
 
     // Referenced types come from three sources, unioned:
     //   1. every Class entry in the pool (owners, supertypes, casts, `new`, ...),
@@ -275,9 +344,11 @@ pub fn parse_class(bytes: &[u8]) -> Option<ClassInfo> {
         skip_attributes(&mut c)?;
     }
 
-    // ── class attributes: only the annotation blocks matter (for @Mod) ─
+    // ── class attributes: only the annotation blocks matter ────────────────
     let mut mod_sides: Option<(bool, bool)> = None;
     let mut mod_id: Option<String> = None;
+    let mut acceptable_remote_versions: Option<String> = None;
+    let mut dist: Option<Dist> = None;
     let attr_count = c.u2()?;
     for _ in 0..attr_count {
         let name_index = c.u2()?;
@@ -287,11 +358,19 @@ pub fn parse_class(bytes: &[u8]) -> Option<ClassInfo> {
         if matches!(
             name,
             Some("RuntimeVisibleAnnotations") | Some("RuntimeInvisibleAnnotations")
-        ) && let Some(ann) = mod_annotation(body, &cp)
-        {
-            mod_sides = Some(ann.sides);
-            if mod_id.is_none() {
-                mod_id = ann.modid;
+        ) {
+            let scanned = scan_annotations(body, &cp);
+            if let Some(ann) = scanned.mod_annotation {
+                mod_sides = Some(ann.sides);
+                if mod_id.is_none() {
+                    mod_id = ann.modid;
+                }
+                if acceptable_remote_versions.is_none() {
+                    acceptable_remote_versions = ann.acceptable_remote_versions;
+                }
+            }
+            if dist.is_none() {
+                dist = scanned.dist;
             }
         }
     }
@@ -299,12 +378,29 @@ pub fn parse_class(bytes: &[u8]) -> Option<ClassInfo> {
     let referenced_self = this_class.clone();
     referenced.remove(&referenced_self);
 
+    let loading_plugin = interfaces
+        .iter()
+        .any(|i| LOADING_PLUGIN_INTERFACES.contains(&i.as_str()));
     Some(ClassInfo {
         conditional: is_conditional(&cp),
+        sided_proxy: has_marker(&cp, SIDED_PROXY_DESCRIPTORS),
+        loading_plugin,
         this_class,
+        super_name,
+        interfaces,
         referenced,
         mod_sides,
         mod_id,
+        acceptable_remote_versions,
+        dist,
+    })
+}
+
+/// True when the pool carries any of the given annotation-descriptor `Utf8`s.
+fn has_marker(cp: &[Cp], descriptors: &[&str]) -> bool {
+    cp.iter().any(|e| match e {
+        Cp::Utf8(s) => descriptors.contains(&s.as_str()),
+        _ => false,
     })
 }
 
@@ -414,62 +510,96 @@ fn extract_object_types(desc: &str, out: &mut BTreeSet<String>) {
 }
 
 /// The `@Mod` element values this module reads: the mod's `modid` (its identity
-/// when no metadata file is present) and its `(clientSideOnly, serverSideOnly)`
-/// side flags (absent element -> false).
+/// when no metadata file is present), its `(clientSideOnly, serverSideOnly)`
+/// side flags (absent element -> false), and `acceptableRemoteVersions`.
+#[derive(Default)]
 struct ModAnnotation {
     modid: Option<String>,
     sides: (bool, bool),
+    acceptable_remote_versions: Option<String>,
 }
 
-/// Scan an annotations attribute body for an `@Mod` annotation and read the
-/// element values in [`ModAnnotation`].
-fn mod_annotation(body: &[u8], cp: &[Cp]) -> Option<ModAnnotation> {
+/// Everything one annotations attribute yields.
+#[derive(Default)]
+struct ScannedAnnotations {
+    mod_annotation: Option<ModAnnotation>,
+    dist: Option<Dist>,
+}
+
+/// Scan an annotations attribute body for the annotations derivation reads: a
+/// Forge/NeoForge `@Mod` (element values) and a class-level dist marker
+/// (`@SideOnly` / `@OnlyIn` / `@Environment`, whose enum constant names the
+/// side).
+fn scan_annotations(body: &[u8], cp: &[Cp]) -> ScannedAnnotations {
+    let mut out = ScannedAnnotations::default();
     let mut c = Cur::new(body);
-    let num = c.u2()?;
+    let Some(num) = c.u2() else { return out };
     for _ in 0..num {
-        let (type_index, pairs) = read_annotation(&mut c)?;
-        let is_mod = utf8(cp, type_index)
-            .map(|t| MOD_DESCRIPTORS.contains(&t))
-            .unwrap_or(false);
-        if is_mod {
-            let mut modid = None;
-            let mut client = false;
-            let mut server = false;
+        let Some((type_index, pairs)) = read_annotation(&mut c) else {
+            return out; // malformed tail: keep what was already scanned
+        };
+        let Some(type_desc) = utf8(cp, type_index) else {
+            continue;
+        };
+        if MOD_DESCRIPTORS.contains(&type_desc) {
+            let mut ann = ModAnnotation::default();
             for (name_index, value) in pairs {
                 match (utf8(cp, name_index), value) {
                     // modid is a compile-time-constant String element (tag `s`)
-                    (Some("modid"), Some(Prim(b's', const_index))) => {
-                        modid = utf8(cp, const_index)
+                    (Some("modid"), Some(ElemValue::Prim(b's', const_index))) => {
+                        ann.modid = utf8(cp, const_index)
                             .map(str::to_string)
                             .filter(|s| !s.is_empty());
                     }
-                    (Some("clientSideOnly"), Some(Prim(b'Z', const_index))) => {
-                        client = integer(cp, const_index).unwrap_or(0) != 0;
+                    (Some("clientSideOnly"), Some(ElemValue::Prim(b'Z', const_index))) => {
+                        ann.sides.0 = integer(cp, const_index).unwrap_or(0) != 0;
                     }
-                    (Some("serverSideOnly"), Some(Prim(b'Z', const_index))) => {
-                        server = integer(cp, const_index).unwrap_or(0) != 0;
+                    (Some("serverSideOnly"), Some(ElemValue::Prim(b'Z', const_index))) => {
+                        ann.sides.1 = integer(cp, const_index).unwrap_or(0) != 0;
+                    }
+                    (
+                        Some("acceptableRemoteVersions"),
+                        Some(ElemValue::Prim(b's', const_index)),
+                    ) => {
+                        ann.acceptable_remote_versions = utf8(cp, const_index)
+                            .map(str::to_string)
+                            .filter(|s| !s.is_empty());
                     }
                     _ => {}
                 }
             }
-            return Some(ModAnnotation {
-                modid,
-                sides: (client, server),
-            });
+            out.mod_annotation = Some(ann);
+        } else if DIST_DESCRIPTORS.contains(&type_desc) && out.dist.is_none() {
+            // the side rides in the `value` element's enum constant name:
+            // Side.CLIENT / Dist.CLIENT / EnvType.CLIENT, and the server-side
+            // spellings SERVER / DEDICATED_SERVER.
+            for (_, value) in pairs {
+                if let Some(ElemValue::Enum(const_index)) = value {
+                    out.dist = match utf8(cp, const_index) {
+                        Some("CLIENT") => Some(Dist::Client),
+                        Some("SERVER") | Some("DEDICATED_SERVER") => Some(Dist::Server),
+                        _ => None,
+                    };
+                }
+            }
         }
     }
-    None
+    out
 }
 
-/// A captured element value: a primitive/String constant we may read (`tag`,
-/// const-pool index), or `None` for structured values we only skip past.
-struct Prim(u8, u16);
+/// A captured element value: a primitive/String constant (`tag`, const-pool
+/// index), an enum constant (`type_name_index`, `const_name_index`), or
+/// `None` for structured values we only skip past.
+enum ElemValue {
+    Prim(u8, u16),
+    Enum(u16),
+}
 
 /// Read one `annotation` structure, capturing `(type_index, pairs)` where each
 /// pair is `(element_name_index, captured_value)`. Advances past the whole
 /// annotation regardless of value shapes, so callers stay aligned.
 #[allow(clippy::type_complexity)]
-fn read_annotation(c: &mut Cur) -> Option<(u16, Vec<(u16, Option<Prim>)>)> {
+fn read_annotation(c: &mut Cur) -> Option<(u16, Vec<(u16, Option<ElemValue>)>)> {
     let type_index = c.u2()?;
     let num_pairs = c.u2()?;
     let mut pairs = Vec::with_capacity(num_pairs as usize);
@@ -481,20 +611,20 @@ fn read_annotation(c: &mut Cur) -> Option<(u16, Vec<(u16, Option<Prim>)>)> {
     Some((type_index, pairs))
 }
 
-/// Read one `element_value`, advancing the cursor exactly one value. Primitive
-/// and String values yield their constant index; everything structural is
-/// skipped and yields `None`.
-fn read_element_value(c: &mut Cur) -> Option<Option<Prim>> {
+/// Read one `element_value`, advancing the cursor exactly one value. Primitive,
+/// String and enum values yield their constant indices; everything structural
+/// is skipped and yields `None`.
+fn read_element_value(c: &mut Cur) -> Option<Option<ElemValue>> {
     let tag = c.u1()?;
     match tag {
         b'B' | b'C' | b'D' | b'F' | b'I' | b'J' | b'S' | b'Z' | b's' => {
             let const_index = c.u2()?;
-            Some(Some(Prim(tag, const_index)))
+            Some(Some(ElemValue::Prim(tag, const_index)))
         }
         b'e' => {
-            c.u2()?; // enum type_name_index
-            c.u2()?; // enum const_name_index
-            Some(None)
+            c.u2()?; // enum type_name_index (the const name alone decides)
+            let const_name_index = c.u2()?;
+            Some(Some(ElemValue::Enum(const_name_index)))
         }
         b'c' => {
             c.u2()?; // class_info_index
@@ -590,6 +720,18 @@ pub(crate) mod fixtures {
             class_attrs: &[u8],
             attr_n: u16,
         ) -> Vec<u8> {
+            self.build_with(this_index, object_index, &[], class_attrs, attr_n)
+        }
+
+        /// Like [`build`], with an explicit superclass and interface list.
+        pub(crate) fn build_with(
+            self,
+            this_index: u16,
+            super_index: u16,
+            interfaces: &[u16],
+            class_attrs: &[u8],
+            attr_n: u16,
+        ) -> Vec<u8> {
             let mut out = Vec::new();
             out.extend_from_slice(&MAGIC.to_be_bytes());
             out.extend_from_slice(&0u16.to_be_bytes()); // minor
@@ -598,14 +740,133 @@ pub(crate) mod fixtures {
             out.extend_from_slice(&self.pool);
             out.extend_from_slice(&0x0021u16.to_be_bytes()); // access_flags
             out.extend_from_slice(&this_index.to_be_bytes());
-            out.extend_from_slice(&object_index.to_be_bytes()); // super
-            out.extend_from_slice(&0u16.to_be_bytes()); // interfaces_count
+            out.extend_from_slice(&super_index.to_be_bytes());
+            out.extend_from_slice(&(interfaces.len() as u16).to_be_bytes());
+            for i in interfaces {
+                out.extend_from_slice(&i.to_be_bytes());
+            }
             out.extend_from_slice(&0u16.to_be_bytes()); // fields_count
             out.extend_from_slice(&0u16.to_be_bytes()); // methods_count
             out.extend_from_slice(&attr_n.to_be_bytes()); // attributes_count
             out.extend_from_slice(class_attrs);
             out
         }
+    }
+
+    /// One annotation body: `type_index` + `(name_index, encoded value)` pairs.
+    fn annotation(type_index: u16, pairs: &[(u16, Vec<u8>)]) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(&type_index.to_be_bytes());
+        b.extend_from_slice(&(pairs.len() as u16).to_be_bytes());
+        for (name, value) in pairs {
+            b.extend_from_slice(&name.to_be_bytes());
+            b.extend_from_slice(value);
+        }
+        b
+    }
+
+    fn prim(tag: u8, const_index: u16) -> Vec<u8> {
+        let mut b = vec![tag];
+        b.extend_from_slice(&const_index.to_be_bytes());
+        b
+    }
+
+    fn enum_val(type_name: u16, const_name: u16) -> Vec<u8> {
+        let mut b = vec![b'e'];
+        b.extend_from_slice(&type_name.to_be_bytes());
+        b.extend_from_slice(&const_name.to_be_bytes());
+        b
+    }
+
+    /// A RuntimeVisibleAnnotations attribute holding the given annotations.
+    fn annotations_attr(w: &mut ClassWriter, annotations: &[Vec<u8>]) -> Vec<u8> {
+        let name = w.utf8("RuntimeVisibleAnnotations");
+        let mut body = Vec::new();
+        body.extend_from_slice(&(annotations.len() as u16).to_be_bytes());
+        for a in annotations {
+            body.extend_from_slice(a);
+        }
+        let mut attrs = Vec::new();
+        attrs.extend_from_slice(&name.to_be_bytes());
+        attrs.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        attrs.extend_from_slice(&body);
+        attrs
+    }
+
+    /// Everything a synthetic test class can carry; `Default` is a bare class.
+    #[derive(Default)]
+    pub(crate) struct ClassSpec<'a> {
+        pub(crate) this: &'a str,
+        pub(crate) super_name: Option<&'a str>,
+        pub(crate) interfaces: &'a [&'a str],
+        pub(crate) refs: &'a [&'a str],
+        pub(crate) conditional: bool,
+        pub(crate) mod_sides: Option<(bool, bool)>,
+        pub(crate) modid: Option<&'a str>,
+        pub(crate) arv: Option<&'a str>,
+        /// `(annotation descriptor, enum constant name)`, e.g.
+        /// `("Lnet/minecraftforge/api/distmarker/OnlyIn;", "CLIENT")`.
+        pub(crate) dist: Option<(&'a str, &'a str)>,
+        pub(crate) sided_proxy: bool,
+    }
+
+    /// Assemble a class from a [`ClassSpec`] -- the one builder every
+    /// side/policy fixture goes through.
+    pub(crate) fn build_class_spec(spec: &ClassSpec) -> Vec<u8> {
+        let mut w = ClassWriter::default();
+        let obj = w.class("java/lang/Object");
+        let this_index = w.class(spec.this);
+        let super_index = match spec.super_name {
+            Some(s) => w.class(s),
+            None => obj,
+        };
+        let iface_indexes: Vec<u16> = spec.interfaces.iter().map(|i| w.class(i)).collect();
+        for r in spec.refs {
+            w.class(r);
+        }
+        if spec.conditional {
+            w.utf8("Lnet/minecraftforge/fml/common/Optional$Method;");
+        }
+        if spec.sided_proxy {
+            w.utf8("Lnet/minecraftforge/fml/common/SidedProxy;");
+        }
+        let mut anns: Vec<Vec<u8>> = Vec::new();
+        if spec.mod_sides.is_some() || spec.modid.is_some() || spec.arv.is_some() {
+            let desc = w.utf8("Lnet/minecraftforge/fml/common/Mod;");
+            let mut pairs: Vec<(u16, Vec<u8>)> = Vec::new();
+            if let Some(id) = spec.modid {
+                let n = w.utf8("modid");
+                let v = w.utf8(id);
+                pairs.push((n, prim(b's', v)));
+            }
+            if let Some((client, server)) = spec.mod_sides {
+                let n1 = w.utf8("clientSideOnly");
+                let v1 = w.integer(client as i32);
+                pairs.push((n1, prim(b'Z', v1)));
+                let n2 = w.utf8("serverSideOnly");
+                let v2 = w.integer(server as i32);
+                pairs.push((n2, prim(b'Z', v2)));
+            }
+            if let Some(arv) = spec.arv {
+                let n = w.utf8("acceptableRemoteVersions");
+                let v = w.utf8(arv);
+                pairs.push((n, prim(b's', v)));
+            }
+            anns.push(annotation(desc, &pairs));
+        }
+        if let Some((desc, konst)) = spec.dist {
+            let d = w.utf8(desc);
+            let name = w.utf8("value");
+            let tname = w.utf8("Lenum/TypeDesc;"); // parser reads only the const name
+            let cname = w.utf8(konst);
+            anns.push(annotation(d, &[(name, enum_val(tname, cname))]));
+        }
+        let (attrs, n) = if anns.is_empty() {
+            (Vec::new(), 0u16)
+        } else {
+            (annotations_attr(&mut w, &anns), 1u16)
+        };
+        w.build_with(this_index, super_index, &iface_indexes, &attrs, n)
     }
 
     /// Build a class named `this`, referencing each of `refs`, optionally marked
@@ -617,65 +878,23 @@ pub(crate) mod fixtures {
         conditional: bool,
         mod_sides: Option<(bool, bool)>,
     ) -> Vec<u8> {
-        let mut w = ClassWriter::default();
-        let obj = w.class("java/lang/Object");
-        let this_index = w.class(this);
-        for r in refs {
-            w.class(r);
-        }
-        if conditional {
-            w.utf8("Lnet/minecraftforge/fml/common/Optional$Method;");
-        }
-        let mut attrs = Vec::new();
-        let mut attr_n = 0u16;
-        if let Some((client, server)) = mod_sides {
-            let mod_desc = w.utf8("Lnet/minecraftforge/fml/common/Mod;");
-            let client_name = w.utf8("clientSideOnly");
-            let server_name = w.utf8("serverSideOnly");
-            let cval = w.integer(client as i32);
-            let sval = w.integer(server as i32);
-            let ann_name = w.utf8("RuntimeVisibleAnnotations");
-            let mut body = Vec::new();
-            body.extend_from_slice(&1u16.to_be_bytes()); // num_annotations
-            body.extend_from_slice(&mod_desc.to_be_bytes());
-            body.extend_from_slice(&2u16.to_be_bytes()); // num_element_value_pairs
-            body.extend_from_slice(&client_name.to_be_bytes());
-            body.push(b'Z');
-            body.extend_from_slice(&cval.to_be_bytes());
-            body.extend_from_slice(&server_name.to_be_bytes());
-            body.push(b'Z');
-            body.extend_from_slice(&sval.to_be_bytes());
-            attrs.extend_from_slice(&ann_name.to_be_bytes());
-            attrs.extend_from_slice(&(body.len() as u32).to_be_bytes());
-            attrs.extend_from_slice(&body);
-            attr_n = 1;
-        }
-        w.build(this_index, obj, &attrs, attr_n)
+        build_class_spec(&ClassSpec {
+            this,
+            refs,
+            conditional,
+            mod_sides,
+            ..ClassSpec::default()
+        })
     }
 
     /// Build a class carrying only an `@Mod(modid = "...")` annotation -- the
-    /// identity path for a Forge mod that ships no metadata file. The `modid`
-    /// element is a String value (tag `s`) whose const index is a `Utf8`.
+    /// identity path for a Forge mod that ships no metadata file.
     pub(crate) fn build_class_modid(this: &str, modid: &str) -> Vec<u8> {
-        let mut w = ClassWriter::default();
-        let obj = w.class("java/lang/Object");
-        let this_index = w.class(this);
-        let mod_desc = w.utf8("Lnet/minecraftforge/fml/common/Mod;");
-        let modid_name = w.utf8("modid");
-        let modid_val = w.utf8(modid);
-        let ann_name = w.utf8("RuntimeVisibleAnnotations");
-        let mut body = Vec::new();
-        body.extend_from_slice(&1u16.to_be_bytes()); // num_annotations
-        body.extend_from_slice(&mod_desc.to_be_bytes());
-        body.extend_from_slice(&1u16.to_be_bytes()); // num_element_value_pairs
-        body.extend_from_slice(&modid_name.to_be_bytes());
-        body.push(b's');
-        body.extend_from_slice(&modid_val.to_be_bytes());
-        let mut attrs = Vec::new();
-        attrs.extend_from_slice(&ann_name.to_be_bytes());
-        attrs.extend_from_slice(&(body.len() as u32).to_be_bytes());
-        attrs.extend_from_slice(&body);
-        w.build(this_index, obj, &attrs, 1)
+        build_class_spec(&ClassSpec {
+            this,
+            modid: Some(modid),
+            ..ClassSpec::default()
+        })
     }
 
     /// Zip the given `(name, bytes)` entries into an in-memory jar.
@@ -812,6 +1031,91 @@ mod tests {
         let bytes = w.build(this, obj, &attrs, 1);
         let info = parse_class(&bytes).expect("parses");
         assert_eq!(info.mod_sides, Some((true, false)));
+    }
+
+    #[test]
+    fn reads_super_and_interfaces() {
+        let bytes = fixtures::build_class_spec(&fixtures::ClassSpec {
+            this: "mymod/BlockMachine",
+            super_name: Some("net/minecraft/block/Block"),
+            interfaces: &["net/minecraftforge/fml/common/IWorldGenerator"],
+            ..Default::default()
+        });
+        let info = parse_class(&bytes).expect("parses");
+        assert_eq!(
+            info.super_name.as_deref(),
+            Some("net/minecraft/block/Block")
+        );
+        assert_eq!(
+            info.interfaces,
+            vec!["net/minecraftforge/fml/common/IWorldGenerator"]
+        );
+        // a bare Object super is uninformative and stays None
+        let bare = fixtures::build_class("mymod/Plain", &[], false, None);
+        assert_eq!(parse_class(&bare).unwrap().super_name, None);
+    }
+
+    #[test]
+    fn reads_acceptable_remote_versions() {
+        let bytes = fixtures::build_class_spec(&fixtures::ClassSpec {
+            this: "mezz/jei/JustEnoughItems",
+            modid: Some("jei"),
+            arv: Some("*"),
+            ..Default::default()
+        });
+        let info = parse_class(&bytes).expect("parses");
+        assert_eq!(info.mod_id.as_deref(), Some("jei"));
+        assert_eq!(info.acceptable_remote_versions.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn reads_class_level_dist_annotation_across_eras() {
+        for (desc, konst, want) in [
+            (
+                "Lnet/minecraftforge/fml/relauncher/SideOnly;",
+                "CLIENT",
+                Dist::Client,
+            ),
+            ("Lcpw/mods/fml/relauncher/SideOnly;", "SERVER", Dist::Server),
+            (
+                "Lnet/minecraftforge/api/distmarker/OnlyIn;",
+                "DEDICATED_SERVER",
+                Dist::Server,
+            ),
+            ("Lnet/fabricmc/api/Environment;", "CLIENT", Dist::Client),
+        ] {
+            let bytes = fixtures::build_class_spec(&fixtures::ClassSpec {
+                this: "mymod/gui/Screen",
+                dist: Some((desc, konst)),
+                ..Default::default()
+            });
+            let info = parse_class(&bytes).expect("parses");
+            assert_eq!(info.dist, Some(want), "{desc}({konst})");
+        }
+        // no dist annotation -> None
+        let bare = fixtures::build_class("mymod/Common", &[], false, None);
+        assert_eq!(parse_class(&bare).unwrap().dist, None);
+    }
+
+    #[test]
+    fn detects_sided_proxy_and_loading_plugin() {
+        let proxied = fixtures::build_class_spec(&fixtures::ClassSpec {
+            this: "mymod/Main",
+            sided_proxy: true,
+            ..Default::default()
+        });
+        assert!(parse_class(&proxied).unwrap().sided_proxy);
+
+        let plugin = fixtures::build_class_spec(&fixtures::ClassSpec {
+            this: "mymod/asm/CorePlugin",
+            interfaces: &["net/minecraftforge/fml/relauncher/IFMLLoadingPlugin"],
+            ..Default::default()
+        });
+        assert!(parse_class(&plugin).unwrap().loading_plugin);
+
+        let plain = fixtures::build_class("mymod/Plain", &[], false, None);
+        let info = parse_class(&plain).unwrap();
+        assert!(!info.sided_proxy && !info.loading_plugin);
     }
 
     #[test]

@@ -63,8 +63,13 @@ pub struct JarSeed {
     pub owned_packages: Vec<String>,
     pub hard_refs: Vec<String>,
     pub optional_refs: Vec<String>,
-    // Derived runtime side (both/client/server), or None when undecided.
+    // Derived classification (stage D): what the jar is and how it must match
+    // the server. `kind = None` means the jar was never scanned (no local
+    // bytes), which is different from a scanned jar the classifier could not
+    // decide (kind present, side/policy None).
     pub side: Option<String>,
+    pub match_policy: Option<String>,
+    pub kind: Option<String>,
     // Modrinth `version.dependencies` (target project_id, dependency_type, pinned
     // version_id if any), for a Modrinth-identified jar. This is Modrinth's curated
     // dependency graph -- more reliable than either a jar declaration or bytecode --
@@ -129,6 +134,10 @@ pub struct HarvestReport {
     pub inferred_optional: i64,
     /// Jars whose client/server side was derived from the bytecode.
     pub sides_derived: i64,
+    /// Jars whose server-match policy was derived from the bytecode.
+    pub match_policies_derived: i64,
+    /// Scanned jars classified as not-a-mod (coremod / bare library).
+    pub non_mod_jars: i64,
     /// Dependency edges taken from Modrinth `version.dependencies` this harvest.
     pub modrinth_deps: i64,
     /// Typed dependency edges taken from modern declared metadata (mods.toml /
@@ -305,22 +314,24 @@ fn modrinth_rel_kind(dep_type: &str) -> Option<RelKind> {
     }
 }
 
-/// Everything the harvest reads from one jar.
-struct JarReadout {
-    facts: JarFacts,
-    bytecode: bytecode::JarBytecode,
-    modmeta: modmeta::ModMeta,
-    mcmod: Option<McModInfo>,
+/// Everything the harvest reads from one jar. Public so the corpus runner can
+/// classify real jars through the exact production path.
+pub struct JarReadout {
+    pub facts: JarFacts,
+    pub bytecode: bytecode::JarBytecode,
+    pub modmeta: modmeta::ModMeta,
+    pub mcmod: Option<McModInfo>,
     /// Every modid the jar's mcmod.info declares -- more than one when the jar
     /// bundles several mods. Empty when the jar has no mcmod.info.
-    mcmod_modids: Vec<String>,
+    pub mcmod_modids: Vec<String>,
 }
 
 /// Open a jar's zip ONCE and derive every fact the harvest needs from it: the
-/// loader marker, the bytecode graph + side, the modern declared metadata, and
-/// mcmod.info. Replaces four separate zip opens per jar. Best-effort -- a non-zip
-/// or truncated jar yields empty facts.
-fn read_jar(bytes: &[u8]) -> JarReadout {
+/// loader marker, the bytecode graph + classification, the modern declared
+/// metadata, mcmod.info, and the manifest/mixin coremod markers. Replaces
+/// several separate zip opens per jar. Best-effort -- a non-zip or truncated
+/// jar yields empty facts.
+pub fn read_jar(bytes: &[u8]) -> JarReadout {
     let empty = || JarReadout {
         facts: JarFacts::default(),
         bytecode: bytecode::JarBytecode::default(),
@@ -338,6 +349,7 @@ fn read_jar(bytes: &[u8]) -> JarReadout {
     let mut fabric_json: Option<Vec<u8>> = None;
     let mut has_forge = false;
     let mut has_fabric = false;
+    let mut signals = bytecode::JarSignals::default();
     for i in 0..zip.len() {
         let Ok(mut entry) = zip.by_index(i) else {
             continue;
@@ -354,6 +366,9 @@ fn read_jar(bytes: &[u8]) -> JarReadout {
                 classes.push(info);
             }
             continue;
+        }
+        if bytecode::is_mixin_config_name(&name) {
+            signals.mixin_configs += 1;
         }
         match name.as_str() {
             "mcmod.info" => {
@@ -374,23 +389,17 @@ fn read_jar(bytes: &[u8]) -> JarReadout {
                 has_fabric = true;
                 fabric_json = read_zip_entry(&mut entry, size, &name).ok();
             }
+            "META-INF/MANIFEST.MF" => {
+                if let Ok(raw) = read_zip_entry(&mut entry, size, &name) {
+                    let (coremod, tweaker) = bytecode::manifest_markers(&raw);
+                    signals.manifest_coremod = coremod;
+                    signals.manifest_tweaker = tweaker;
+                }
+            }
             _ => {}
         }
     }
 
-    let fabric_side = fabric_json
-        .as_deref()
-        .and_then(bytecode::fabric_side_from_json);
-    let bytecode = bytecode::aggregate(&classes, fabric_side);
-    // `@Mod` is a Forge-specific annotation, so a jar carrying one is Forge even
-    // when it ships no mcmod.info / mods.toml marker file (older mods often do not).
-    let loader = if has_forge || bytecode.mod_id.is_some() {
-        Some("forge".to_string())
-    } else if has_fabric {
-        Some("fabric".to_string())
-    } else {
-        None
-    };
     let modmeta = if let Some(t) = mods_toml.as_deref() {
         std::str::from_utf8(t)
             .map(modmeta::parse_mods_toml)
@@ -400,14 +409,28 @@ fn read_jar(bytes: &[u8]) -> JarReadout {
     } else {
         modmeta::ModMeta::default()
     };
+    let mcmod = mcmod_raw
+        .as_deref()
+        .and_then(parse_mcmod_info)
+        .filter(|i| !i.modid.is_empty());
+    bytecode::apply_fabric_meta(&mut signals, &modmeta);
+    signals.meta_identity = mcmod.is_some() || modmeta.modid.is_some();
+    signals.display_test_tolerant = modmeta.display_test_tolerant();
+    let bytecode = bytecode::aggregate(&classes, &signals);
+    // `@Mod` is a Forge-specific annotation, so a jar carrying one is Forge even
+    // when it ships no mcmod.info / mods.toml marker file (older mods often do not).
+    let loader = if has_forge || bytecode.mod_id.is_some() {
+        Some("forge".to_string())
+    } else if has_fabric {
+        Some("fabric".to_string())
+    } else {
+        None
+    };
     JarReadout {
         facts: JarFacts { loader },
         bytecode,
         modmeta,
-        mcmod: mcmod_raw
-            .as_deref()
-            .and_then(parse_mcmod_info)
-            .filter(|i| !i.modid.is_empty()),
+        mcmod,
         mcmod_modids: mcmod_raw.as_deref().map(mcmod_modids).unwrap_or_default(),
     }
 }
@@ -434,6 +457,8 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
     )?;
 
     let mut sides_derived = 0i64;
+    let mut match_policies_derived = 0i64;
+    let mut non_mod_jars = 0i64;
     let mut modrinth_deps_written = 0i64;
     let mut declared_deps_written = 0i64;
     // (from_mod_id, jar) for jars carrying references, resolved to edges in a
@@ -442,6 +467,27 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
 
     let mut no_identity = 0usize;
     for jar in &scan.jars {
+        // Per-jar classification, keyed by content hash -- recorded for every
+        // scanned jar BEFORE the identity gate: a bare coremod/library jar has
+        // no mod row, yet the resolve report still needs its kind.
+        if let Some(kind) = jar.kind.as_deref() {
+            upsert::set_jar_class(
+                conn,
+                &jar.sha1,
+                kind,
+                jar.side.as_deref(),
+                jar.match_policy.as_deref(),
+            )?;
+            if jar.side.is_some() {
+                sides_derived += 1;
+            }
+            if jar.match_policy.is_some() {
+                match_policies_derived += 1;
+            }
+            if kind != "mod" {
+                non_mod_jars += 1;
+            }
+        }
         let mut aliases: Vec<(&str, &str)> = Vec::new();
         if let Some(m) = jar.modid.as_deref().filter(|s| !s.is_empty()) {
             aliases.push(("modid", m));
@@ -546,14 +592,11 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
             }
         }
 
-        // bytecode-derived facts: this jar's owned packages (into the index) and
-        // its side; its references are resolved to edges after the loop.
+        // bytecode-derived facts: this jar's owned packages into the index
+        // (the classification went to jar_class above); its references are
+        // resolved to edges after the loop.
         let owned: Vec<&str> = jar.owned_packages.iter().map(String::as_str).collect();
         upsert::set_mod_packages(conn, mod_id, &owned)?;
-        upsert::set_mod_version_side(conn, &jar.sha1, jar.side.as_deref(), now)?;
-        if jar.side.is_some() {
-            sides_derived += 1;
-        }
 
         // Emit Modrinth's curated deps whenever the jar is Modrinth-identified. The
         // target lives in the `modrinth:<project_id>` selector namespace, and for
@@ -843,6 +886,8 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         inferred_requires,
         inferred_optional,
         sides_derived,
+        match_policies_derived,
+        non_mod_jars,
         modrinth_deps: modrinth_deps_written,
         declared_deps: declared_deps_written,
         modrinth_modids_learned: scan.modrinth_modids_learned,
@@ -1202,6 +1247,10 @@ pub async fn scan(
                     .map(|b| b.optional_refs.iter().cloned().collect())
                     .unwrap_or_default(),
                 side: bc.and_then(|b| b.side).map(|s| s.as_str().to_string()),
+                match_policy: bc
+                    .and_then(|b| b.match_policy)
+                    .map(|p| p.as_str().to_string()),
+                kind: bc.and_then(|b| b.kind).map(|k| k.as_str().to_string()),
                 // Modrinth's declared deps, keeping only those naming a target
                 // project (a dependency may carry only a version id -- skip those);
                 // a pinned version_id rides along as the exact-version constraint.
@@ -1303,6 +1352,8 @@ mod tests {
                     hard_refs: vec![],
                     optional_refs: vec![],
                     side: None,
+                    match_policy: None,
+                    kind: None,
                     modrinth_deps: vec![],
                     declared_deps: vec![],
                 },
@@ -1326,6 +1377,8 @@ mod tests {
                     hard_refs: vec![],
                     optional_refs: vec![],
                     side: None,
+                    match_policy: None,
+                    kind: None,
                     modrinth_deps: vec![],
                     declared_deps: vec![],
                 },
@@ -1349,6 +1402,8 @@ mod tests {
                     hard_refs: vec![],
                     optional_refs: vec![],
                     side: None,
+                    match_policy: None,
+                    kind: None,
                     modrinth_deps: vec![],
                     declared_deps: vec![],
                 },
@@ -1748,6 +1803,8 @@ mod tests {
             hard_refs: vec![],
             optional_refs: vec![],
             side: None,
+            match_policy: None,
+            kind: None,
             modrinth_deps: vec![],
             declared_deps: vec![],
         }
@@ -1783,6 +1840,8 @@ mod tests {
             hard_refs: strs(hard),
             optional_refs: strs(opt),
             side: side.map(String::from),
+            match_policy: None,
+            kind: Some("mod".into()),
             modrinth_deps: vec![],
             declared_deps: vec![],
         }
@@ -1894,12 +1953,12 @@ mod tests {
                 "no self-dependency from an own-package reference"
             );
 
-            let side: Option<String> = c.query_row(
-                "SELECT side FROM mod_version WHERE sha1 = 'sha_ae2'",
+            let (kind, side): (String, Option<String>) = c.query_row(
+                "SELECT kind, side FROM jar_class WHERE sha1 = 'sha_ae2'",
                 [],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
-            assert_eq!(side.as_deref(), Some("both"));
+            assert_eq!((kind.as_str(), side.as_deref()), ("mod", Some("both")));
             assert_eq!(queries::owner_mod_for_prefix(c, "appeng/api")?, Some(ae2));
             Ok(())
         })
