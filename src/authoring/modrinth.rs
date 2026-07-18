@@ -7,6 +7,7 @@ use std::time::Duration;
 const MODRINTH_BASE: &str = "https://api.modrinth.com";
 const USER_AGENT: &str = "Kitty-Hivens/smrt-pack (+https://github.com/Kitty-Hivens/smrt)";
 const BATCH_SIZE: usize = 100;
+const METADATA_TIMEOUT: Duration = Duration::from_secs(45);
 
 pub struct Modrinth {
     http: Client,
@@ -18,6 +19,11 @@ pub struct Modrinth {
 /// limiter often enough that failing the whole build on the first 429 is not
 /// acceptable; anything past the single retry is a real upstream fault.
 async fn send_with_backoff(req: reqwest::RequestBuilder) -> Result<reqwest::Response> {
+    // Total deadline per attempt: an upstream that accepts the connection but
+    // never answers (a wedged cache layer) must fail the call, not wedge the
+    // caller. Applied here rather than on the client so jar downloads via
+    // `fetch_bytes` -- which legitimately run long -- stay unbounded.
+    let req = req.timeout(METADATA_TIMEOUT);
     let first = req.try_clone().context("clone request")?;
     let resp = first.send().await.context("modrinth send")?;
     if resp.status().as_u16() != 429 {
@@ -168,18 +174,37 @@ impl Modrinth {
         slug_or_id: &str,
         mc_filter: Option<&str>,
     ) -> Result<Vec<Version>> {
-        let mut url = format!("{MODRINTH_BASE}/v2/project/{slug_or_id}/version");
-        if let Some(mc) = mc_filter {
-            // The Modrinth API expects a JSON-encoded array in this
-            // query param, then percent-encoded. `["1.12.2"]` becomes
-            // `%5B%221.12.2%22%5D`.
-            let encoded = format!("[\"{mc}\"]");
-            let qp =
-                percent_encoding::utf8_percent_encode(&encoded, percent_encoding::NON_ALPHANUMERIC);
-            url.push_str("?game_versions=");
-            url.push_str(&qp.to_string());
+        let base = format!("{MODRINTH_BASE}/v2/project/{slug_or_id}/version");
+        let Some(mc) = mc_filter else {
+            return self.versions_at(&base).await;
+        };
+        // The Modrinth API expects a JSON-encoded array in this
+        // query param, then percent-encoded. `["1.12.2"]` becomes
+        // `%5B%221.12.2%22%5D`.
+        let encoded = format!("[\"{mc}\"]");
+        let qp =
+            percent_encoding::utf8_percent_encode(&encoded, percent_encoding::NON_ALPHANUMERIC);
+        let filtered = format!("{base}?game_versions={qp}");
+        // The filtered listing is served by an upstream cache layer that has
+        // been observed down (hanging or 500) while the plain listing still
+        // answers. Same result set either way -- the fallback just narrows
+        // locally from a larger payload.
+        match self.versions_at(&filtered).await {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                tracing::warn!(error = %e, project = slug_or_id,
+                    "filtered version listing failed; retrying unfiltered");
+                let all = self.versions_at(&base).await?;
+                Ok(all
+                    .into_iter()
+                    .filter(|v| v.game_versions.iter().any(|g| g == mc))
+                    .collect())
+            }
         }
-        let resp = send_with_backoff(self.http.get(&url))
+    }
+
+    async fn versions_at(&self, url: &str) -> Result<Vec<Version>> {
+        let resp = send_with_backoff(self.http.get(url))
             .await
             .context("project versions get")?;
         let status = resp.status();
