@@ -130,16 +130,17 @@ pub struct CommunityPack {
 
 /// One retained build of a pack, as the version picker sees it: the version
 /// label plus the metadata a launcher needs to render and order a list of
-/// builds without fetching each manifest.
+/// builds without fetching each manifest. Field names follow the Modrinth
+/// version object (`version_number` / `version_type` / `date_published`).
 #[derive(Debug, Clone, Serialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct ManifestBuildInfo {
-    pub version: String,
-    /// `release` for operator-published `YYYY.MM.DD[.N]` versions, `snapshot`
-    /// for panel builds (`SNAPSHOT-` prefix).
-    pub channel: VersionChannel,
+    pub version_number: String,
+    /// The manifest's stored channel; for manifests predating the field,
+    /// recovered from the legacy string rule (`SNAPSHOT-` prefix = beta).
+    pub version_type: VersionChannel,
     /// The manifest's `generated_at` (RFC 3339): when the build produced it.
-    pub built_at: String,
+    pub date_published: String,
     /// The manifest's content fingerprint where present -- the reliable
     /// "did the content change?" signal between two builds.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -161,10 +162,7 @@ pub struct ManifestVersionsListing {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub latest: Option<String>,
-    /// Bare version labels, oldest first. Kept for clients that predate
-    /// `builds`; the two arrays list the same versions.
-    pub versions: Vec<String>,
-    /// Per-build metadata, newest first (ordered by `built_at`).
+    /// Per-build metadata, newest first (ordered by `date_published`).
     pub builds: Vec<ManifestBuildInfo>,
 }
 

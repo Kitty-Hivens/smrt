@@ -205,11 +205,12 @@ export const api = {
   },
   async buildPack(
     id: string,
-    opts?: { dryRun?: boolean; packVersion?: string },
+    opts?: { dryRun?: boolean; packVersion?: string; channel?: 'release' | 'beta' | 'alpha' },
   ): Promise<{ job_id: string }> {
     const q = new URLSearchParams();
     if (opts?.dryRun) q.set('dry_run', 'true');
     if (opts?.packVersion) q.set('pack_version', opts.packVersion);
+    if (opts?.channel) q.set('channel', opts.channel);
     const qs = q.toString();
     const r = await fetch(`/v1/authoring/packs/${encodeURIComponent(id)}/build${qs ? `?${qs}` : ''}`, {
       method: 'POST',

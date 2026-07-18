@@ -4,8 +4,17 @@ import type { JavaSpec } from "./JavaSpec";
 import type { LoaderSpec } from "./LoaderSpec";
 import type { MinecraftSpec } from "./MinecraftSpec";
 import type { ModEntry } from "./ModEntry";
+import type { VersionChannel } from "./VersionChannel";
 
-export type PackManifest = { schema_version: number, pack_id: string, pack_version: string, generated_at: string, 
+export type PackManifest = { schema_version: number, pack_id: string, pack_version: string, 
+/**
+ * Release channel of this build (Modrinth `version_type` vocabulary),
+ * stored -- the version string carries no channel semantics. Absent on
+ * manifests built before the field landed; readers fall back to the
+ * legacy string rule (`SNAPSHOT-` prefix = beta). Additive, so the
+ * schema version stays at 2.
+ */
+channel?: VersionChannel, generated_at: string, 
 /**
  * Content fingerprint: a stable hash of what actually lands in an instance
  * (artifact hashes + install flags + loader/java/mc), independent of the

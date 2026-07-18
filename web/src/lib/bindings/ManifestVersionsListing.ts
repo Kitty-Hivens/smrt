@@ -8,11 +8,6 @@ export type ManifestVersionsListing = { schema_version: number, pack_id: string,
  */
 latest?: string, 
 /**
- * Bare version labels, oldest first. Kept for clients that predate
- * `builds`; the two arrays list the same versions.
- */
-versions: Array<string>, 
-/**
- * Per-build metadata, newest first (ordered by `built_at`).
+ * Per-build metadata, newest first (ordered by `date_published`).
  */
 builds: Array<ManifestBuildInfo>, };

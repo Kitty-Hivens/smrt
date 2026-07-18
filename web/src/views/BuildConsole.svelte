@@ -9,6 +9,8 @@
   let busy = $state(false);
   let err = $state('');
   let packVersion = $state('');
+  // publishing a release is an explicit act; the everyday build is a beta
+  let channel = $state<'release' | 'beta' | 'alpha'>('beta');
 
   async function build() {
     busy = true;
@@ -17,6 +19,7 @@
     try {
       const { job_id } = await api.buildPack(packId, {
         packVersion: packVersion.trim() || undefined,
+        channel,
       });
       jobId = job_id;
     } catch (e) {
@@ -34,6 +37,14 @@
     <label class="ver">
       {t('bld.version')}
       <input class="mono" bind:value={packVersion} placeholder={t('bld.versionPlaceholder')} />
+    </label>
+    <label class="ver">
+      {t('bld.channel')}
+      <select bind:value={channel}>
+        <option value="beta">beta</option>
+        <option value="release">release</option>
+        <option value="alpha">alpha</option>
+      </select>
     </label>
   </div>
   <p class="muted hint">{t('bld.hint')}</p>

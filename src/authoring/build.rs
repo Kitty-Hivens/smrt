@@ -6,7 +6,7 @@ use super::modrinth::Modrinth;
 use super::sources::{ModrinthCache, resolve_asset, resolve_mod, sha1_hex};
 use crate::domain::{
     AssetEntry, Display, JavaSpec, LoaderSpec, MatchPolicy, MinecraftSpec, ModEntry, PackConfig,
-    PackManifest, PackSummary, PresenceClass, SCHEMA_VERSION, SideClass,
+    PackManifest, PackSummary, PresenceClass, SCHEMA_VERSION, SideClass, VersionChannel,
 };
 use crate::registry::classify::Classification;
 use anyhow::{Result, bail};
@@ -16,13 +16,16 @@ use tracing::info;
 
 /// Resolve every source in a `PackConfig` and assemble the wire manifest.
 /// Reads cache jars under `storage` and looks up Modrinth sources; does not
-/// write anything. `pack_version` defaults to today's UTC `YYYY.MM.DD` slug.
+/// write anything. `pack_version` defaults to the next auto-numbered
+/// `<base>.<counter>` (see `resolve_auto_version`); `channel` is stored on the
+/// manifest verbatim -- the version string carries no channel semantics.
 /// `classifications` is the pack's side/policy map (`resolve::classify_pack`),
 /// keyed by filename; an absent entry reads as unclassified.
 pub async fn build_manifest(
     cfg: &PackConfig,
     storage: &Path,
     pack_version: Option<&str>,
+    channel: VersionChannel,
     mirror_base: &str,
     classifications: &HashMap<String, Classification>,
 ) -> Result<PackManifest> {
@@ -31,7 +34,7 @@ pub async fn build_manifest(
             validate_pack_version(v)?;
             v.to_string()
         }
-        None => resolve_snapshot_version(cfg, storage).await?,
+        None => resolve_auto_version(cfg, storage).await?,
     };
     info!(
         pack_id = %cfg.pack_id,
@@ -80,6 +83,7 @@ pub async fn build_manifest(
         schema_version: SCHEMA_VERSION,
         pack_id: cfg.pack_id.clone(),
         pack_version,
+        channel: Some(channel),
         generated_at: now_rfc3339(),
         fingerprint: Some(fingerprint),
         minecraft,
@@ -320,19 +324,31 @@ fn now_rfc3339() -> String {
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
 
-/// Resolve the automatic build version `SNAPSHOT-<version>-<date>[.N]`. The
-/// `<version>` comes from the config (`0.0.0` if unset), the date is today's UTC
-/// slug, and a `.N` counter is appended only when that exact string is already
-/// published -- so a second build the same day never overwrites the first, with
-/// no hand-assigned counter. Forward-only: existing pre-rename versions keep
-/// their strings; only new builds adopt this form.
-async fn resolve_snapshot_version(cfg: &PackConfig, storage: &Path) -> Result<String> {
-    let version = cfg.version.as_deref().unwrap_or("0.0.0");
-    let base = format!("SNAPSHOT-{version}-{}", today_slug());
+/// Resolve the automatic build version `<base>.<counter>`: the base is the
+/// config's hand-bumped `version` line (`0.0` if unset), the counter is one
+/// past the highest already published for that base, from zero. So a config at
+/// base `0.4` builds `0.4.0`, `0.4.1`, ...; bumping the base to `0.5` restarts
+/// at `0.5.0`. Plain numbers only -- the channel lives in its own manifest
+/// field, and the build date in `generated_at`. Forward-only: existing
+/// date/SNAPSHOT versions keep their strings; only new builds adopt this form.
+async fn resolve_auto_version(cfg: &PackConfig, storage: &Path) -> Result<String> {
+    let base = cfg.version.as_deref().unwrap_or("0.0");
     let existing = existing_versions(storage, &cfg.pack_id).await;
-    let resolved = next_free_version(&base, &existing);
+    let resolved = next_auto_version(base, &existing);
     validate_pack_version(&resolved)?;
     Ok(resolved)
+}
+
+/// `<base>.<N>` where N is one past the highest counter already published for
+/// that exact base (from zero). Max, not first-free: a deleted build's number
+/// is never reissued. Pure.
+fn next_auto_version(base: &str, existing: &[String]) -> String {
+    let next = existing
+        .iter()
+        .filter_map(|v| v.strip_prefix(base)?.strip_prefix('.')?.parse::<u64>().ok())
+        .max()
+        .map_or(0, |n| n + 1);
+    format!("{base}.{next}")
 }
 
 /// Version strings already published for a pack (the manifest filenames, minus
@@ -354,17 +370,6 @@ async fn existing_versions(storage: &Path, pack_id: &str) -> Vec<String> {
     out
 }
 
-/// `base` if free, else the first free `base.N` (N from 1). Pure.
-fn next_free_version(base: &str, existing: &[String]) -> String {
-    if !existing.iter().any(|e| e == base) {
-        return base.to_string();
-    }
-    (1..)
-        .map(|n| format!("{base}.{n}"))
-        .find(|cand| !existing.iter().any(|e| e == cand))
-        .expect("an unbounded counter always finds a free slot")
-}
-
 /// Validate a `pack_version`: the new `SNAPSHOT-<version>-<date>[.N]` form or a
 /// legacy bare-numeric one (`2026.05.22[.N]`). Every segment is a positive
 /// integer; a trailing `.0` is rejected so equal versions are byte-equal and a
@@ -382,21 +387,11 @@ fn validate_pack_version(v: &str) -> Result<()> {
             bail!("pack_version segment {seg:?} is not a positive integer");
         }
     }
-    if v.ends_with(".0") {
-        bail!("pack_version {v} is not canonical: a trailing .0 counter is forbidden");
-    }
+    // A trailing .0 is legitimate under `<base>.<counter>` numbering (0.4.0 is
+    // the first build of base 0.4); the old date scheme forbade it so tuple
+    // equality implied string equality, which the counter scheme preserves by
+    // never emitting a bare base as a version.
     Ok(())
-}
-
-fn today_slug() -> String {
-    use time::OffsetDateTime;
-    let now = OffsetDateTime::now_utc();
-    format!(
-        "{:04}.{:02}.{:02}",
-        now.year(),
-        u8::from(now.month()),
-        now.day()
-    )
 }
 
 #[cfg(test)]
@@ -415,9 +410,10 @@ mod tests {
     }
 
     #[test]
-    fn pack_version_rejects_trailing_zero_counter() {
-        assert!(validate_pack_version("2026.05.22.0").is_err());
-        assert!(validate_pack_version("SNAPSHOT-0.0.10-2026.06.07.0").is_err());
+    fn pack_version_accepts_a_zero_counter() {
+        // `<base>.<counter>` numbering makes .0 the first build of a base
+        assert!(validate_pack_version("0.4.0").is_ok());
+        assert!(validate_pack_version("2026.05.22.0").is_ok());
     }
 
     #[test]
@@ -429,15 +425,23 @@ mod tests {
     }
 
     #[test]
-    fn next_free_version_appends_first_free_counter() {
-        let base = "SNAPSHOT-0.0.0-2026.06.07".to_string();
-        assert_eq!(next_free_version(&base, &[]), base);
-        assert_eq!(
-            next_free_version(&base, std::slice::from_ref(&base)),
-            format!("{base}.1")
-        );
-        let taken = vec![format!("{base}.1"), base.clone(), format!("{base}.5")];
-        assert_eq!(next_free_version(&base, &taken), format!("{base}.2"));
+    fn next_auto_version_counts_past_the_highest_and_ignores_legacy() {
+        // fresh base -> counter starts at zero
+        assert_eq!(next_auto_version("0.0", &[]), "0.0.0");
+        // max + 1, never a gap re-fill: a deleted number is not reissued
+        let existing = vec!["0.0.0".to_string(), "0.0.4".to_string()];
+        assert_eq!(next_auto_version("0.0", &existing), "0.0.5");
+        // bumping the base restarts the counter
+        assert_eq!(next_auto_version("0.1", &existing), "0.1.0");
+        // legacy date/SNAPSHOT strings and lookalike bases do not count
+        let mixed = vec![
+            "2026.05.22.2".to_string(),
+            "SNAPSHOT-0.0.0-2026.07.18".to_string(),
+            "0.40.1".to_string(),
+            "0.4.2.1".to_string(),
+            "0.4.7".to_string(),
+        ];
+        assert_eq!(next_auto_version("0.4", &mixed), "0.4.8");
     }
 
     use crate::domain::{Display, Requirement, Source};

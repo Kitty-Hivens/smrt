@@ -4,7 +4,7 @@ use smrt::authoring::{
     self, BootstrapArgs, Modrinth, apply_role_table as enrich_apply_role_table,
     enrich_from_mcmod_info, infer_requires_from_mcmod_info, load_role_table,
 };
-use smrt::domain::{LoaderSpec, PackConfig, PackManifest, PackSummary};
+use smrt::domain::{LoaderSpec, PackConfig, PackManifest, PackSummary, VersionChannel};
 use smrt::registry::Registry;
 use smrt::storage::Storage;
 use std::fs;
@@ -63,9 +63,13 @@ enum Cmd {
         config: PathBuf,
         #[arg(long, default_value = "/var/lib/smrt")]
         storage: PathBuf,
-        /// Defaults to today's UTC date in YYYY.MM.DD form.
+        /// Defaults to the next auto-numbered `<base>.<counter>`.
         #[arg(long)]
         pack_version: Option<String>,
+        /// Channel stored on the manifest: release | beta | alpha.
+        /// Publishing a release is an explicit act, so the default is beta.
+        #[arg(long, default_value = "beta")]
+        channel: String,
         #[arg(long, default_value = DEFAULT_MIRROR_BASE)]
         mirror_base: String,
     },
@@ -272,8 +276,20 @@ async fn main() -> Result<()> {
             config,
             storage,
             pack_version,
+            channel,
             mirror_base,
-        } => run_build(&config, &storage, pack_version.as_deref(), &mirror_base).await,
+        } => {
+            let channel = VersionChannel::parse(&channel)
+                .ok_or_else(|| anyhow::anyhow!("channel must be release, beta or alpha"))?;
+            run_build(
+                &config,
+                &storage,
+                pack_version.as_deref(),
+                channel,
+                &mirror_base,
+            )
+            .await
+        }
         Cmd::Depfill {
             config,
             out,
@@ -468,6 +484,7 @@ async fn run_build(
     config_path: &Path,
     storage: &Path,
     pack_version: Option<&str>,
+    channel: VersionChannel,
     mirror_base: &str,
 ) -> Result<()> {
     let mut cfg: PackConfig = read_json(config_path)?;
@@ -478,9 +495,15 @@ async fn run_build(
     // side/policy classification through the registry decision layer
     let registry = Registry::open(storage.join("registry.db"))?;
     let classifications = registry.with_conn(|c| authoring::resolve::classify_pack(c, &cfg))?;
-    let manifest =
-        authoring::build_manifest(&cfg, storage, pack_version, mirror_base, &classifications)
-            .await?;
+    let manifest = authoring::build_manifest(
+        &cfg,
+        storage,
+        pack_version,
+        channel,
+        mirror_base,
+        &classifications,
+    )
+    .await?;
     let summary = authoring::make_pack_summary(&cfg, &manifest.pack_version);
 
     let store = Storage::new(storage.to_path_buf());

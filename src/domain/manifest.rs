@@ -3,6 +3,7 @@
 //! shared with the launcher's `SmrtPackManifest`.
 
 use super::side::PresenceClass;
+use super::version::VersionChannel;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
@@ -15,6 +16,14 @@ pub struct PackManifest {
     pub schema_version: u32,
     pub pack_id: String,
     pub pack_version: String,
+    /// Release channel of this build (Modrinth `version_type` vocabulary),
+    /// stored -- the version string carries no channel semantics. Absent on
+    /// manifests built before the field landed; readers fall back to the
+    /// legacy string rule (`SNAPSHOT-` prefix = beta). Additive, so the
+    /// schema version stays at 2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub channel: Option<VersionChannel>,
     pub generated_at: String,
     /// Content fingerprint: a stable hash of what actually lands in an instance
     /// (artifact hashes + install flags + loader/java/mc), independent of the

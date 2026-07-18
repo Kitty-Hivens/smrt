@@ -245,9 +245,10 @@ fn manifest_implementation_version(raw: &[u8]) -> Option<String> {
 }
 
 fn channel_from_version_type(vt: &str) -> Option<String> {
+    // Modrinth's own vocabulary, kept verbatim -- the same channel dialect
+    // pack builds store, so the whole mirror speaks one set of values.
     match vt {
-        "release" => Some("release".to_string()),
-        "beta" | "alpha" => Some("beta".to_string()),
+        "release" | "beta" | "alpha" => Some(vt.to_string()),
         _ => None,
     }
 }

@@ -308,9 +308,10 @@ export const en = {
   'bld.build': 'Build pack',
   'bld.building': 'building...',
   'bld.version': 'Pack version',
-  'bld.versionPlaceholder': "(today's date)",
+  'bld.versionPlaceholder': '(auto: base.N)',
+  'bld.channel': 'Channel',
   'bld.hint':
-    "Loads the pack's config, runs the enrichment passes (mcmod.info display + requires), resolves sources, and publishes the manifest. Runs on the mirror; the log is live. Leave the version blank for today's UTC date slug.",
+    "Loads the pack's config, runs the enrichment passes (mcmod.info display + requires), resolves sources, and publishes the manifest. Runs on the mirror; the log is live. Leave the version blank to auto-number from the config's version base; the channel is stored on the manifest (release is an explicit act).",
 
   'job.running': 'running',
   'job.done': 'done',

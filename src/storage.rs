@@ -139,19 +139,12 @@ impl Storage {
             let Ok(head) = serde_json::from_slice::<ManifestHead>(&bytes) else {
                 continue;
             };
-            out.push(ManifestBuildInfo {
-                channel: version_channel(&head.pack_version),
-                version: head.pack_version,
-                built_at: head.generated_at,
-                fingerprint: head.fingerprint,
-                mods_count: head.mods.len() as u64,
-                assets_count: head.assets.len() as u64,
-            });
+            out.push(build_info_from_head(head));
         }
         out.sort_by(|a, b| {
-            b.built_at
-                .cmp(&a.built_at)
-                .then_with(|| compare_pack_versions(&b.version, &a.version))
+            b.date_published
+                .cmp(&a.date_published)
+                .then_with(|| compare_pack_versions(&b.version_number, &a.version_number))
         });
         Ok(out)
     }
@@ -201,14 +194,7 @@ impl Storage {
         let Ok(head) = serde_json::from_slice::<ManifestHead>(&bytes) else {
             return Ok(None);
         };
-        Ok(Some(ManifestBuildInfo {
-            channel: version_channel(&head.pack_version),
-            version: head.pack_version,
-            built_at: head.generated_at,
-            fingerprint: head.fingerprint,
-            mods_count: head.mods.len() as u64,
-            assets_count: head.assets.len() as u64,
-        }))
+        Ok(Some(build_info_from_head(head)))
     }
 
     /// Write a built manifest to `packs/<id>/manifests/<version>.json`. The
@@ -830,6 +816,8 @@ pub(crate) fn sha1_hex(bytes: &[u8]) -> String {
 #[derive(serde::Deserialize)]
 struct ManifestHead {
     pack_version: String,
+    #[serde(default)]
+    channel: Option<VersionChannel>,
     generated_at: String,
     #[serde(default)]
     fingerprint: Option<String>,
@@ -837,6 +825,21 @@ struct ManifestHead {
     mods: Vec<serde::de::IgnoredAny>,
     #[serde(default)]
     assets: Vec<serde::de::IgnoredAny>,
+}
+
+/// The stored channel wins; a manifest from before the field falls back to
+/// the legacy string rule.
+fn build_info_from_head(head: ManifestHead) -> ManifestBuildInfo {
+    ManifestBuildInfo {
+        version_type: head
+            .channel
+            .unwrap_or_else(|| legacy_version_channel(&head.pack_version)),
+        version_number: head.pack_version,
+        date_published: head.generated_at,
+        fingerprint: head.fingerprint,
+        mods_count: head.mods.len() as u64,
+        assets_count: head.assets.len() as u64,
+    }
 }
 
 fn io_err(e: std::io::Error) -> ApiError {
@@ -1080,6 +1083,7 @@ mod tests {
             schema_version: 2,
             pack_id: "Industrial".into(),
             pack_version: version.into(),
+            channel: None,
             generated_at: generated_at.into(),
             fingerprint: Some(format!("fp-{version}")),
             minecraft: MinecraftSpec {
@@ -1134,7 +1138,7 @@ mod tests {
             .unwrap();
 
         let builds = s.list_manifest_builds("Industrial").await.unwrap();
-        let versions: Vec<&str> = builds.iter().map(|b| b.version.as_str()).collect();
+        let versions: Vec<&str> = builds.iter().map(|b| b.version_number.as_str()).collect();
         assert_eq!(
             versions,
             vec![
@@ -1144,26 +1148,46 @@ mod tests {
             ],
             "newest first by built_at"
         );
-        assert_eq!(builds[0].channel, VersionChannel::Snapshot);
-        assert_eq!(builds[2].channel, VersionChannel::Release);
+        // no stored channel on these -> the legacy string rule applies
+        assert_eq!(builds[0].version_type, VersionChannel::Beta);
+        assert_eq!(builds[2].version_type, VersionChannel::Release);
         assert_eq!(builds[0].mods_count, 5);
         assert_eq!(
             builds[0].fingerprint.as_deref(),
             Some("fp-SNAPSHOT-0.0.0-2026.07.18.1")
         );
-        assert_eq!(builds[0].built_at, "2026-07-18T11:00:00Z");
+        assert_eq!(builds[0].date_published, "2026-07-18T11:00:00Z");
 
         assert_eq!(
             s.latest_manifest_version("Industrial").await.unwrap(),
             Some("SNAPSHOT-0.0.0-2026.07.18.1".to_string())
         );
         let info = s.latest_build_info("Industrial").await.unwrap().unwrap();
-        assert_eq!(info.version, "SNAPSHOT-0.0.0-2026.07.18.1");
-        assert_eq!(info.channel, VersionChannel::Snapshot);
+        assert_eq!(info.version_number, "SNAPSHOT-0.0.0-2026.07.18.1");
+        assert_eq!(info.version_type, VersionChannel::Beta);
 
         // a pack with no builds yields no latest, not an error
         assert_eq!(s.latest_manifest_version("Ghost").await.unwrap(), None);
         assert!(s.latest_build_info("Ghost").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn stored_channel_wins_over_the_legacy_string_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        // a modern build: semver label, channel stored on the manifest
+        let mut m = manifest("0.0.3", "2026-07-19T10:00:00Z", 2);
+        m.channel = Some(VersionChannel::Alpha);
+        s.save_manifest("Industrial", &m).await.unwrap();
+        s.set_latest_manifest("Industrial", "0.0.3").await.unwrap();
+
+        let info = s.latest_build_info("Industrial").await.unwrap().unwrap();
+        assert_eq!(info.version_number, "0.0.3");
+        assert_eq!(
+            info.version_type,
+            VersionChannel::Alpha,
+            "the stored channel wins; the string rule would have said release"
+        );
     }
 
     #[tokio::test]

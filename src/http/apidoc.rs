@@ -28,7 +28,7 @@ use crate::domain::server::{
 };
 use crate::domain::side::PresenceClass;
 use crate::domain::version::VersionChannel;
-use crate::registry::model::{ModDetail, ModEdge, ModUse, ReleaseRow, VersionRow};
+use crate::registry::model::{FileDetail, ModDetail, ModEdge, ModUse, ReleaseRow, VersionRow};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -53,6 +53,7 @@ use crate::registry::model::{ModDetail, ModEdge, ModUse, ReleaseRow, VersionRow}
         crate::http::public::get_server,
         crate::http::public::get_featured,
         crate::http::public::get_mod_detail,
+        crate::http::public::get_file_detail,
         crate::http::public::get_cache_jar,
         crate::http::public::get_cache_icon,
         crate::http::public::get_cache_inventory,
@@ -79,6 +80,7 @@ use crate::registry::model::{ModDetail, ModEdge, ModUse, ReleaseRow, VersionRow}
         ManifestBuildInfo,
         VersionChannel,
         ModDetail,
+        FileDetail,
         ReleaseRow,
         VersionRow,
         ModEdge,

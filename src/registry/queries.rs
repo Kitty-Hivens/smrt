@@ -111,6 +111,19 @@ pub fn newest_sha1_for_mod(conn: &Connection, mod_id: i64) -> Result<Option<Stri
 }
 
 /// The `mod` row id owning the artifact with this sha1, if harvested.
+/// Resolve a Modrinth-style slug to the mod that carries it. Case-insensitive,
+/// mirroring the slug==modid fold; first match wins on the (unenforced but
+/// harvest-deduped) assumption that slugs are unique.
+pub fn mod_id_for_slug(conn: &Connection, slug: &str) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT id FROM mods WHERE slug = ?1 COLLATE NOCASE ORDER BY id LIMIT 1",
+            params![slug],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
 pub fn mod_id_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<i64>> {
     Ok(conn
         .query_row(
@@ -770,15 +783,59 @@ pub fn edges_for_mod(conn: &Connection, mod_id: i64) -> Result<Vec<ModEdge>> {
 /// `used_by` is returned unfiltered here; the public endpoint narrows it to
 /// official + published packs. File `cached` flags are set by the handler against
 /// the live cache, as elsewhere.
-pub fn mod_detail(conn: &Connection, mod_id: i64) -> Result<Option<ModDetail>> {
-    let identity: Option<(Option<String>, Option<String>, Option<String>)> = conn
+/// Resolve one artifact by hash into its file + release + owning-mod identity
+/// (the Modrinth `version_file/{hash}` analog). `None` when the hash is not a
+/// registered artifact.
+pub fn file_detail(conn: &Connection, sha1: &str) -> Result<Option<FileDetail>> {
+    let Some(mod_id) = mod_id_for_sha1(conn, sha1)? else {
+        return Ok(None);
+    };
+    let identity: Option<(Option<String>, Option<String>)> = conn
         .query_row(
-            "SELECT canonical_name, slug, author FROM mods WHERE id = ?1",
+            "SELECT canonical_name, slug FROM mods WHERE id = ?1",
             params![mod_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    let Some((canonical, slug, author)) = identity else {
+    let Some((canonical, slug)) = identity else {
+        return Ok(None);
+    };
+    let name = canonical
+        .clone()
+        .or_else(|| slug.clone())
+        .or(modid_for_mod(conn, mod_id)?)
+        .unwrap_or_else(|| format!("#{mod_id}"));
+    for rel in releases_of_mod_by_id(conn, mod_id)? {
+        if let Some(f) = rel.files.iter().find(|f| f.sha1 == sha1) {
+            return Ok(Some(FileDetail {
+                mod_id,
+                name,
+                slug,
+                version_number: rel.version_number,
+                channel: rel.channel,
+                file: f.clone(),
+            }));
+        }
+    }
+    Ok(None)
+}
+
+pub fn mod_detail(conn: &Connection, mod_id: i64) -> Result<Option<ModDetail>> {
+    type IdentityRow = (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let identity: Option<IdentityRow> = conn
+        .query_row(
+            "SELECT canonical_name, slug, author, client_env, server_env FROM mods WHERE id = ?1",
+            params![mod_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .optional()?;
+    let Some((canonical, slug, author, client_side, server_side)) = identity else {
         return Ok(None);
     };
 
@@ -817,6 +874,8 @@ pub fn mod_detail(conn: &Connection, mod_id: i64) -> Result<Option<ModDetail>> {
         author,
         modid,
         modrinth_project_id,
+        client_side,
+        server_side,
         loaders: loaders.into_iter().collect(),
         mc_versions,
         releases,

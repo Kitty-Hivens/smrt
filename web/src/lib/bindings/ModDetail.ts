@@ -13,7 +13,14 @@ export type ModDetail = { mod_id: number,
 /**
  * canonical_name -> slug -> modid -> `#<id>`, resolved server-side.
  */
-name: string, slug: string | null, author: string | null, modid?: string, modrinth_project_id?: string, loaders: Array<string>, mc_versions: Array<string>, releases: Array<ReleaseRow>, edges: Array<ModEdge>, 
+name: string, slug: string | null, author: string | null, modid?: string, modrinth_project_id?: string, 
+/**
+ * Modrinth project environment flags where known
+ * (`required` | `optional` | `unsupported`); the priority-1 side source
+ * for classification, surfaced verbatim like the project object's
+ * `client_side` / `server_side`.
+ */
+client_side?: string, server_side?: string, loaders: Array<string>, mc_versions: Array<string>, releases: Array<ReleaseRow>, edges: Array<ModEdge>, 
 /**
  * Pack builds that ship this mod. Filtered to official + published on the
  * public endpoint so a guest never learns a draft's name from it.

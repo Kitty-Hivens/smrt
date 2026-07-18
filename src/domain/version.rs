@@ -6,24 +6,45 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
 
-/// Release channel of a pack version, derived from the version string itself:
-/// the panel's build pipeline stamps work-in-progress builds as
-/// `SNAPSHOT-<semver>-<date>[.N]`, while operator-published versions are bare
-/// `YYYY.MM.DD[.N]` strings. Launchers use this to default users onto releases
-/// and label snapshots explicitly.
+/// Release channel of a pack build -- the Modrinth `version_type` vocabulary,
+/// shared with mod releases in the registry so the whole mirror speaks one
+/// dialect. Stored on the manifest as its own field (`channel`); the version
+/// string carries no channel semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 #[serde(rename_all = "snake_case")]
 pub enum VersionChannel {
     Release,
-    Snapshot,
+    Beta,
+    Alpha,
 }
 
-/// Classify a pack version string into its channel. The `SNAPSHOT-` prefix is
-/// the single marker; everything else is a release.
-pub fn version_channel(version: &str) -> VersionChannel {
+impl VersionChannel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            VersionChannel::Release => "release",
+            VersionChannel::Beta => "beta",
+            VersionChannel::Alpha => "alpha",
+        }
+    }
+    /// Inverse of [`as_str`]; `None` for an unrecognised value.
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "release" => VersionChannel::Release,
+            "beta" => VersionChannel::Beta,
+            "alpha" => VersionChannel::Alpha,
+            _ => return None,
+        })
+    }
+}
+
+/// Channel of a manifest built before the stored `channel` field existed,
+/// recovered from the legacy string forms: the panel used to stamp
+/// work-in-progress builds `SNAPSHOT-<semver>-<date>[.N]` (a beta by today's
+/// vocabulary); everything else was an operator-published release.
+pub fn legacy_version_channel(version: &str) -> VersionChannel {
     if version.starts_with("SNAPSHOT-") {
-        VersionChannel::Snapshot
+        VersionChannel::Beta
     } else {
         VersionChannel::Release
     }
@@ -91,14 +112,32 @@ mod tests {
     }
 
     #[test]
-    fn channel_classifies_snapshot_prefix_and_bare_dates() {
+    fn legacy_channel_maps_snapshot_prefix_to_beta() {
         assert_eq!(
-            version_channel("SNAPSHOT-0.0.0-2026.07.18.7"),
-            VersionChannel::Snapshot
+            legacy_version_channel("SNAPSHOT-0.0.0-2026.07.18.7"),
+            VersionChannel::Beta
         );
-        assert_eq!(version_channel("2026.05.22.2"), VersionChannel::Release);
-        // Only the exact uppercase marker counts; a mod-style version that
-        // merely contains the word is a release.
-        assert_eq!(version_channel("1.0-snapshot"), VersionChannel::Release);
+        assert_eq!(
+            legacy_version_channel("2026.05.22.2"),
+            VersionChannel::Release
+        );
+        // Only the exact uppercase marker counts; a version that merely
+        // contains the word is a release.
+        assert_eq!(
+            legacy_version_channel("1.0-snapshot"),
+            VersionChannel::Release
+        );
+    }
+
+    #[test]
+    fn channel_round_trips_the_wire_vocabulary() {
+        for c in [
+            VersionChannel::Release,
+            VersionChannel::Beta,
+            VersionChannel::Alpha,
+        ] {
+            assert_eq!(VersionChannel::parse(c.as_str()), Some(c));
+        }
+        assert_eq!(VersionChannel::parse("snapshot"), None);
     }
 }

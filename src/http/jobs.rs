@@ -5,7 +5,7 @@
 use super::ApiError;
 use crate::accounts::Identity;
 use crate::authoring::BootstrapArgs;
-use crate::domain::LoaderSpec;
+use crate::domain::{LoaderSpec, VersionChannel};
 use crate::jobs::{DryRun, Status};
 use crate::state::AppState;
 use axum::Extension;
@@ -67,8 +67,12 @@ struct BuildParams {
     /// panel can preview and diff before committing a real build.
     #[serde(default)]
     dry_run: bool,
-    /// Optional canonical `pack_version` override; default is today's UTC slug.
+    /// Optional canonical `pack_version` override; default is the next
+    /// auto-numbered `<base>.<counter>`.
     pack_version: Option<String>,
+    /// Release channel stored on the built manifest: `release` | `beta` |
+    /// `alpha`. Defaults to `beta` -- publishing a release is an explicit act.
+    channel: Option<String>,
 }
 
 async fn build_pack(
@@ -81,6 +85,11 @@ async fn build_pack(
         return Err(ApiError::Forbidden);
     }
     let pack_version = p.pack_version.filter(|v| !v.trim().is_empty());
+    let channel = match p.channel.as_deref() {
+        None => VersionChannel::Beta,
+        Some(c) => VersionChannel::parse(c)
+            .ok_or_else(|| ApiError::BadRequest("channel must be release, beta or alpha".into()))?,
+    };
     let job = state.jobs.spawn_build(
         pack_id,
         state.storage.clone(),
@@ -88,6 +97,7 @@ async fn build_pack(
         state.registry.clone(),
         p.dry_run,
         pack_version,
+        channel,
         Some(state.harvest.clone()),
     );
     Ok(Json(JobRef {

@@ -352,6 +352,16 @@ pub struct ModDetail {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub modrinth_project_id: Option<String>,
+    /// Modrinth project environment flags where known
+    /// (`required` | `optional` | `unsupported`); the priority-1 side source
+    /// for classification, surfaced verbatim like the project object's
+    /// `client_side` / `server_side`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub client_side: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub server_side: Option<String>,
     pub loaders: Vec<String>,
     pub mc_versions: Vec<String>,
     pub releases: Vec<ReleaseRow>,
@@ -359,6 +369,22 @@ pub struct ModDetail {
     /// Pack builds that ship this mod. Filtered to official + published on the
     /// public endpoint so a guest never learns a draft's name from it.
     pub used_by: Vec<ModUse>,
+}
+
+/// One artifact resolved by hash -- the Modrinth `version_file/{hash}` analog:
+/// the file row, the release it belongs to, and the owning mod's identity.
+/// Backs the public `GET /v1/files/{sha1}`.
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
+#[ts(export, export_to = "bindings/")]
+pub struct FileDetail {
+    #[ts(type = "number")]
+    pub mod_id: i64,
+    /// canonical_name -> slug -> modid -> `#<id>`, resolved server-side.
+    pub name: String,
+    pub slug: Option<String>,
+    pub version_number: String,
+    pub channel: String,
+    pub file: VersionRow,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]

@@ -4,18 +4,19 @@ import type { VersionChannel } from "./VersionChannel";
 /**
  * One retained build of a pack, as the version picker sees it: the version
  * label plus the metadata a launcher needs to render and order a list of
- * builds without fetching each manifest.
+ * builds without fetching each manifest. Field names follow the Modrinth
+ * version object (`version_number` / `version_type` / `date_published`).
  */
-export type ManifestBuildInfo = { version: string, 
+export type ManifestBuildInfo = { version_number: string, 
 /**
- * `release` for operator-published `YYYY.MM.DD[.N]` versions, `snapshot`
- * for panel builds (`SNAPSHOT-` prefix).
+ * The manifest's stored channel; for manifests predating the field,
+ * recovered from the legacy string rule (`SNAPSHOT-` prefix = beta).
  */
-channel: VersionChannel, 
+version_type: VersionChannel, 
 /**
  * The manifest's `generated_at` (RFC 3339): when the build produced it.
  */
-built_at: string, 
+date_published: string, 
 /**
  * The manifest's content fingerprint where present -- the reliable
  * "did the content change?" signal between two builds.

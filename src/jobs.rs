@@ -9,7 +9,7 @@ use crate::authoring::{
     infer_requires_from_mcmod_info, make_pack_summary,
 };
 use crate::config::Config;
-use crate::domain::{PackManifest, PackSummary};
+use crate::domain::{PackManifest, PackSummary, VersionChannel};
 use crate::registry::Registry;
 use crate::storage::Storage;
 use serde::Serialize;
@@ -161,6 +161,7 @@ impl JobRegistry {
         registry: Arc<Registry>,
         dry_run: bool,
         pack_version: Option<String>,
+        channel: VersionChannel,
         harvest: Option<Arc<HarvestScheduler>>,
     ) -> Arc<Job> {
         let job = self.create(if dry_run { "preview" } else { "build" }, pack_id);
@@ -173,7 +174,17 @@ impl JobRegistry {
                 Some(l) => Some(l.lock_owned().await),
                 None => None,
             };
-            match run_build(&handle, &storage, &config, &registry, dry_run, pack_version).await {
+            match run_build(
+                &handle,
+                &storage,
+                &config,
+                &registry,
+                dry_run,
+                pack_version,
+                channel,
+            )
+            .await
+            {
                 Ok(()) => {
                     handle.finish(Status::Done);
                     // a published build added a build + its mods to harvest -- a
@@ -218,6 +229,7 @@ impl JobRegistry {
 /// Load the pack's authoring inputs, run the build enrichment passes
 /// transiently (config.json stays the source on disk), resolve sources, and
 /// publish the manifest + summary + latest pointer. Logs each step to the job.
+#[allow(clippy::too_many_arguments)]
 async fn run_build(
     job: &Job,
     storage: &Storage,
@@ -225,6 +237,7 @@ async fn run_build(
     registry: &Arc<Registry>,
     dry_run: bool,
     pack_version: Option<String>,
+    channel: VersionChannel,
 ) -> Result<(), String> {
     let pack_id = job.pack_id.clone();
     job.line(format!("build {pack_id}: loading authoring inputs"));
@@ -265,6 +278,7 @@ async fn run_build(
         &cfg,
         storage.root(),
         pack_version.as_deref(),
+        channel,
         &config.mirror_base,
         &classifications,
     )
@@ -427,6 +441,7 @@ mod tests {
             Arc::new(crate::registry::Registry::open_in_memory().unwrap()),
             true,
             None,
+            VersionChannel::Beta,
             None,
         );
         assert_eq!(job.kind, "preview");
@@ -479,6 +494,7 @@ mod tests {
             Arc::new(crate::registry::Registry::open_in_memory().unwrap()),
             false,
             None,
+            VersionChannel::Release,
             None,
         );
         assert_eq!(job.kind, "build");

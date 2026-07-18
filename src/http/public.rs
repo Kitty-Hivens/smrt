@@ -1,7 +1,7 @@
 use super::ApiError;
 use crate::authoring::jar_icon;
 use crate::domain::*;
-use crate::registry::model::ModDetail;
+use crate::registry::model::{FileDetail, ModDetail};
 use crate::registry::queries;
 use crate::state::AppState;
 use axum::body::Body;
@@ -39,8 +39,48 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/cache/inventory", get(get_cache_inventory))
         .route("/v1/community", get(list_community))
         .route("/v1/mods/:key", get(get_mod_detail))
+        .route("/v1/files/:sha1", get(get_file_detail))
         .route("/v1/users/:uid/avatar", get(get_user_avatar))
         .with_state(state)
+}
+
+// ── /v1/files/:sha1 ────────────────────────────────────────────────────────
+
+/// Hash-first artifact lookup, the Modrinth `version_file/{hash}` analog: a
+/// launcher holding a jar (or a manifest entry) resolves what it is without
+/// walking the mod page. Same public read model as `/v1/mods/{key}`.
+#[utoipa::path(
+    get,
+    path = "/v1/files/{sha1}",
+    tag = "public",
+    params(("sha1" = String, Path, description = "Full 40-char sha1 of the artifact")),
+    responses(
+        (status = 200, description = "The file, its release, and the owning mod", body = FileDetail),
+        (status = 404, description = "No registered artifact with that hash")
+    )
+)]
+pub(crate) async fn get_file_detail(
+    State(state): State<AppState>,
+    Path(sha1): Path<String>,
+) -> Result<Json<FileDetail>, ApiError> {
+    if sha1.len() != 40 || !sha1.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ApiError::BadRequest("sha1 must be 40 hex chars".into()));
+    }
+    let reg = state.registry.clone();
+    let detail =
+        tokio::task::spawn_blocking(move || reg.with_conn(|c| queries::file_detail(c, &sha1)))
+            .await
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("file detail task: {e}")))??;
+    let Some(mut detail) = detail else {
+        return Err(ApiError::NotFound);
+    };
+    detail.file.cached = state
+        .storage
+        .list_cache_inventory()
+        .await?
+        .into_iter()
+        .any(|e| e.sha1 == detail.file.sha1);
+    Ok(Json(detail))
 }
 
 // ── /v1/mods/:id ─────────────────────────────────────────────────────────────
@@ -53,15 +93,15 @@ pub fn router(state: AppState) -> Router {
 /// set here against the live cache. Operators reuse this view and reach the gated
 /// edit/diff endpoints separately.
 ///
-/// `key` is either a numeric mod id (the graph and registry navigate by id) or a
-/// `sha1:<hash>` artifact reference (a pack's mod list has the jar's sha1, not the
-/// mod id) -- both resolve to the same page.
+/// `key` is a numeric mod id (the graph and registry navigate by id), a
+/// `sha1:<hash>` artifact reference (a pack's mod list has the jar's sha1, not
+/// the mod id), or a Modrinth-style slug -- all resolve to the same page.
 #[utoipa::path(
     get,
     path = "/v1/mods/{key}",
     tag = "public",
     params(("key" = String, Path,
-        description = "Numeric mod id, or `sha1:<hash>` of any of the mod's artifacts")),
+        description = "Numeric mod id, `sha1:<hash>` of any of the mod's artifacts, or the mod's slug")),
     responses(
         (status = 200, description = "The mod's public page model", body = ModDetail),
         (status = 404, description = "No mod resolves from the key")
@@ -79,7 +119,7 @@ pub(crate) async fn get_mod_detail(
             } else if let Some(sha1) = key.strip_prefix("sha1:") {
                 queries::mod_id_for_sha1(c, sha1)?
             } else {
-                None
+                queries::mod_id_for_slug(c, &key)?
             };
             match mod_id {
                 Some(id) => queries::mod_detail(c, id),
@@ -174,8 +214,8 @@ pub(crate) async fn list_packs(
 /// both fields absent.
 async fn enrich_latest_build(state: &AppState, summary: &mut PackSummary) {
     if let Ok(Some(info)) = state.storage.latest_build_info(&summary.pack_id).await {
-        summary.latest_built_at = Some(info.built_at);
-        summary.latest_channel = Some(info.channel);
+        summary.latest_built_at = Some(info.date_published);
+        summary.latest_channel = Some(info.version_type);
     }
 }
 
@@ -295,8 +335,7 @@ pub(crate) async fn get_manifest_version(
     params(("pack_id" = String, Path, description = "Pack identifier")),
     responses(
         (status = 200,
-         description = "Every retained build: bare labels (oldest first) plus \
-                        per-build metadata (newest first) and the current latest",
+         description = "Every retained build, newest first, plus the current latest",
          body = ManifestVersionsListing),
         (status = 404, description = "No such pack")
     )
@@ -309,15 +348,10 @@ pub(crate) async fn list_manifest_versions(
     gate_pack_read(&state, &headers, &pack_id).await?;
     let builds = state.storage.list_manifest_builds(&pack_id).await?;
     let latest = state.storage.latest_manifest_version(&pack_id).await?;
-    // One directory scan feeds both shapes: `builds` is newest-first for
-    // version pickers, `versions` keeps the original oldest-first label list
-    // for clients that predate the rich form.
-    let versions = builds.iter().rev().map(|b| b.version.clone()).collect();
     Ok(Json(ManifestVersionsListing {
         schema_version: SCHEMA_VERSION,
         pack_id,
         latest,
-        versions,
         builds,
     }))
 }

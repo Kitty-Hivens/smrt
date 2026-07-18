@@ -200,7 +200,7 @@
     }
     // best-effort: an unbuilt pack has no versions to revert to
     try {
-      revertVersions = (await api.manifestVersions(packId)).versions;
+      revertVersions = (await api.manifestVersions(packId)).builds.map((b) => b.version_number);
     } catch {
       revertVersions = [];
     }
