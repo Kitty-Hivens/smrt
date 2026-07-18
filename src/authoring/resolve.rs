@@ -594,12 +594,18 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
                     match tgt_present {
                         Some(bi) => {
                             let b = &present[bi];
-                            // a DECLARED hard edge into a client-side mod is a
-                            // data error the build will refuse -- surface it
-                            // with its provenance instead of failing late
+                            // A DECLARED hard edge from a non-client mod into
+                            // a client-side one: the build will not lock the
+                            // target (client mods are never force-installed),
+                            // so the dependency cannot be enforced -- surface
+                            // the pair. A client mod requiring another client
+                            // mod is a normal launcher-co-toggled chain and is
+                            // not reported.
                             if e.source != crate::registry::model::Source::Inferred
                                 && class_of.get(&b.mod_id).and_then(|c| c.side)
                                     == Some(SideClass::Client)
+                                && class_of.get(&a.mod_id).and_then(|c| c.side)
+                                    != Some(SideClass::Client)
                             {
                                 let entry =
                                     forced_client.entry(b.filename.clone()).or_insert_with(|| {
@@ -1523,6 +1529,27 @@ mod tests {
         assert_eq!(
             plan.requires,
             vec![("a.jar".to_string(), "client.jar".to_string())]
+        );
+
+        // a client mod requiring another client mod is a normal co-toggled
+        // chain, not a forced-client attempt
+        r.with_conn_mut(|c| {
+            crate::registry::upsert::set_jar_class(
+                c,
+                "sha_a",
+                "mod",
+                Some("client"),
+                Some("tolerant"),
+                Some("high"),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let rep = r.with_conn(|c| resolve_pack(c, &cfg)).unwrap();
+        assert!(
+            rep.forced_client_attempts.is_empty(),
+            "client -> client is not reported: {:?}",
+            rep.forced_client_attempts
         );
     }
 

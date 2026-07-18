@@ -102,11 +102,13 @@ pub async fn build_manifest(
 /// opted-out must_match mod stays out: the curator removed it from the default
 /// server set, and forcing it back would erase the opt-out.
 ///
-/// Side invariants applied after the walk: a server-side mod is never required
-/// for the client and ships opted out (advisory in the resolve report, nothing
-/// is removed); a coremod/library jar is never required (always toggleable);
-/// and a client-side mod locked required is an error, not a manifest -- the
-/// mirror refuses to force-install client mods.
+/// Side invariants: a server-side mod is never required for the client and
+/// ships opted out (advisory in the resolve report, nothing is removed); a
+/// coremod/library jar is never required (always toggleable); a confidently
+/// client-side mod never locks through the graph at all (client chains
+/// co-toggle in the launcher via the requires tree), with the low-confidence
+/// declared-edge override as the one exception and a build error as the
+/// backstop for an inconsistent classification.
 fn derive_required(
     mods: &mut [ModEntry],
     classifications: &HashMap<String, Classification>,
@@ -133,6 +135,20 @@ fn derive_required(
         }
     }
 
+    // A hard edge into a confidently client-side mod never contributes to the
+    // required walk: locking it is exactly what the client invariant forbids,
+    // and a client mod hard-requiring another client mod (EMF -> ETF) is a
+    // legitimate client-internal chain the launcher co-toggles through the
+    // requires tree, not a reason to force-install the target on everyone.
+    // The one exception stays: a LOW-confidence client verdict (the surface
+    // heuristic) yields to a declared edge -- the bspkrsCore-class library
+    // shape -- so those targets do lock, with a warning below.
+    let lockable = |i: usize| -> bool {
+        match classifications.get(&mods[i].filename) {
+            Some(c) => c.side != Some(SideClass::Client) || c.client_verdict_is_soft(),
+            None => true,
+        }
+    };
     let hard_deps = |m: &ModEntry| -> Vec<usize> {
         m.display
             .as_ref()
@@ -141,6 +157,7 @@ fn derive_required(
                     .iter()
                     .filter(|r| !r.optional)
                     .filter_map(|r| idx.get(&r.filename).copied())
+                    .filter(|i| lockable(*i))
                     .collect()
             })
             .unwrap_or_default()
@@ -179,16 +196,13 @@ fn derive_required(
             required.remove(&i);
             continue;
         }
-        // The client invariant. Inferred edges were downgraded before the
-        // graph was written, so reaching here means a DECLARED hard edge (or a
-        // must_match verdict) on a client-side mod. When the client verdict is
-        // solid (explicit markers, Modrinth flags), that is bad data the
-        // curator must fix -- shipping it would force-install a client mod.
-        // When it came from the blanket-surface heuristic alone, the declared
-        // edge is the stronger evidence (a both-side mod hard-requiring the
-        // target means the target runs server-side too, the bspkrsCore-class
-        // library shape): the lock stands and the resolve report shows the
-        // pair as a forced-client attempt for the curator to settle.
+        // The client invariant, as a backstop. Confidently-client targets are
+        // excluded from the walk above and a client mod cannot be a must_match
+        // seed (the env mapping never yields that pair and the authored writer
+        // rejects it), so a required client survivor here is either the
+        // deliberate low-confidence override -- a declared edge outweighing
+        // the surface heuristic (bspkrsCore-class) -- or an inconsistency this
+        // refuses to ship.
         if side(m) == Some(SideClass::Client) {
             if classifications
                 .get(&m.filename)
@@ -200,25 +214,9 @@ fn derive_required(
                 );
                 continue;
             }
-            let drivers: Vec<&str> = mods
-                .iter()
-                .filter(|o| {
-                    o.display.as_ref().is_some_and(|d| {
-                        d.requires
-                            .iter()
-                            .any(|r| !r.optional && r.filename == m.filename)
-                    })
-                })
-                .map(|o| o.filename.as_str())
-                .collect();
             bail!(
-                "client-side mod {} would be locked required{} -- a client mod is never force-installed; fix the dependency data or the mod's classification",
-                m.filename,
-                if drivers.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (hard-required by {})", drivers.join(", "))
-                }
+                "client-side mod {} would be locked required -- a client mod is never force-installed; fix the mod's classification",
+                m.filename
             );
         }
     }
@@ -559,21 +557,52 @@ mod tests {
         assert_eq!(mods.len(), 2, "nothing is removed");
     }
 
-    // The client invariant: a declared hard edge locking a client-side mod is
-    // an error naming the mod and its drivers, not a manifest.
+    // A hard edge into a confidently client-side mod never locks it: the
+    // invariant holds structurally, the build succeeds, and the dependency
+    // stays in the requires tree for the launcher to co-toggle (EMF -> ETF).
     #[test]
-    fn client_mod_locked_by_declared_edge_fails_the_build() {
+    fn client_target_edge_does_not_lock_and_the_build_succeeds() {
         let mut mods = vec![
-            entry("chisel.jar", true, &["ctm.jar"]),
-            entry("ctm.jar", true, &[]),
+            entry(
+                "EntityModelFeatures.jar",
+                true,
+                &["EntityTextureFeatures.jar"],
+            ),
+            entry("EntityTextureFeatures.jar", true, &[]),
         ];
+        let cl = HashMap::from([
+            (
+                "EntityModelFeatures.jar".to_string(),
+                cls(Some(SideClass::Client), Some(MatchPolicy::Tolerant)),
+            ),
+            (
+                "EntityTextureFeatures.jar".to_string(),
+                cls(Some(SideClass::Client), Some(MatchPolicy::Tolerant)),
+            ),
+        ]);
+        derive_required(&mut mods, &cl).unwrap();
+        assert!(!mods[1].required, "the client target stays toggleable");
+        let presence = mods[1].display.as_ref().and_then(|d| d.presence);
+        assert_eq!(presence, Some(PresenceClass::OptionalClient));
+        // the edge itself survives for the launcher's dependency tree
+        assert_eq!(
+            mods[0].display.as_ref().unwrap().requires[0].filename,
+            "EntityTextureFeatures.jar"
+        );
+    }
+
+    // The invariant backstop still refuses an inconsistent classification (a
+    // client-side must_match seed cannot arise from the env mapping, and the
+    // authored writer rejects the pair).
+    #[test]
+    fn client_must_match_inconsistency_fails_the_build() {
+        let mut mods = vec![entry("weird.jar", true, &[])];
         let cl = HashMap::from([(
-            "ctm.jar".to_string(),
-            cls(Some(SideClass::Client), Some(MatchPolicy::Tolerant)),
+            "weird.jar".to_string(),
+            cls(Some(SideClass::Client), Some(MatchPolicy::MustMatch)),
         )]);
         let err = derive_required(&mut mods, &cl).unwrap_err().to_string();
-        assert!(err.contains("ctm.jar"), "names the client mod: {err}");
-        assert!(err.contains("chisel.jar"), "names the driver: {err}");
+        assert!(err.contains("weird.jar"), "names the mod: {err}");
     }
 
     // A low-confidence (surface-heuristic) client verdict yields to a declared

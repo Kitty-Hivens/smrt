@@ -94,6 +94,11 @@ pub fn set_authored_jar_class(
     {
         bail!("match_policy must be one of must_match | tolerant");
     }
+    if side == Some("client") && match_policy == Some("must_match") {
+        bail!(
+            "client + must_match is contradictory: a client-side mod never requires itself on the server"
+        );
+    }
     // the non-Modrinth guard: a jar whose mod carries a Modrinth identity is
     // classified by the project environment flags, not by hand
     let modrinth: Option<String> = conn
