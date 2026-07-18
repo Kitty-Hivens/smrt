@@ -367,7 +367,8 @@ pub fn set_jar_class(
            kind = excluded.kind,
            side = excluded.side,
            match_policy = excluded.match_policy,
-           side_confidence = excluded.side_confidence",
+           side_confidence = excluded.side_confidence
+         WHERE jar_class.source != 'authored'",
         params![sha1, kind, side, match_policy, side_confidence],
     )?;
     Ok(())
@@ -402,6 +403,35 @@ pub fn upsert_relation(
     source: Source,
     now: &str,
 ) -> Result<bool> {
+    upsert_relation_ranked(
+        conn,
+        from_mod_id,
+        from_mod_version_id,
+        target_modid,
+        version_range,
+        kind,
+        source,
+        source.rank(),
+        now,
+    )
+}
+
+/// [`upsert_relation`] with an explicit confidence rank, for the one split the
+/// source vocab does not encode: a modern loader manifest's declared deps
+/// (loader-enforced, reliable) rank above 1.12-era mcmod.info ones, while both
+/// stay `jar-meta` on the wire.
+#[allow(clippy::too_many_arguments)]
+pub fn upsert_relation_ranked(
+    conn: &Connection,
+    from_mod_id: i64,
+    from_mod_version_id: Option<i64>,
+    target_modid: &str,
+    version_range: Option<&str>,
+    kind: RelKind,
+    source: Source,
+    rank: i64,
+    now: &str,
+) -> Result<bool> {
     let inserted = conn.execute(
         "INSERT OR IGNORE INTO relation
            (from_mod_id, from_mod_version_id, target_modid, target_version_range,
@@ -414,7 +444,7 @@ pub fn upsert_relation(
             version_range,
             kind.as_str(),
             source.as_str(),
-            source.rank(),
+            rank,
             now
         ],
     )?;

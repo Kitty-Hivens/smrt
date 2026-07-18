@@ -279,6 +279,79 @@ mod tests {
     }
 
     #[test]
+    fn authored_classification_survives_reharvest_and_reads_high() {
+        use super::super::authored;
+        let (r, id, sha) = setup(None, Some(("mod", Some("client"), Some("tolerant"))));
+        // the operator asserts the jar is a both-side tolerant library
+        r.with_conn_mut(|c| {
+            authored::set_authored_jar_class(c, &sha, "mod", Some("both"), Some("tolerant"), false)
+        })
+        .unwrap();
+        // a re-harvest refresh must not clobber the authored row
+        r.with_conn_mut(|c| {
+            crate::registry::upsert::set_jar_class(
+                c,
+                &sha,
+                "mod",
+                Some("client"),
+                Some("tolerant"),
+                Some("low"),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let c = r
+            .with_conn(|conn| classify_artifact(conn, Some(id), Some(&sha)))
+            .unwrap();
+        assert_eq!(c.side, Some(SideClass::Both), "authored verdict holds");
+        assert_eq!(c.side_confidence.as_deref(), Some("high"));
+        assert!(!c.client_verdict_is_soft());
+
+        // clearing the override lets the next harvest re-derive
+        r.with_conn_mut(|c| {
+            authored::set_authored_jar_class(c, &sha, "", None, None, true)?;
+            crate::registry::upsert::set_jar_class(
+                c,
+                &sha,
+                "mod",
+                Some("client"),
+                Some("tolerant"),
+                Some("low"),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let c = r
+            .with_conn(|conn| classify_artifact(conn, Some(id), Some(&sha)))
+            .unwrap();
+        assert_eq!(c.side, Some(SideClass::Client), "derived verdict is back");
+    }
+
+    #[test]
+    fn authored_classification_is_refused_for_a_modrinth_mod() {
+        use super::super::authored;
+        let (r, id, sha) = setup(Some(("required", "required")), None);
+        r.with_conn_mut(|c| {
+            c.execute(
+                "INSERT INTO mod_alias (mod_id, source, external_key) VALUES (?1, 'modrinth', 'PROJ')",
+                [id],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let err = r
+            .with_conn_mut(|c| {
+                authored::set_authored_jar_class(c, &sha, "mod", Some("both"), None, false)
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("Modrinth-identified"),
+            "the env flags stay authoritative: {err}"
+        );
+    }
+
+    #[test]
     fn partial_bytecode_side_without_policy_still_wins_over_nothing() {
         // fabric env "*" pinned the side while the policy stayed open
         let (r, id, sha) = setup(None, Some(("mod", Some("both"), None)));

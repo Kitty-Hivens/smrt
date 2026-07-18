@@ -125,6 +125,22 @@ impl Registry {
         })
     }
 
+    /// Set (or clear) an operator-asserted jar classification (authored;
+    /// refused for Modrinth-identified mods -- their environment flags stay
+    /// authoritative).
+    pub fn author_jar_class(
+        &self,
+        sha1: &str,
+        kind: &str,
+        side: Option<&str>,
+        match_policy: Option<&str>,
+        remove: bool,
+    ) -> Result<()> {
+        self.with_txn(|c| {
+            authored::set_authored_jar_class(c, sha1, kind, side, match_policy, remove)
+        })
+    }
+
     /// Edit a release's version number and/or channel (authored).
     pub fn edit_release(
         &self,

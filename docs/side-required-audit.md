@@ -233,7 +233,78 @@ JEIBees, LunatriusCore, NBTEdit, ProjectRed-Integration, Schematica, WanionLib.
 Each would firm up from an authored classification or better upstream flags;
 none can be locked or force anything meanwhile.
 
-## 7. Notes carried into stages B-I
+## 7. Follow-up sweep (2026-07-18, same day): edge quality + authored classification
+
+The deferred edge-quality fixes landed, plus the authored escape hatch the
+unclassified list needed.
+
+**Edge quality.** Three mechanisms, all corpus-verified:
+
+- bundled foreign APIs no longer confer ownership: a jar owning `<root>/api`
+  with no sibling package under the same root is bundling, not owning (the
+  sibling test separates RailCraft's bundled ic2/api + thaumcraft/api from
+  every legitimate API owner exactly -- checked across all ten /api prefixes
+  in the registry);
+- integration-package classes (`integration`/`compat`/`plugins`/...) grade as
+  conditional when they are a minority of the jar -- embedded compat modules
+  behind a mod's own plugin manager -- while a jar living entirely under such
+  a namespace (ProjectRed-Integration) keeps its real hard deps;
+- InventoryTweaks joined the integration-host list (containers advertise to it
+  through API annotations and helper signatures);
+- a jar with modern-manifest declared deps is on the manifest tier of the
+  cascade: bytecode inference is suppressed for it, and on a dual-metadata jar
+  the manifest edge outranks the mcmod.info one (written first; rank 55 vs 50).
+
+Result on the replica: 11 of the 12 false inferred hard edges are gone
+(45 -> 34 inferred requires). The survivor, RailCraft -> forestry, comes from
+unconditional forestry-API references in RailCraft's regular item code
+(ItemFilterBeeGenome), outside any integration namespace -- the honest limit of
+class granularity; an authored optional_dep suppresses it through the existing
+per-target precedence, which is the designed escape hatch.
+
+**Authored classification** (migration 0015). `jar_class` rows gain the
+standard source marker: harvest refreshes `harvested` rows and never touches
+`authored` ones. The override is debug-gated (compat-affecting), audited,
+stored with high side-confidence, and REFUSED for a Modrinth-identified mod --
+the project environment flags stay authoritative and are fixed upstream, not
+overridden. Surfaces: `PUT /v1/registry/files/{sha1}/class` and
+`smrt-pack registry classify`.
+
+**Final replica state.** Both packs build with zero warnings; a repeated
+identical build yields an identical fingerprint. Create 40/52 required,
+presence on every entry. Industrial 47/93: BCFuelsForIC2 and
+ProjectRed-Integration lock via their authored must_match, InventoryTweaks is
+finally toggleable (its false hard edges are gone), ChickenASM reads coremod,
+the server-side trio ships opted out. The one entry without a presence badge is
+lunary-mod: a curator-disabled must_match mod fits none of the five classes,
+and no badge is more honest than a wrong one. Corpus bars unchanged (52/57
+cascade, 22/24 bytecode-only, zero client-label must_match).
+
+**Production runbook** (after this lands and a harvest has run): re-apply the
+authored layer, then save each pack config in the panel (or run depfill) and
+rebuild. Classifications, by cached sha1:
+
+```
+smrt-pack registry classify --sha1 9ae9811f387a960381e5c82fae2a7f79d0480a27 --side both   --policy tolerant    # bspkrsCore
+smrt-pack registry classify --sha1 dd06d6d5a906212b5800082e7a0f6afb4fae0386 --side both   --policy must_match  # BCFuelsForIC2
+smrt-pack registry classify --sha1 10a0674a76a6f5d736ee43d4179512f22fce5d03 --side both   --policy tolerant    # FTBLibrary
+smrt-pack registry classify --sha1 5a2c293aec393901d3cfff52eb7a3b855999cba8 --side both   --policy tolerant    # Hats
+smrt-pack registry classify --sha1 4be9841d7d97e4c0d824e2fb363f43b5b35c2f52 --side client --policy tolerant    # JEIBees
+smrt-pack registry classify --sha1 f70b39168f2a02d47792cf29bef432e20d0bcd57 --side both   --policy tolerant    # LunatriusCore
+smrt-pack registry classify --sha1 dbed8f269c40aecab5cebb767cef1a9815b68ce2 --side both   --policy tolerant    # NBTEdit
+smrt-pack registry classify --sha1 f05cda479b14d41e02120295b4bcbb0ab25738d2 --side both   --policy must_match  # ProjectRed-Integration
+smrt-pack registry classify --sha1 cc8c851bc47ecf314c3974e3b90acfa1a62105ac --side client --policy tolerant    # Schematica
+smrt-pack registry classify --sha1 8518861bf46a9ec99d89f2b138ed0790fb858071 --side both   --policy tolerant    # WanionLib
+```
+
+Plus one authored edge through the panel's graph editor (or
+`POST /v1/registry/relations`): RailCraft `optional_dep` -> `forestry`, which
+suppresses the surviving inferred hard edge. The Modrinth env-flag
+disagreements (Create declares client=optional; Architectury and MixinBooter
+declare required/required) stay advisories by design: those flags are fixed
+upstream, and the packs' outcomes are already correct through the graph.
+
+## 8. Notes carried into stages B-I
 
 - `RelKind::Recommends` needs only a producer decision + panel surfacing; the
   vocab, parser, and resolver skip-path already exist.

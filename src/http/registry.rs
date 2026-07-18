@@ -109,6 +109,9 @@ fn debug_routes(state: AppState) -> Router {
         .route("/v1/registry/releases/:release_id", put(put_release_edit))
         .route("/v1/registry/merge", post(post_merge))
         .route("/v1/registry/relations", post(post_relation))
+        // classification override: moves the side/policy the required
+        // derivation and the client invariant ride on
+        .route("/v1/registry/files/:sha1/class", put(put_file_class))
         .layer(from_fn_with_state(
             state.clone(),
             super::auth::require_debug,
@@ -648,6 +651,74 @@ async fn put_file_identity(
     Ok(Json(AuthoredFile {
         mod_version_id: mv_id,
     }))
+}
+
+#[derive(Deserialize)]
+struct FileClassBody {
+    /// mod | coremod | library. Required unless removing.
+    #[serde(default)]
+    kind: Option<String>,
+    /// client | server | both.
+    #[serde(default)]
+    side: Option<String>,
+    /// must_match | tolerant.
+    #[serde(default)]
+    match_policy: Option<String>,
+    /// Drop the authored override; the next harvest re-derives.
+    #[serde(default)]
+    remove: bool,
+}
+
+/// Set (or clear) a jar's authored classification -- the operator's answer for
+/// a jar the classifier left undecided or graded with a low-confidence
+/// heuristic. Refused for a Modrinth-identified mod (its environment flags are
+/// authoritative). Compat-affecting (feeds required derivation + the client
+/// invariant), so debug-gated and audited.
+async fn put_file_class(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(sha1): Path<String>,
+    Json(b): Json<FileClassBody>,
+) -> Result<StatusCode, ApiError> {
+    if sha1.len() != 40 || !sha1.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ApiError::BadRequest("sha1 must be 40 hex chars".into()));
+    }
+    let kind = match (&b.kind, b.remove) {
+        (Some(k), _) => k.clone(),
+        (None, true) => String::new(), // unused on remove
+        (None, false) => {
+            return Err(ApiError::BadRequest(
+                "kind is required (mod | coremod | library)".into(),
+            ));
+        }
+    };
+    let (sha_w, side, policy, remove) = (
+        sha1.clone(),
+        b.side.clone(),
+        b.match_policy.clone(),
+        b.remove,
+    );
+    run_write(&state, move |reg| {
+        reg.author_jar_class(&sha_w, &kind, side.as_deref(), policy.as_deref(), remove)
+    })
+    .await
+    .map_err(|e| match e {
+        ApiError::Internal(inner) => ApiError::BadRequest(inner.to_string()),
+        other => other,
+    })?;
+    let action = if b.remove {
+        "registry.file.class.remove"
+    } else {
+        "registry.file.class"
+    };
+    let detail = format!(
+        "{} {} {}",
+        b.kind.as_deref().unwrap_or("-"),
+        b.side.as_deref().unwrap_or("-"),
+        b.match_policy.as_deref().unwrap_or("-"),
+    );
+    audit(&state, &identity, action, Some(&sha1), Some(&detail)).await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]

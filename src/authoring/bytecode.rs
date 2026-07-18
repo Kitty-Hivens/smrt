@@ -344,6 +344,28 @@ fn read_classes(jar_bytes: &[u8]) -> Vec<ClassInfo> {
     out
 }
 
+/// Package segments that mark integration/compat code loaded behind a mod's
+/// OWN plugin manager (AE2's IntegrationRegistry, RailCraft's plugin system),
+/// which the `isModLoaded`/`@Optional` markers cannot see.
+const INTEGRATION_SEGMENTS: &[&str] = &[
+    "integration",
+    "integrations",
+    "compat",
+    "compatibility",
+    "plugins",
+    "modsupport",
+];
+
+/// True when the class lives under an integration-marked package.
+fn is_integration_class(binary: &str) -> bool {
+    match binary.rfind('/') {
+        Some(end) => binary[..end]
+            .split('/')
+            .any(|seg| INTEGRATION_SEGMENTS.contains(&seg)),
+        None => false,
+    }
+}
+
 /// Fold parsed classes + meta signals into the jar's facts. Pure -- the
 /// unit-tested core; `scan_jar` and the harvest single-pass reader are only
 /// zip-reading shells around it.
@@ -356,6 +378,44 @@ pub(crate) fn aggregate(classes: &[ClassInfo], signals: &JarSignals) -> JarBytec
             owned.insert(p);
         }
     }
+
+    // A jar that owns a foreign mod's `<root>/api` but nothing else under that
+    // root is BUNDLING the API, not owning it (RailCraft ships ic2/api and
+    // thaumcraft/api wholesale). Registering it would make this jar the sole
+    // owner whenever the true owner is a never-scanned Modrinth pin, and every
+    // consumer of that API would grow a false hard edge here. A mod that owns
+    // its own API always owns sibling packages under the same root (verified
+    // across the corpus), so the sibling test separates the two exactly. The
+    // residual risk -- a standalone pure-API jar losing ownership -- errs in
+    // the safe direction: a dropped edge, never an invented one.
+    let bundled_apis: Vec<String> = owned
+        .iter()
+        .filter(|p| {
+            let Some(root) = p.strip_suffix("/api") else {
+                return false;
+            };
+            !owned.iter().any(|s| {
+                s.as_str() != p.as_str()
+                    && (s.as_str() == root
+                        || (s.starts_with(root) && s[root.len()..].starts_with('/')))
+            })
+        })
+        .cloned()
+        .collect();
+    for p in &bundled_apis {
+        owned.remove(p);
+    }
+
+    // Integration-package classes count as conditional only when they are a
+    // minority of the jar: a handful of compat modules inside a content mod is
+    // embedded integration code, while a jar living entirely under an
+    // integration namespace (ProjectRed-Integration) is simply named that way
+    // and its references are its real dependencies.
+    let integration_classes = classes
+        .iter()
+        .filter(|c| is_integration_class(&c.this_class))
+        .count();
+    let integration_is_minority = integration_classes * 2 < classes.len();
 
     let mut ref_all: BTreeSet<String> = BTreeSet::new();
     let mut ref_hard: BTreeSet<String> = BTreeSet::new();
@@ -370,21 +430,28 @@ pub(crate) fn aggregate(classes: &[ClassInfo], signals: &JarSignals) -> JarBytec
                 prefixes.insert(p);
             }
         }
+        let conditional =
+            c.conditional || (integration_is_minority && is_integration_class(&c.this_class));
         for p in prefixes {
-            if !c.conditional {
+            if !conditional {
                 ref_hard.insert(p.clone());
             }
             ref_all.insert(p);
         }
     }
 
-    // subtract owned so a jar never depends on itself
-    let hard_refs: BTreeSet<String> = ref_hard.difference(&owned).cloned().collect();
-    let optional_refs: BTreeSet<String> = ref_all
+    // subtract owned so a jar never depends on itself -- and a bundled foreign
+    // API is still self-shipped code, not a dependency on its true owner
+    let mut hard_refs: BTreeSet<String> = ref_hard.difference(&owned).cloned().collect();
+    let mut optional_refs: BTreeSet<String> = ref_all
         .difference(&ref_hard)
         .filter(|p| !owned.contains(*p))
         .cloned()
         .collect();
+    for p in &bundled_apis {
+        hard_refs.remove(p);
+        optional_refs.remove(p);
+    }
 
     let (side, side_confidence, match_policy, kind, evidence) = classify(classes, signals);
     JarBytecode {
@@ -728,6 +795,78 @@ mod tests {
         let out = aggregate(&classes, &mod_signals());
         assert!(out.hard_refs.contains("thermal/api"));
         assert!(!out.optional_refs.contains("thermal/api"));
+    }
+
+    // Fix A: a jar shipping a foreign mod's bundled API (RailCraft carries
+    // ic2/api + thaumcraft/api) neither owns that prefix nor depends on it; a
+    // mod's OWN api package (sibling packages under the same root) stays owned.
+    #[test]
+    fn bundled_foreign_api_is_neither_owned_nor_an_edge() {
+        let classes = vec![
+            ci("mods/railcraft/common/Core", &[], false),
+            ci("mods/railcraft/api/Track", &[], false),
+            ci("ic2/api/EnergyNet", &[], false), // bundled: no ic2 siblings
+            ci("thaumcraft/api/Aspect", &[], false),
+        ];
+        let out = aggregate(&classes, &mod_signals());
+        assert!(
+            out.owned.contains("mods/railcraft/api"),
+            "own api with siblings stays owned"
+        );
+        assert!(
+            !out.owned.contains("ic2/api") && !out.owned.contains("thaumcraft/api"),
+            "bundled foreign APIs are not owned: {:?}",
+            out.owned
+        );
+        assert!(
+            out.hard_refs.is_empty(),
+            "self-shipped code is not a dependency either: {:?}",
+            out.hard_refs
+        );
+    }
+
+    // Fix B: integration-package classes (a minority of the jar) are compat
+    // modules behind the mod's own plugin manager -- their foreign references
+    // grade soft; a jar living entirely under an integration namespace
+    // (ProjectRed-Integration) keeps its references hard.
+    #[test]
+    fn minority_integration_packages_grade_soft() {
+        let classes = vec![
+            ci(
+                "mods/railcraft/common/Core",
+                &["mods/railcraft/common/Track"],
+                false,
+            ),
+            ci("mods/railcraft/common/Machine", &[], false),
+            ci(
+                "mods/railcraft/common/plugins/forestry/BackpackHandler",
+                &["forestry/api/Backpack"],
+                false,
+            ),
+        ];
+        let out = aggregate(&classes, &mod_signals());
+        assert!(
+            out.optional_refs.contains("forestry/api"),
+            "a minority plugins package is integration code: {:?}",
+            out.optional_refs
+        );
+        assert!(!out.hard_refs.contains("forestry/api"));
+
+        // whole-jar integration namespace: the references are real deps
+        let whole = vec![
+            ci(
+                "mrtjp/projectred/integration/GateLogic",
+                &["codechicken/lib/Vec3"],
+                false,
+            ),
+            ci("mrtjp/projectred/integration/Gates", &[], false),
+        ];
+        let out = aggregate(&whole, &mod_signals());
+        assert!(
+            out.hard_refs.contains("codechicken/lib"),
+            "an integration-NAMED jar keeps its hard deps: {:?}",
+            out.hard_refs
+        );
     }
 
     #[test]

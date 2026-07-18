@@ -168,6 +168,11 @@ pub struct HarvestReport {
     pub identities_reconciled: i64,
 }
 
+/// Confidence rank for modern-manifest declared deps: above the shared
+/// `jar-meta` rank (mcmod.info), below `authored`, so per-target dedup prefers
+/// the loader-enforced declaration when a dual-metadata jar carries both.
+const MANIFEST_DEP_RANK: i64 = 55;
+
 // mcmod.info dependency lists routinely name the platform, not a real mod.
 // Compared lowercased, so the loader is dropped however a jar spells it.
 const PSEUDO_DEPS: &[&str] = &[
@@ -203,6 +208,10 @@ const INTEGRATION_HOSTS: &[&str] = &[
     "hwyla",
     "wthit",
     "theoneprobe",
+    // sorting host: containers advertise themselves to it through API
+    // annotations and helper signatures, which read as unconditional
+    // references at class granularity (Forestry, IronChest)
+    "inventorytweaks",
 ];
 
 /// Whether an edge selector names an [`INTEGRATION_HOSTS`] mod, ignoring a version
@@ -584,6 +593,12 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         // never want a Modrinth mod to end up with zero edges just because its
         // Modrinth page is bare.
         let is_modrinth = jar.project_id.is_some() && !jar.modrinth_deps.is_empty();
+        // A modern loader manifest is loader-enforced: a genuinely hard dep MUST
+        // be declared there, so for such a jar the manifest is the authoritative
+        // dependency source and bytecode inference adds only noise (the per-mod
+        // best-source cascade). 1.12-era mcmod.info stays the legacy tier where
+        // the bytecode fallback is still needed.
+        let has_manifest_deps = !jar.declared_deps.is_empty();
 
         // Re-derive this artifact's jar-meta edges from scratch: drop the ones a
         // previous harvest wrote -- possibly under an older, buggier dependency
@@ -600,6 +615,25 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         // jar: mcmod.info modids for 1.12.2, plus typed + version-ranged deps from
         // modern metadata.
         if !is_modrinth {
+            // Manifest deps first: the relation dedupe key ignores confidence,
+            // so when a dual-metadata jar declares the same target in both its
+            // manifest and its mcmod.info, the first write occupies the slot --
+            // and the loader-enforced manifest is the one that should.
+            for (target, kind, range) in &jar.declared_deps {
+                if upsert::upsert_relation_ranked(
+                    conn,
+                    mod_id,
+                    Some(mod_version_id),
+                    target,
+                    range.as_deref(),
+                    *kind,
+                    Source::JarMeta,
+                    MANIFEST_DEP_RANK,
+                    now,
+                )? {
+                    declared_deps_written += 1;
+                }
+            }
             for dep in &jar.requires {
                 upsert::upsert_relation(
                     conn,
@@ -611,20 +645,6 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                     Source::JarMeta,
                     now,
                 )?;
-            }
-            for (target, kind, range) in &jar.declared_deps {
-                if upsert::upsert_relation(
-                    conn,
-                    mod_id,
-                    Some(mod_version_id),
-                    target,
-                    range.as_deref(),
-                    *kind,
-                    Source::JarMeta,
-                    now,
-                )? {
-                    declared_deps_written += 1;
-                }
             }
         }
 
@@ -678,7 +698,10 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
             }
         }
 
-        if !is_modrinth && (!jar.hard_refs.is_empty() || !jar.optional_refs.is_empty()) {
+        if !is_modrinth
+            && !has_manifest_deps
+            && (!jar.hard_refs.is_empty() || !jar.optional_refs.is_empty())
+        {
             derivations.push((mod_id, mod_version_id, jar));
         }
     }
@@ -2350,6 +2373,52 @@ mod tests {
                     ),
                 ],
                 "typed declared edges with version ranges, sourced jar-meta"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // A jar with modern-manifest declared deps is on the manifest tier of the
+    // cascade: the loader enforces hard deps there, so the bytecode inference
+    // is suppressed for it -- and when a dual-metadata jar's mcmod.info and
+    // manifest disagree on a target's kind, the manifest edge outranks.
+    #[test]
+    fn manifest_deps_suppress_bytecode_and_outrank_mcmod() {
+        let r = Registry::open_in_memory().unwrap();
+        let mut a = ddseed(
+            "sha_m",
+            "modernmod",
+            &[("truelib", RelKind::Requires, None)],
+        );
+        a.hard_refs = vec!["appeng/api".into()]; // would be an edge if not suppressed
+        a.requires = vec!["truelib".into()]; // mcmod spelling of the same dep
+        let scan = ScanData {
+            jars: vec![a, dseed("sha_ae2", "ae2", &["appeng/api"], &[], &[], None)],
+            packs: vec![],
+            modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
+        };
+        let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        assert_eq!(
+            rep.inferred_requires, 0,
+            "bytecode suppressed for a manifest-tier jar"
+        );
+        r.with_conn(|c| {
+            let m = queries::mod_id_for_alias(c, "modid", "modernmod")?.unwrap();
+            let confidences: Vec<i64> = {
+                let mut stmt = c.prepare(
+                    "SELECT confidence FROM relation WHERE from_mod_id = ?1 AND target_modid = 'truelib'
+                     ORDER BY confidence DESC",
+                )?;
+                stmt.query_map([m], |r| r.get(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            assert_eq!(
+                confidences,
+                vec![55],
+                "the manifest edge occupies the deduped slot at its higher rank"
             );
             Ok(())
         })

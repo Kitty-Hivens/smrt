@@ -54,6 +54,77 @@ pub fn remove_authored_relation(
     )?)
 }
 
+/// The valid `jar_class.kind` values.
+pub const JAR_KINDS: &[&str] = &["mod", "coremod", "library"];
+
+/// Set (or clear) an operator-asserted jar classification -- the debug-rung
+/// escape hatch for a jar the classifier cannot decide or decides with a
+/// low-confidence heuristic. Precious: the harvest's jar_class refresh skips
+/// authored rows. Refused for a Modrinth-identified mod: the project's
+/// environment flags stay authoritative and are not hand-overridable (the
+/// per-mod best-source cascade). `side_confidence` is stored `high` so the
+/// client invariant treats the assertion as solid.
+pub fn set_authored_jar_class(
+    conn: &Connection,
+    sha1: &str,
+    kind: &str,
+    side: Option<&str>,
+    match_policy: Option<&str>,
+    remove: bool,
+) -> Result<()> {
+    if remove {
+        // drop only the authored row; a scanned jar regains its derived row on
+        // the next harvest
+        conn.execute(
+            "DELETE FROM jar_class WHERE sha1 = ?1 AND source = 'authored'",
+            params![sha1],
+        )?;
+        return Ok(());
+    }
+    if !JAR_KINDS.contains(&kind) {
+        bail!("kind must be one of {JAR_KINDS:?}");
+    }
+    if let Some(s) = side
+        && crate::domain::SideClass::parse(s).is_none()
+    {
+        bail!("side must be one of client | server | both");
+    }
+    if let Some(p) = match_policy
+        && crate::domain::MatchPolicy::parse(p).is_none()
+    {
+        bail!("match_policy must be one of must_match | tolerant");
+    }
+    // the non-Modrinth guard: a jar whose mod carries a Modrinth identity is
+    // classified by the project environment flags, not by hand
+    let modrinth: Option<String> = conn
+        .query_row(
+            "SELECT a.external_key FROM mod_version mv
+             JOIN mod_alias a ON a.mod_id = mv.mod_id AND a.source = 'modrinth'
+             WHERE mv.sha1 = ?1 LIMIT 1",
+            params![sha1],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(pid) = modrinth {
+        bail!(
+            "jar's mod is Modrinth-identified (project {pid}); its environment flags are authoritative -- fix them upstream instead"
+        );
+    }
+    let confidence = side.map(|_| "high");
+    conn.execute(
+        "INSERT INTO jar_class (sha1, kind, side, match_policy, side_confidence, source)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'authored')
+         ON CONFLICT(sha1) DO UPDATE SET
+           kind = excluded.kind,
+           side = excluded.side,
+           match_policy = excluded.match_policy,
+           side_confidence = excluded.side_confidence,
+           source = 'authored'",
+        params![sha1, kind, side, match_policy, confidence],
+    )?;
+    Ok(())
+}
+
 /// Add or remove a mutual authored conflict between two mods (the launcher
 /// treats conflicts as bidirectional, so both directions are written).
 #[allow(clippy::too_many_arguments)]

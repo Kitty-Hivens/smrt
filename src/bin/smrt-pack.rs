@@ -188,6 +188,26 @@ enum RegistryCmd {
         #[arg(long)]
         remove: bool,
     },
+    /// Set (or --remove) an authored jar classification by sha1 -- the
+    /// debug escape hatch for a jar the classifier left undecided. Refused
+    /// for Modrinth-identified mods (their env flags are authoritative).
+    Classify {
+        #[arg(long, default_value = "/var/lib/smrt")]
+        storage: PathBuf,
+        #[arg(long)]
+        sha1: String,
+        /// mod | coremod | library
+        #[arg(long, default_value = "mod")]
+        kind: String,
+        /// client | server | both
+        #[arg(long)]
+        side: Option<String>,
+        /// must_match | tolerant
+        #[arg(long)]
+        policy: Option<String>,
+        #[arg(long)]
+        remove: bool,
+    },
     /// Snapshot the registry DB to a file (VACUUM INTO).
     Backup {
         #[arg(long, default_value = "/var/lib/smrt")]
@@ -292,6 +312,21 @@ async fn main() -> Result<()> {
                 b,
                 remove,
             } => run_registry_conflict(&storage, &a, &b, remove),
+            RegistryCmd::Classify {
+                storage,
+                sha1,
+                kind,
+                side,
+                policy,
+                remove,
+            } => run_registry_classify(
+                &storage,
+                &sha1,
+                &kind,
+                side.as_deref(),
+                policy.as_deref(),
+                remove,
+            ),
             RegistryCmd::Backup { storage, out } => run_registry_backup(&storage, &out),
         },
     }
@@ -348,6 +383,23 @@ fn run_registry_conflict(storage: &Path, a: &str, b: &str, remove: bool) -> Resu
     let registry = Registry::open(storage.join("registry.db"))?;
     registry.set_conflict(a, b, remove)?;
     info!(a, b, remove, "set authored conflict");
+    Ok(())
+}
+
+fn run_registry_classify(
+    storage: &Path,
+    sha1: &str,
+    kind: &str,
+    side: Option<&str>,
+    policy: Option<&str>,
+    remove: bool,
+) -> Result<()> {
+    let registry = Registry::open(storage.join("registry.db"))?;
+    registry.author_jar_class(sha1, kind, side, policy, remove)?;
+    info!(
+        sha1,
+        kind, side, policy, remove, "authored jar classification"
+    );
     Ok(())
 }
 
