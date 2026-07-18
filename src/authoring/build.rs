@@ -238,9 +238,11 @@ fn derive_required(
                 Some(SideClass::Client) if !m.required => Some(PresenceClass::OptionalClient),
                 Some(SideClass::Server) => Some(PresenceClass::OptionalServer),
                 _ if m.required => Some(PresenceClass::Required),
-                Some(SideClass::Both) if c.policy == Some(MatchPolicy::Tolerant) => {
-                    Some(PresenceClass::OptionalBoth)
-                }
+                // policy does not matter for an unlocked both-side mod: an
+                // opted-out must_match mod (a content mod the curator removed
+                // from the default set) is exactly as toggleable as a tolerant
+                // one -- must_match only drives the required seeding above
+                Some(SideClass::Both) => Some(PresenceClass::OptionalBoth),
                 _ => None,
             },
             None if m.required => Some(PresenceClass::Required),
@@ -532,7 +534,9 @@ mod tests {
     }
 
     // An opted-out must_match mod stays out: the curator removed it from the
-    // default server set, and forcing it back would erase the opt-out.
+    // default server set, and forcing it back would erase the opt-out. Its
+    // presence still reads optional_both -- policy only drives the seeding,
+    // not the chip.
     #[test]
     fn opted_out_must_match_mod_stays_optional() {
         let mut mods = vec![entry("lunary.jar", false, &[])];
@@ -543,6 +547,11 @@ mod tests {
         derive_required(&mut mods, &cl).unwrap();
         assert!(!mods[0].required);
         assert!(!mods[0].default_enabled);
+        assert_eq!(
+            mods[0].display.as_ref().and_then(|d| d.presence),
+            Some(PresenceClass::OptionalBoth),
+            "an opted-out content mod is still a classified both-side toggle"
+        );
     }
 
     // A server-side mod is never required for the client and ships opted out,
