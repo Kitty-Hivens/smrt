@@ -131,22 +131,32 @@ jobs:
           printf '%s\n' "${{ secrets.SMRT_DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      - name: scp binary -> VPS
+      - name: scp binaries -> VPS
         # SMRT_DEPLOY_HOST is `user@host[:port]`. Kept as a secret
         # not because the host is sensitive (it isn't -- public DNS)
         # but because secret-ifying it lets the operator rotate to a
         # different deploy host without touching this file.
+        #
+        # smrt-pack ships alongside the service binary: it opens the
+        # same registry.db, so letting it drift behind the schema
+        # migrations the service applies would leave the on-box CLI
+        # silently incompatible with its own database.
         run: |
           scp -o ServerAliveInterval=10 \
               target/release/smrt \
               "${{ secrets.SMRT_DEPLOY_HOST }}:/usr/local/bin/smrt.new"
+          scp -o ServerAliveInterval=10 \
+              target/release/smrt-pack \
+              "${{ secrets.SMRT_DEPLOY_HOST }}:/usr/local/bin/smrt-pack.new"
 
-      - name: swap binary + restart service + verify
+      - name: swap binaries + restart service + verify
         run: |
           ssh "${{ secrets.SMRT_DEPLOY_HOST }}" 'bash -se' <<'REMOTE'
             set -euo pipefail
             mv /usr/local/bin/smrt.new /usr/local/bin/smrt
             chmod +x /usr/local/bin/smrt
+            mv /usr/local/bin/smrt-pack.new /usr/local/bin/smrt-pack
+            chmod +x /usr/local/bin/smrt-pack
             systemctl restart smrt
             sleep 2
             systemctl status smrt --no-pager -l | head -20
@@ -167,12 +177,10 @@ jobs:
             exit 1
           REMOTE
 
-      - name: smrt-pack artifact (build only -- not deployed)
-        # The smrt-pack binary is curator-side tooling that runs from
-        # the local dev / VPS shell, not the always-on service. Keep
-        # the build as a downloadable artifact for the operator to
-        # grab when needed, but do not push it as part of the deploy
-        # step (no service depends on a newer smrt-pack to start).
+      - name: smrt-pack artifact
+        # Also kept as a downloadable artifact so the operator can
+        # grab a matching smrt-pack for a local machine without
+        # building from source.
         uses: actions/upload-artifact@v4
         with:
           name: smrt-pack-${{ github.sha }}
