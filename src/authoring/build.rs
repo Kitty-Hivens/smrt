@@ -9,6 +9,7 @@ use crate::domain::{
     PackSummary, SCHEMA_VERSION,
 };
 use anyhow::{Result, bail};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tracing::info;
 
@@ -44,6 +45,7 @@ pub async fn build_manifest(
         mod_entries.push(resolve_mod(m, storage, mirror_base, &modrinth, &modrinth_cache).await?);
     }
     mod_entries.sort_by(|a, b| a.filename.cmp(&b.filename));
+    derive_required(&mut mod_entries);
 
     let mut asset_entries = Vec::with_capacity(cfg.assets.len());
     for a in &cfg.assets {
@@ -82,6 +84,45 @@ pub async fn build_manifest(
         mods: mod_entries,
         assets: asset_entries,
     })
+}
+
+/// Mark every mod a present mod hard-depends on as required, seeded from the
+/// default-enabled mods. Required is a property of the dependency graph, never
+/// hand-set: a top-level mod nothing depends on stays optional (toggleable), and
+/// its transitive hard dependencies are locked required. Reads the inferred
+/// `display.requires` graph the enrichment pass already filled.
+fn derive_required(mods: &mut [ModEntry]) {
+    let idx: HashMap<String, usize> = mods
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (m.filename.clone(), i))
+        .collect();
+    let hard_deps = |m: &ModEntry| -> Vec<usize> {
+        m.display
+            .as_ref()
+            .map(|d| {
+                d.requires
+                    .iter()
+                    .filter(|r| !r.optional)
+                    .filter_map(|r| idx.get(&r.filename).copied())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut required: HashSet<usize> = HashSet::new();
+    let mut queue: Vec<usize> = mods
+        .iter()
+        .filter(|m| m.default_enabled)
+        .flat_map(&hard_deps)
+        .collect();
+    while let Some(i) = queue.pop() {
+        if required.insert(i) {
+            queue.extend(hard_deps(&mods[i]));
+        }
+    }
+    for (i, m) in mods.iter_mut().enumerate() {
+        m.required = required.contains(&i);
+    }
 }
 
 /// Content fingerprint of a build: a sha1 over exactly what lands in an

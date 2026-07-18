@@ -3,7 +3,6 @@ import type { ActiveConflict } from "./ActiveConflict";
 import type { CapabilityOverlap } from "./CapabilityOverlap";
 import type { LoaderMismatch } from "./LoaderMismatch";
 import type { MissingDep } from "./MissingDep";
-import type { RequiredHint } from "./RequiredHint";
 import type { VersionIssue } from "./VersionIssue";
 
 /**
@@ -43,11 +42,6 @@ overlaps: Array<CapabilityOverlap>,
  * declared window.
  */
 version_issues: Array<VersionIssue>, 
-/**
- * A present mod that another present mod requires but that the pack marks
- * optional -- it should be required.
- */
-required_hints: Array<RequiredHint>, 
 /**
  * Declared artifacts this pack's loader cannot run, with nothing present to
  * bridge them -- they will not load at all (#50).

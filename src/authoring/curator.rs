@@ -532,58 +532,6 @@ pub fn infer_requires_from_mcmod_info(
     Ok(report)
 }
 
-/// Mark every mod a required mod hard-depends on as required too, following the
-/// inferred `display.requires` edges transitively. A dependency of a required mod
-/// must ship, so the operator marks only the top-level mods and the build derives
-/// the rest instead of re-ticking "required" by hand (#6). Runs on the build's
-/// transient config, so the saved config keeps the operator's manual flags.
-/// Returns how many mods it promoted.
-pub fn promote_required_dependencies(config: &mut PackConfig) -> usize {
-    let idx: HashMap<String, usize> = config
-        .mods
-        .iter()
-        .enumerate()
-        .map(|(i, m)| (m.filename.clone(), i))
-        .collect();
-    let mut required: std::collections::HashSet<usize> = config
-        .mods
-        .iter()
-        .enumerate()
-        .filter(|(_, m)| m.required)
-        .map(|(i, _)| i)
-        .collect();
-    let mut queue: Vec<usize> = required.iter().copied().collect();
-    while let Some(i) = queue.pop() {
-        // only hard requirements pull a mod in; an optional edge does not make its
-        // target required
-        let deps: Vec<usize> = config.mods[i]
-            .display
-            .as_ref()
-            .map(|d| {
-                d.requires
-                    .iter()
-                    .filter(|r| !r.optional)
-                    .filter_map(|r| idx.get(&r.filename).copied())
-                    .collect()
-            })
-            .unwrap_or_default();
-        for j in deps {
-            if required.insert(j) {
-                queue.push(j);
-            }
-        }
-    }
-    let mut promoted = 0;
-    for (i, m) in config.mods.iter_mut().enumerate() {
-        if required.contains(&i) && !m.required {
-            m.required = true;
-            m.default_enabled = true;
-            promoted += 1;
-        }
-    }
-    promoted
-}
-
 // ── helpers ───────────────────────────────────────────────────────────────
 
 fn default_display() -> Display {
@@ -650,51 +598,6 @@ mod tests {
     }
 
     #[test]
-    fn promote_required_pulls_in_hard_dependencies() {
-        let mut cfg = empty_config();
-        // core.jar is required and hard-requires lib.jar (marked optional). util.jar
-        // is an unrelated optional and must stay optional.
-        cfg.mods.push(DeclaredMod {
-            filename: "core.jar".into(),
-            required: true,
-            default_enabled: true,
-            source: SourceDecl::SmrtCache {
-                sha1: "a".repeat(40),
-            },
-            display: Some(Display {
-                requires: vec![Requirement {
-                    filename: "lib.jar".into(),
-                    version_range: None,
-                    optional: false,
-                }],
-                ..default_display()
-            }),
-            slug: None,
-        });
-        for (name, sha) in [("lib.jar", "b"), ("util.jar", "c")] {
-            cfg.mods.push(DeclaredMod {
-                filename: name.into(),
-                required: false,
-                default_enabled: false,
-                source: SourceDecl::SmrtCache {
-                    sha1: sha.repeat(40),
-                },
-                display: None,
-                slug: None,
-            });
-        }
-
-        assert_eq!(promote_required_dependencies(&mut cfg), 1);
-        let lib = cfg.mods.iter().find(|m| m.filename == "lib.jar").unwrap();
-        assert!(
-            lib.required && lib.default_enabled,
-            "a required mod's hard dep is promoted"
-        );
-        let util = cfg.mods.iter().find(|m| m.filename == "util.jar").unwrap();
-        assert!(!util.required, "an unrelated optional stays optional");
-    }
-
-    #[test]
     fn read_mcmod_info_handles_array_form() {
         // Standard form from 99% of 1.12.2 mods.
         let bytes = build_jar_bytes(
@@ -755,7 +658,6 @@ mod tests {
         let mut cfg = empty_config();
         cfg.mods.push(DeclaredMod {
             filename: "X.jar".into(),
-            required: true,
             default_enabled: true,
             source: SourceDecl::SmrtCache { sha1: sha.clone() },
             display: Some(Display {
@@ -786,7 +688,6 @@ mod tests {
         for fname in ["JEI.jar", "Xaero.jar", "AlreadyHasRole.jar"] {
             cfg.mods.push(DeclaredMod {
                 filename: fname.into(),
-                required: true,
                 default_enabled: true,
                 source: SourceDecl::SmrtCache {
                     sha1: "a".repeat(40),
@@ -851,7 +752,6 @@ mod tests {
         let mut cfg = empty_config();
         cfg.mods.push(DeclaredMod {
             filename: "JEI.jar".into(),
-            required: true,
             default_enabled: true,
             source: SourceDecl::SmrtCache { sha1: sha_jei },
             display: None,
@@ -859,7 +759,6 @@ mod tests {
         });
         cfg.mods.push(DeclaredMod {
             filename: "JEIAddon.jar".into(),
-            required: true,
             default_enabled: true,
             source: SourceDecl::SmrtCache { sha1: sha_addon },
             display: None,
@@ -887,7 +786,6 @@ mod tests {
         let mut cfg = empty_config();
         cfg.mods.push(DeclaredMod {
             filename: "Lonely.jar".into(),
-            required: true,
             default_enabled: true,
             source: SourceDecl::SmrtCache { sha1: sha },
             display: None,

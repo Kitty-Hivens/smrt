@@ -426,7 +426,6 @@
           ...cfg.mods,
           {
             filename: file.name,
-            required: true,
             default_enabled: true,
             source: { type: 'smrt_cache', sha1 },
           },
@@ -452,7 +451,6 @@
   type MirrorSel = {
     filename: string;
     source: SourceDecl;
-    required?: boolean;
     default_enabled?: boolean;
   };
 
@@ -466,7 +464,6 @@
       ...cfg.mods,
       {
         filename: sel.filename,
-        required: sel.required ?? true,
         default_enabled: sel.default_enabled ?? true,
         source: sel.source,
       },
@@ -522,7 +519,6 @@
         ...cfg.mods,
         {
           filename: `${sel.slug}.jar`,
-          required: true,
           default_enabled: true,
           source: { type: 'modrinth', project_id: sel.project_id, version_id: sel.version_id },
         },
@@ -762,7 +758,6 @@
                     <input class="mono" bind:value={m.source.rel_path} placeholder="rel_path" />
                   {/if}
                 </div>
-                <label class="ck" title={t('pe.reqHint')}><input type="checkbox" bind:checked={m.required} /> {t('pe.req')}</label>
                 <label class="ck" title={t('pe.defHint')}><input type="checkbox" bind:checked={m.default_enabled} /> {t('pe.def')}</label>
                 <input class="slug mono" bind:value={m.slug} placeholder={t('pe.slug')} title={t('pe.slugHint')} />
                 <button class="danger sm del" onclick={() => removeMod(i)} aria-label={t('common.delete')}>x</button>
@@ -991,7 +986,7 @@
   }
   .modrow {
     display: grid;
-    grid-template-columns: 24px minmax(120px, 1.4fr) 96px minmax(120px, 1.2fr) auto auto minmax(90px, 1fr) 30px;
+    grid-template-columns: 24px minmax(120px, 1.4fr) 96px minmax(120px, 1.2fr) auto minmax(90px, 1fr) 30px;
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-2);

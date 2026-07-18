@@ -202,10 +202,9 @@ pub struct PackMeta {
 #[ts(export, export_to = "bindings/")]
 pub struct DeclaredMod {
     pub filename: String,
-    #[serde(default = "default_true")]
-    pub required: bool,
-    /// Install-time default for an optional mod; the curator's default-off list
-    /// flips it. Carried into the emitted ModEntry.
+    /// Install-time default: whether the mod ships enabled. Every mod is toggleable
+    /// -- there is no hand-set "required" flag. A mod another present mod hard-depends
+    /// on is marked required on the emitted ModEntry automatically at build time.
     #[serde(default = "default_true")]
     pub default_enabled: bool,
     pub source: SourceDecl,

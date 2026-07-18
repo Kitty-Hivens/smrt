@@ -2,10 +2,11 @@
 import type { Display } from "./Display";
 import type { SourceDecl } from "./SourceDecl";
 
-export type DeclaredMod = { filename: string, required: boolean, 
+export type DeclaredMod = { filename: string, 
 /**
- * Install-time default for an optional mod; the curator's default-off list
- * flips it. Carried into the emitted ModEntry.
+ * Install-time default: whether the mod ships enabled. Every mod is toggleable
+ * -- there is no hand-set "required" flag. A mod another present mod hard-depends
+ * on is marked required on the emitted ModEntry automatically at build time.
  */
 default_enabled: boolean, source: SourceDecl, display?: Display, 
 /**

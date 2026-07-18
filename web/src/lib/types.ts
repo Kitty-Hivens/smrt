@@ -49,7 +49,6 @@ export type { MissingDep } from './bindings/MissingDep';
 export type { ActiveConflict } from './bindings/ActiveConflict';
 export type { CapabilityOverlap } from './bindings/CapabilityOverlap';
 export type { VersionIssue } from './bindings/VersionIssue';
-export type { RequiredHint } from './bindings/RequiredHint';
 
 // accounts (users + roles)
 export type { UserRow } from './bindings/UserRow';

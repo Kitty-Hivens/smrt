@@ -153,7 +153,6 @@ export const en = {
   'resolve.conflicts': '{n} conflicts',
   'resolve.versionIssues': '{n} version',
   'resolve.overlaps': '{n} overlap',
-  'resolve.hints': '{n} hint',
   'resolve.unresolved': '{n} unresolved',
   'resolve.clean': 'no problems',
   'resolve.missingH': 'Missing hard dependency (the pack would crash)',
@@ -163,7 +162,6 @@ export const en = {
   'resolve.ifEnabled': 'only if both enabled',
   'resolve.versionIssuesH': 'Version outside a declared window',
   'resolve.overlapsH': 'Capability provided by more than one mod',
-  'resolve.hintsH': 'Depended-on but marked optional (should be required)',
   'resolve.unresolvedH': 'No registry identity yet (not judged)',
   'resolve.neededBy': 'needed by {who}',
   'resolve.ships': 'ships {v}, needs',
@@ -183,7 +181,6 @@ export const en = {
   'pe.unset': 'not set',
   'pe.req': 'req',
   'pe.def': 'def',
-  'pe.reqHint': 'Required: always installed, the player cannot turn it off',
   'pe.defHint': 'Default on/off for an optional mod; ignored when required',
   'pe.slug': 'slug',
   'pe.slugHint':

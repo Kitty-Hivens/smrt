@@ -2,13 +2,12 @@
 //! mods and report the problems a build would otherwise only surface at crash
 //! time -- an unmet hard dependency, an active conflict, a same-capability
 //! overlap, or a present dependency whose version falls outside the window a
-//! requirer declared. It also hints which declared mods are depended-on (so they
-//! should stay required).
+//! requirer declared.
 //!
 //! Pure over a `&Connection` (the handler runs it inside `spawn_blocking` via
-//! `Registry::with_conn`). It never mutates the config: required/optional stays
-//! the pack's own decision, and any override of a derived edge is debug-gated
-//! elsewhere. When it cannot decide something confidently -- a mod with no
+//! `Registry::with_conn`). It never mutates the config; a mod's required-ness is
+//! derived from the dependency graph at build time, not set here. When it cannot
+//! decide something confidently -- a mod with no
 //! registry identity, a version string it cannot compare against a window -- it
 //! reports that as unresolved/unchecked rather than guess, so a flagged problem
 //! is a real one.
@@ -55,9 +54,6 @@ pub struct ResolveReport {
     /// A present dependency whose shipped version sits outside a requirer's
     /// declared window.
     pub version_issues: Vec<VersionIssue>,
-    /// A present mod that another present mod requires but that the pack marks
-    /// optional -- it should be required.
-    pub required_hints: Vec<RequiredHint>,
     /// Declared artifacts this pack's loader cannot run, with nothing present to
     /// bridge them -- they will not load at all (#50).
     pub loader_mismatch: Vec<LoaderMismatch>,
@@ -143,17 +139,6 @@ pub struct LoaderMismatch {
     pub bridged_by: Option<String>,
 }
 
-/// A present mod that is depended-on but marked optional.
-#[derive(Debug, Clone, Serialize, TS)]
-#[ts(export, export_to = "bindings/")]
-pub struct RequiredHint {
-    pub filename: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub modid: Option<String>,
-    pub needed_by: Vec<String>,
-}
-
 /// A dependency on the loader itself (Forge/FML, NeoForge, Fabric, ...), which is
 /// always present, so it is not a missing mod however the jar spells it -- Forge
 /// mods variously require `forge`, `MinecraftForge`, `mod_MinecraftForge` or
@@ -184,10 +169,9 @@ fn is_loader_dep(target: &str) -> bool {
 /// A declared jar mod placed on the graph.
 struct Present {
     filename: String,
-    required: bool,
-    /// Ships enabled unless the operator opted it out. With `required`, this says
-    /// whether the mod is in the default install -- a conflict only bites when
-    /// both sides actually run (#9).
+    /// Ships enabled unless the operator opted it out. Every mod is toggleable
+    /// (there is no hand-set required flag), so this alone decides the default
+    /// install -- a conflict only bites when both sides actually run (#9).
     default_enabled: bool,
     mod_id: i64,
     version: Option<String>,
@@ -240,7 +224,6 @@ fn place_mods(conn: &Connection, cfg: &PackConfig) -> Result<PlacedMods> {
         };
         present.push(Present {
             filename: m.filename.clone(),
-            required: m.required,
             default_enabled: m.default_enabled,
             mod_id,
             version,
@@ -335,8 +318,6 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
     let mut provides: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut version_issues: Vec<VersionIssue> = Vec::new();
     let mut unchecked = 0usize;
-    // depended-on present index -> the requirers, to hint required=false mistakes
-    let mut depended_on: HashMap<usize, BTreeSet<String>> = HashMap::new();
 
     for (ai, a) in present.iter().enumerate() {
         // Scoped to the artifact the pack actually ships, plus the mod-level facts
@@ -358,10 +339,6 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
                         .and_then(|id| by_mod_id.get(&id).copied());
                     match tgt_present {
                         Some(bi) => {
-                            depended_on
-                                .entry(bi)
-                                .or_default()
-                                .insert(a.filename.clone());
                             if let Some(range) = e.version_range.as_deref() {
                                 let b = &present[bi];
                                 match b
@@ -422,11 +399,10 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
                                 source: e.source.as_str().to_string(),
                             };
                             // Both in the default install -> a live conflict; an
-                            // opted-out optional on either side makes it advisory,
-                            // firing only if the user enables that mod (#9).
+                            // opted-out mod on either side makes it advisory, firing
+                            // only if the user enables that mod (#9).
                             let b = &present[bi];
-                            let both_on = (a.required || a.default_enabled)
-                                && (b.required || b.default_enabled);
+                            let both_on = a.default_enabled && b.default_enabled;
                             if both_on {
                                 conflicts.push(c);
                             } else {
@@ -505,21 +481,6 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
         })
         .collect();
 
-    let mut required_hints: Vec<RequiredHint> = depended_on
-        .into_iter()
-        .filter_map(|(bi, reqs)| {
-            let p = &present[bi];
-            if p.required {
-                return None;
-            }
-            Some(RequiredHint {
-                filename: p.filename.clone(),
-                modid: queries::modid_for_mod(conn, p.mod_id).ok().flatten(),
-                needed_by: reqs.into_iter().collect(),
-            })
-        })
-        .collect();
-
     let mut missing: Vec<MissingDep> = missing
         .into_values()
         .map(|mut d| {
@@ -531,7 +492,6 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
     conflicts.sort_by(|x, y| (&x.a, &x.b).cmp(&(&y.a, &y.b)));
     optional_conflicts.sort_by(|x, y| (&x.a, &x.b).cmp(&(&y.a, &y.b)));
     version_issues.sort_by(|x, y| (&x.filename, &x.target).cmp(&(&y.filename, &y.target)));
-    required_hints.sort_by(|x, y| x.filename.cmp(&y.filename));
     unresolved.sort();
     unresolved.dedup();
 
@@ -545,7 +505,6 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
         optional_conflicts,
         overlaps,
         version_issues,
-        required_hints,
         loader_mismatch,
         loader_bridged,
         unresolved,
@@ -562,11 +521,14 @@ mod tests {
 
     const NOW: &str = "2026-07-15T00:00:00Z";
 
-    fn declared(filename: &str, required: bool, source: SourceDecl) -> crate::domain::DeclaredMod {
+    fn declared(
+        filename: &str,
+        default_enabled: bool,
+        source: SourceDecl,
+    ) -> crate::domain::DeclaredMod {
         crate::domain::DeclaredMod {
             filename: filename.to_string(),
-            required,
-            default_enabled: true,
+            default_enabled,
             source,
             display: None::<Display>,
             slug: None,
@@ -975,7 +937,6 @@ mod tests {
         // the user turns it on, so it is advisory, not a blocking conflict (#9).
         let b_off = crate::domain::DeclaredMod {
             filename: "b.jar".into(),
-            required: false,
             default_enabled: false,
             source: cache(&"e".repeat(40)),
             display: None::<Display>,
@@ -1079,42 +1040,6 @@ mod tests {
             "capability satisfies requires: {:?}",
             rep.missing
         );
-    }
-
-    #[test]
-    fn required_hint_when_depended_on_but_optional() {
-        use crate::registry::model::Source;
-        let r = Registry::open_in_memory().unwrap();
-        let stuff = add_mod(&r, "ae2stuff", "0.7", &"7".repeat(40));
-        add_mod(&r, "appliedenergistics2", "0.44", &"8".repeat(40));
-        relate(
-            &r,
-            stuff,
-            "appliedenergistics2",
-            None,
-            RelKind::Requires,
-            Source::Inferred,
-        );
-
-        // AE2 present but marked optional -> hint to make it required
-        let rep = r
-            .with_conn(|c| {
-                resolve_pack(
-                    c,
-                    &config(vec![
-                        declared("ae2stuff.jar", true, cache(&"7".repeat(40))),
-                        declared("ae2.jar", false, cache(&"8".repeat(40))),
-                    ]),
-                )
-            })
-            .unwrap();
-        assert_eq!(rep.required_hints.len(), 1);
-        assert_eq!(rep.required_hints[0].filename, "ae2.jar");
-        assert_eq!(
-            rep.required_hints[0].modid.as_deref(),
-            Some("appliedenergistics2")
-        );
-        assert_eq!(rep.required_hints[0].needed_by, vec!["ae2stuff.jar"]);
     }
 
     #[test]

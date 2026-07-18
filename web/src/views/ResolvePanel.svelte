@@ -10,7 +10,6 @@
       report.conflicts.length === 0 &&
       report.version_issues.length === 0 &&
       report.overlaps.length === 0 &&
-      report.required_hints.length === 0 &&
       report.loader_mismatch.length === 0 &&
       report.unresolved.length === 0,
   );
@@ -26,7 +25,6 @@
     {#if report.overlaps.length}<span class="pill warn">{t('resolve.overlaps', { n: report.overlaps.length })}</span>{/if}
     {#if report.loader_mismatch.length}<span class="pill danger">{t('resolve.loaderMismatch', { n: report.loader_mismatch.length })}</span>{/if}
     {#if report.loader_bridged.length}<span class="pill faint">{t('resolve.loaderBridged', { n: report.loader_bridged.length })}</span>{/if}
-    {#if report.required_hints.length}<span class="pill info">{t('resolve.hints', { n: report.required_hints.length })}</span>{/if}
     {#if report.unresolved.length}<span class="pill faint">{t('resolve.unresolved', { n: report.unresolved.length })}</span>{/if}
     {#if clean}<span class="pill ok">{t('resolve.clean')}</span>{/if}
   </div>
@@ -124,19 +122,6 @@
     </div>
   {/if}
 
-  {#if report.required_hints.length}
-    <div class="rlist">
-      <div class="rl-h info">{t('resolve.hintsH')}</div>
-      {#each report.required_hints as h}
-        <div class="rl-row">
-          <span class="mono strong">{h.filename}</span>
-          {#if h.modid}<span class="mono faint">{h.modid}</span>{/if}
-          <span class="faint">{t('resolve.neededBy', { who: h.needed_by.join(', ') })}</span>
-        </div>
-      {/each}
-    </div>
-  {/if}
-
   {#if report.unresolved.length}
     <div class="rlist">
       <div class="rl-h faint">{t('resolve.unresolvedH')}</div>
@@ -180,10 +165,6 @@
     border-color: color-mix(in srgb, var(--warn) 40%, transparent);
     background: var(--warn-soft);
   }
-  .pill.info {
-    color: var(--info);
-    border-color: color-mix(in srgb, var(--info) 40%, transparent);
-  }
   .pill.ok {
     color: var(--ok);
     border-color: color-mix(in srgb, var(--ok) 40%, transparent);
@@ -205,9 +186,6 @@
   }
   .rl-h.warn {
     color: var(--warn);
-  }
-  .rl-h.info {
-    color: var(--info);
   }
   .rl-h.faint {
     color: var(--fg-dim);

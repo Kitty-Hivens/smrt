@@ -41,7 +41,6 @@ pub fn reconstruct_config(manifest: &PackManifest, summary: &PackSummary) -> Pac
 fn reconstruct_mod(m: &ModEntry) -> DeclaredMod {
     DeclaredMod {
         filename: m.filename.clone(),
-        required: m.required,
         default_enabled: m.default_enabled,
         source: source_decl(&m.source, &m.sha1),
         display: m.display.clone(),

@@ -152,7 +152,6 @@ export const ru: Dict = {
   'resolve.conflicts': 'конфликтов: {n}',
   'resolve.versionIssues': 'версий: {n}',
   'resolve.overlaps': 'пересечений: {n}',
-  'resolve.hints': 'подсказок: {n}',
   'resolve.unresolved': 'без опознания: {n}',
   'resolve.clean': 'проблем нет',
   'resolve.missingH': 'Нет обязательной зависимости (сборка упадёт)',
@@ -162,7 +161,6 @@ export const ru: Dict = {
   'resolve.ifEnabled': 'только если оба включены',
   'resolve.versionIssuesH': 'Версия вне заявленного окна',
   'resolve.overlapsH': 'Возможность даёт больше одного мода',
-  'resolve.hintsH': 'От него зависят, но помечен опциональным (нужно обязательным)',
   'resolve.unresolvedH': 'Пока нет опознания в реестре (не проверялось)',
   'resolve.neededBy': 'нужен для {who}',
   'resolve.ships': 'несёт {v}, требуется',
@@ -182,7 +180,6 @@ export const ru: Dict = {
   'pe.unset': 'не задан',
   'pe.req': 'обяз',
   'pe.def': 'по умолч',
-  'pe.reqHint': 'Обязательный: ставится всегда, игрок не отключит',
   'pe.defHint': 'Вкл/выкл по умолчанию для опционального; у обязательного игнорируется',
   'pe.slug': 'slug',
   'pe.slugHint':

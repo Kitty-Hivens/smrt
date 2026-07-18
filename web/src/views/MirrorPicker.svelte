@@ -181,7 +181,6 @@
   const selOf = (m: BuildModRow, source: SourceDecl): Sel => ({
     filename: m.filename,
     source,
-    required: m.required,
     default_enabled: m.default_enabled,
   });
 

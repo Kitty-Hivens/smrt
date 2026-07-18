@@ -77,7 +77,6 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
                 if mc_ok && loader_ok {
                     DeclaredMod {
                         filename: m.filename.clone(),
-                        required: true,
                         default_enabled: true,
                         source: SourceDecl::Modrinth {
                             project_id: hit.project_id.clone(),
@@ -90,7 +89,6 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
                     write_to_cache(&storage, &m.sha1, &m.bytes)?;
                     DeclaredMod {
                         filename: m.filename.clone(),
-                        required: true,
                         default_enabled: true,
                         source: SourceDecl::SmrtCache {
                             sha1: m.sha1.clone(),
@@ -103,7 +101,6 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
                 write_to_cache(&storage, &m.sha1, &m.bytes)?;
                 DeclaredMod {
                     filename: m.filename.clone(),
-                    required: true,
                     default_enabled: true,
                     source: SourceDecl::SmrtCache {
                         sha1: m.sha1.clone(),

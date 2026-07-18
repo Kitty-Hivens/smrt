@@ -106,7 +106,9 @@ pub(super) async fn resolve_mod(
         filename: decl.filename.clone(),
         sha1,
         size_bytes,
-        required: decl.required,
+        // required is derived from the dependency graph at build time (a mod another
+        // present mod hard-depends on), never hand-set -- start it false here.
+        required: false,
         default_enabled: decl.default_enabled,
         source,
         display: decl.display.clone(),
