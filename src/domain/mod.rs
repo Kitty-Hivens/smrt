@@ -5,9 +5,11 @@
 pub mod manifest;
 pub mod pack;
 pub mod server;
+pub mod side;
 pub mod version;
 
 pub use manifest::*;
 pub use pack::*;
 pub use server::*;
+pub use side::*;
 pub use version::*;

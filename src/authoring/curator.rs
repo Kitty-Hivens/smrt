@@ -535,17 +535,7 @@ pub fn infer_requires_from_mcmod_info(
 // ── helpers ───────────────────────────────────────────────────────────────
 
 fn default_display() -> Display {
-    Display {
-        name: None,
-        description: None,
-        category: None,
-        incompatible_with: Vec::new(),
-        license: None,
-        url: None,
-        icon_url: None,
-        role: None,
-        requires: Vec::new(),
-    }
+    Display::default()
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────
@@ -662,14 +652,7 @@ mod tests {
             source: SourceDecl::SmrtCache { sha1: sha.clone() },
             display: Some(Display {
                 name: Some("CuratorName".into()), // existing -- must win
-                description: None,
-                category: None,
-                incompatible_with: Vec::new(),
-                license: None,
-                url: None,
-                icon_url: None,
-                role: None,
-                requires: Vec::new(),
+                ..Display::default()
             }),
             slug: None,
         });
@@ -695,14 +678,7 @@ mod tests {
                 display: if fname == "AlreadyHasRole.jar" {
                     Some(Display {
                         role: Some("custom".into()),
-                        name: None,
-                        description: None,
-                        category: None,
-                        incompatible_with: Vec::new(),
-                        license: None,
-                        url: None,
-                        icon_url: None,
-                        requires: Vec::new(),
+                        ..Display::default()
                     })
                 } else {
                     None

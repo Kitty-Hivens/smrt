@@ -2,6 +2,7 @@
 //! reproduce a pack. Pure data; serialization shape is the public contract
 //! shared with the launcher's `SmrtPackManifest`.
 
+use super::side::PresenceClass;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -149,6 +150,15 @@ pub struct Display {
     /// surface as a warning rather than a hard failure.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<Requirement>,
+    /// Presence class of the entry in this pack (required / optional_client /
+    /// optional_server / optional_both / coremod), computed at build from the
+    /// side+policy classification and the dependency graph. Advisory like the
+    /// rest of the block: `ModEntry.required` stays the enforcing flag, and the
+    /// two are consistent by construction. Absent = unclassified (and on every
+    /// manifest built before the field landed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub presence: Option<PresenceClass>,
 }
 
 /// Single edge in a mod's dependency DAG. [filename] must match a
@@ -307,20 +317,26 @@ mod tests {
         // comparisons in client-side change detection.
         let d = Display {
             name: Some("X".into()),
-            description: None,
-            category: None,
-            incompatible_with: vec![],
-            license: None,
-            url: None,
-            icon_url: None,
-            role: None,
-            requires: vec![],
+            ..Display::default()
         };
         let s = serde_json::to_string(&d).unwrap();
         assert!(
             !s.contains("requires"),
             "empty requires must not serialize: {s}"
         );
+        assert!(
+            !s.contains("presence"),
+            "absent presence must not serialize: {s}"
+        );
+    }
+
+    #[test]
+    fn display_presence_round_trips() {
+        let json = r#"{"name": "Sodium (fork)", "presence": "optional_client"}"#;
+        let d: Display = serde_json::from_str(json).unwrap();
+        assert_eq!(d.presence, Some(PresenceClass::OptionalClient));
+        let s = serde_json::to_string(&d).unwrap();
+        assert!(s.contains("\"presence\":\"optional_client\""), "got {s}");
     }
 
     #[test]
