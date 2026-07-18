@@ -69,6 +69,7 @@ const MIGRATIONS: &[(u32, Migration)] = &[
         15,
         Migration::Sql(include_str!("schema/0015_jar_class_source.sql")),
     ),
+    (16, Migration::Code(widen_release_channel_vocab)),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its
@@ -243,6 +244,69 @@ fn mod_version_has_target_column(conn: &Connection) -> Result<bool> {
         .query_map([], |r| r.get::<_, String>(1))?
         .collect::<rusqlite::Result<Vec<String>>>()?;
     Ok(names.iter().any(|name| name == "target"))
+}
+
+/// Migration 16: widen `mod_release.channel` to the Modrinth `version_type`
+/// vocabulary (release/beta/alpha/unknown), folding the legacy 'dev' value into
+/// 'alpha'. A CHECK constraint cannot be altered in SQLite, so the table is
+/// rebuilt (same procedure as 0004). Idempotent: a no-op once the constraint
+/// admits 'alpha'.
+fn widen_release_channel_vocab(conn: &mut Connection) -> Result<()> {
+    let table_sql: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'mod_release'",
+            [],
+            |r| r.get(0),
+        )
+        .context("0016: read mod_release definition")?;
+    if table_sql.contains("'alpha'") {
+        return Ok(()); // already the widened vocabulary
+    }
+    // Dropping mod_release would otherwise SET NULL every mod_version.release_id
+    // through the FK, so toggle enforcement off around the rebuild (SQLite's
+    // documented table-redefinition procedure; the FK references the table by
+    // name, so the rename makes it whole again).
+    conn.execute_batch("PRAGMA foreign_keys = OFF")
+        .context("0016: foreign_keys off")?;
+    let tx = conn.transaction().context("0016: begin rebuild")?;
+    tx.execute_batch(
+        "CREATE TABLE mod_release_new (
+           id             INTEGER PRIMARY KEY,
+           mod_id         INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,
+           version_number TEXT NOT NULL,
+           channel        TEXT NOT NULL DEFAULT 'unknown',
+           source         TEXT NOT NULL DEFAULT 'harvested',
+           confidence     INTEGER NOT NULL DEFAULT 10,
+           created_at     TEXT NOT NULL,
+           updated_at     TEXT NOT NULL,
+           CHECK (channel IN ('release','beta','alpha','unknown')),
+           CHECK (source IN ('harvested','jar-meta','modrinth','inferred','curator','authored'))
+         );
+         INSERT INTO mod_release_new
+           SELECT id, mod_id, version_number,
+                  CASE channel WHEN 'dev' THEN 'alpha' ELSE channel END,
+                  source, confidence, created_at, updated_at
+           FROM mod_release;
+         DROP TABLE mod_release;
+         ALTER TABLE mod_release_new RENAME TO mod_release;
+         CREATE INDEX idx_mod_release_mod ON mod_release(mod_id);
+         CREATE UNIQUE INDEX idx_mod_release_key
+           ON mod_release(mod_id, version_number, channel);",
+    )
+    .context("0016: rebuild mod_release")?;
+    tx.commit().context("0016: commit rebuild")?;
+    conn.execute_batch("PRAGMA foreign_keys = ON")
+        .context("0016: foreign_keys on")?;
+
+    // the rebuild must not have orphaned any foreign key
+    let violations: Option<String> = conn
+        .query_row("PRAGMA foreign_key_check(mod_release)", [], |r| r.get(2))
+        .optional()
+        .context("0016: foreign_key_check")?;
+    if let Some(v) = violations {
+        bail!("0016 left a foreign key violation: {v}");
+    }
+    Ok(())
 }
 
 /// Recorded schema version, or 0 on a fresh database (no `registry_meta` yet).
@@ -533,5 +597,63 @@ mod tests {
         // idempotent: a second run is a no-op
         drop_pack_provenance(&mut conn).unwrap();
         assert!(!pack_has_provenance_column(&conn).unwrap());
+    }
+
+    #[test]
+    fn widen_release_channel_folds_dev_and_admits_alpha() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE mods (id INTEGER PRIMARY KEY, created_at TEXT, updated_at TEXT);
+             CREATE TABLE mod_release (
+               id             INTEGER PRIMARY KEY,
+               mod_id         INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,
+               version_number TEXT NOT NULL,
+               channel        TEXT NOT NULL DEFAULT 'unknown',
+               source         TEXT NOT NULL DEFAULT 'harvested',
+               confidence     INTEGER NOT NULL DEFAULT 10,
+               created_at     TEXT NOT NULL,
+               updated_at     TEXT NOT NULL,
+               CHECK (channel IN ('release','beta','dev','unknown')),
+               CHECK (source IN ('harvested','jar-meta','modrinth','inferred','curator','authored'))
+             );
+             CREATE TABLE mod_version (
+               id INTEGER PRIMARY KEY,
+               release_id INTEGER REFERENCES mod_release(id) ON DELETE SET NULL
+             );
+             INSERT INTO mods (id) VALUES (1);
+             INSERT INTO mod_release (id, mod_id, version_number, channel, created_at, updated_at)
+               VALUES (7, 1, '2.3', 'dev', 'T', 'T');
+             INSERT INTO mod_version (id, release_id) VALUES (1, 7);",
+        )
+        .unwrap();
+
+        widen_release_channel_vocab(&mut conn).unwrap();
+
+        // 'dev' folded to 'alpha'; ids stable so the file link survives
+        let (ch, rid): (String, i64) = conn
+            .query_row(
+                "SELECT r.channel, v.release_id FROM mod_release r
+                 JOIN mod_version v ON v.release_id = r.id WHERE r.id = 7",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(ch, "alpha");
+        assert_eq!(rid, 7);
+
+        // the widened constraint admits 'alpha' inserts
+        conn.execute(
+            "INSERT INTO mod_release (mod_id, version_number, channel, created_at, updated_at)
+             VALUES (1, '3.0', 'alpha', 'T', 'T')",
+            [],
+        )
+        .unwrap();
+
+        // idempotent: a second run is a no-op
+        widen_release_channel_vocab(&mut conn).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM mod_release", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 2);
     }
 }

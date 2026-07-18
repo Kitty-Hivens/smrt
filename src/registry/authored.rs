@@ -8,7 +8,7 @@ use anyhow::{Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 
 /// The valid `mod_release.channel` values (mirrors the schema CHECK).
-pub const CHANNELS: &[&str] = &["release", "beta", "dev", "unknown"];
+pub const CHANNELS: &[&str] = &["release", "beta", "alpha", "unknown"];
 
 fn valid_channel(ch: &str) -> bool {
     CHANNELS.contains(&ch)
@@ -767,7 +767,7 @@ mod tests {
                         filename: Some("cool.jar"),
                         mod_ref: ModRef::New { name: "Cool Mod" },
                         version_number: "2.3",
-                        channel: "dev",
+                        channel: "alpha",
                         loaders: &["forge".to_string()],
                         mc_versions: &["1.7.10".to_string()],
                     },
@@ -792,7 +792,7 @@ mod tests {
             )?;
             assert_eq!(
                 (vn.as_str(), ch.as_str(), msrc.as_str()),
-                ("2.3", "dev", "authored")
+                ("2.3", "alpha", "authored")
             );
             let t: String = c.query_row(
                 "SELECT target FROM mod_version_target WHERE mod_version_id = ?1",

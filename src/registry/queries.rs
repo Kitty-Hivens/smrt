@@ -493,12 +493,12 @@ pub fn graph_node_for(conn: &Connection, id: i64) -> Result<GraphNode> {
 }
 
 /// Channel preference when picking which artifact represents a mod in a slice: a
-/// stable release outranks a prerelease, which outranks a dev build.
+/// stable release outranks a beta, which outranks an alpha.
 fn channel_rank(channel: &str) -> i32 {
     match channel {
         "release" => 3,
         "beta" => 2,
-        "dev" => 1,
+        "alpha" => 1,
         _ => 0,
     }
 }
