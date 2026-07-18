@@ -73,6 +73,29 @@ pub fn jar_class_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<JarCla
         .optional()?)
 }
 
+/// The content hash of a harvested artifact row.
+pub fn sha1_for_mod_version(conn: &Connection, mod_version_id: i64) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT sha1 FROM mod_version WHERE id = ?1",
+            params![mod_version_id],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
+/// The newest harvested artifact hash of a mod -- the classification key when a
+/// question is about the mod as a whole rather than one declared jar.
+pub fn newest_sha1_for_mod(conn: &Connection, mod_id: i64) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT sha1 FROM mod_version WHERE mod_id = ?1 ORDER BY id DESC LIMIT 1",
+            params![mod_id],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
 /// The `mod` row id owning the artifact with this sha1, if harvested.
 pub fn mod_id_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<i64>> {
     Ok(conn

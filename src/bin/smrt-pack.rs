@@ -406,7 +406,12 @@ async fn run_build(
     // from each cache jar's mcmod.info, then infer the requires graph.
     enrich_from_mcmod_info(&mut cfg, storage)?;
     infer_requires_from_mcmod_info(&mut cfg, storage)?;
-    let manifest = authoring::build_manifest(&cfg, storage, pack_version, mirror_base).await?;
+    // side/policy classification through the registry decision layer
+    let registry = Registry::open(storage.join("registry.db"))?;
+    let classifications = registry.with_conn(|c| authoring::resolve::classify_pack(c, &cfg))?;
+    let manifest =
+        authoring::build_manifest(&cfg, storage, pack_version, mirror_base, &classifications)
+            .await?;
     let summary = authoring::make_pack_summary(&cfg, &manifest.pack_version);
 
     let store = Storage::new(storage.to_path_buf());

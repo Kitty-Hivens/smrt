@@ -5,9 +5,10 @@
 use super::modrinth::Modrinth;
 use super::sources::{ModrinthCache, resolve_asset, resolve_mod, sha1_hex};
 use crate::domain::{
-    AssetEntry, JavaSpec, LoaderSpec, MinecraftSpec, ModEntry, PackConfig, PackManifest,
-    PackSummary, SCHEMA_VERSION,
+    AssetEntry, JavaSpec, LoaderSpec, MatchPolicy, MinecraftSpec, ModEntry, PackConfig,
+    PackManifest, PackSummary, SCHEMA_VERSION, SideClass,
 };
+use crate::registry::classify::Classification;
 use anyhow::{Result, bail};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -16,11 +17,14 @@ use tracing::info;
 /// Resolve every source in a `PackConfig` and assemble the wire manifest.
 /// Reads cache jars under `storage` and looks up Modrinth sources; does not
 /// write anything. `pack_version` defaults to today's UTC `YYYY.MM.DD` slug.
+/// `classifications` is the pack's side/policy map (`resolve::classify_pack`),
+/// keyed by filename; an absent entry reads as unclassified.
 pub async fn build_manifest(
     cfg: &PackConfig,
     storage: &Path,
     pack_version: Option<&str>,
     mirror_base: &str,
+    classifications: &HashMap<String, Classification>,
 ) -> Result<PackManifest> {
     let pack_version = match pack_version {
         Some(v) => {
@@ -45,7 +49,7 @@ pub async fn build_manifest(
         mod_entries.push(resolve_mod(m, storage, mirror_base, &modrinth, &modrinth_cache).await?);
     }
     mod_entries.sort_by(|a, b| a.filename.cmp(&b.filename));
-    derive_required(&mut mod_entries);
+    derive_required(&mut mod_entries, classifications)?;
 
     let mut asset_entries = Vec::with_capacity(cfg.assets.len());
     for a in &cfg.assets {
@@ -86,17 +90,49 @@ pub async fn build_manifest(
     })
 }
 
-/// Mark every mod a present mod hard-depends on as required, seeded from the
-/// default-enabled mods. Required is a property of the dependency graph, never
-/// hand-set: a top-level mod nothing depends on stays optional (toggleable), and
-/// its transitive hard dependencies are locked required. Reads the inferred
-/// `display.requires` graph the enrichment pass already filled.
-fn derive_required(mods: &mut [ModEntry]) {
+/// Derive each entry's required-ness from the side/policy classification plus
+/// the dependency graph, never a hand-set flag:
+///
+///   required = { default-enabled must_match mods }
+///            + their transitive hard dependencies
+///            + the transitive hard dependencies of every default-enabled mod
+///
+/// A default-enabled must_match mod (a content mod: the server carries it, so
+/// the client must too) is required in itself -- the top-level-content fix. An
+/// opted-out must_match mod stays out: the curator removed it from the default
+/// server set, and forcing it back would erase the opt-out.
+///
+/// Side invariants applied after the walk: a server-side mod is never required
+/// for the client and ships opted out (advisory in the resolve report, nothing
+/// is removed); a coremod/library jar is never required (always toggleable);
+/// and a client-side mod locked required is an error, not a manifest -- the
+/// mirror refuses to force-install client mods.
+fn derive_required(
+    mods: &mut [ModEntry],
+    classifications: &HashMap<String, Classification>,
+) -> Result<()> {
     let idx: HashMap<String, usize> = mods
         .iter()
         .enumerate()
         .map(|(i, m)| (m.filename.clone(), i))
         .collect();
+    let side = |m: &ModEntry| -> Option<SideClass> {
+        classifications.get(&m.filename).and_then(|c| c.side)
+    };
+    let non_mod = |m: &ModEntry| -> bool {
+        classifications
+            .get(&m.filename)
+            .is_some_and(|c| c.is_non_mod())
+    };
+
+    // Server-side mods leave the default install before anything is seeded, so
+    // their own dependencies are not pulled in on their account.
+    for m in mods.iter_mut() {
+        if side(m) == Some(SideClass::Server) {
+            m.default_enabled = false;
+        }
+    }
+
     let hard_deps = |m: &ModEntry| -> Vec<usize> {
         m.display
             .as_ref()
@@ -109,20 +145,72 @@ fn derive_required(mods: &mut [ModEntry]) {
             })
             .unwrap_or_default()
     };
-    let mut required: HashSet<usize> = HashSet::new();
+    let mut required: HashSet<usize> = mods
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| {
+            m.default_enabled
+                && !non_mod(m)
+                && classifications
+                    .get(&m.filename)
+                    .is_some_and(|c| c.policy == Some(MatchPolicy::MustMatch))
+        })
+        .map(|(i, _)| i)
+        .collect();
     let mut queue: Vec<usize> = mods
         .iter()
-        .filter(|m| m.default_enabled)
-        .flat_map(&hard_deps)
+        .enumerate()
+        .filter(|(i, m)| m.default_enabled || required.contains(i))
+        .flat_map(|(_, m)| hard_deps(m))
         .collect();
     while let Some(i) = queue.pop() {
         if required.insert(i) {
             queue.extend(hard_deps(&mods[i]));
         }
     }
+
+    for (i, m) in mods.iter().enumerate() {
+        if !required.contains(&i) {
+            continue;
+        }
+        // never required: server-side mods (not the client's problem) and
+        // not-a-mod jars (always toggleable)
+        if side(m) == Some(SideClass::Server) || non_mod(m) {
+            required.remove(&i);
+            continue;
+        }
+        // The client invariant. Inferred edges were downgraded before the
+        // graph was written, so reaching here means a DECLARED hard edge (or a
+        // must_match verdict) on a client-side mod -- bad data the curator
+        // must fix; shipping it would force-install a client mod.
+        if side(m) == Some(SideClass::Client) {
+            let drivers: Vec<&str> = mods
+                .iter()
+                .filter(|o| {
+                    o.display.as_ref().is_some_and(|d| {
+                        d.requires
+                            .iter()
+                            .any(|r| !r.optional && r.filename == m.filename)
+                    })
+                })
+                .map(|o| o.filename.as_str())
+                .collect();
+            bail!(
+                "client-side mod {} would be locked required{} -- a client mod is never force-installed; fix the dependency data or the mod's classification",
+                m.filename,
+                if drivers.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (hard-required by {})", drivers.join(", "))
+                }
+            );
+        }
+    }
+
     for (i, m) in mods.iter_mut().enumerate() {
         m.required = required.contains(&i);
     }
+    Ok(())
 }
 
 /// Content fingerprint of a build: a sha1 over exactly what lands in an
@@ -308,7 +396,139 @@ mod tests {
         assert_eq!(next_free_version(&base, &taken), format!("{base}.2"));
     }
 
-    use crate::domain::Source;
+    use crate::domain::{Display, Requirement, Source};
+    use crate::registry::classify::Provenance;
+
+    fn cls(side: Option<SideClass>, policy: Option<MatchPolicy>) -> Classification {
+        Classification {
+            side,
+            policy,
+            kind: Some("mod".into()),
+            provenance: Provenance::Bytecode,
+            bytecode_side: side,
+            bytecode_policy: policy,
+        }
+    }
+
+    fn entry(filename: &str, default_enabled: bool, requires: &[&str]) -> ModEntry {
+        let display = (!requires.is_empty()).then(|| Display {
+            requires: requires
+                .iter()
+                .map(|f| Requirement {
+                    filename: f.to_string(),
+                    version_range: None,
+                    optional: false,
+                })
+                .collect(),
+            ..Display::default()
+        });
+        ModEntry {
+            filename: filename.into(),
+            sha1: filename.into(),
+            size_bytes: 1,
+            required: false,
+            default_enabled,
+            source: Source::SmrtCache { url: "u".into() },
+            display,
+            slug: None,
+        }
+    }
+
+    fn required_set(mods: &[ModEntry]) -> Vec<&str> {
+        mods.iter()
+            .filter(|m| m.required)
+            .map(|m| m.filename.as_str())
+            .collect()
+    }
+
+    // The symptom-1 fix: a default-enabled content mod (must_match) is required
+    // in itself, with no dependents needed; a tolerant top-level mod stays
+    // toggleable; the transitive hard deps of enabled mods stay locked.
+    #[test]
+    fn must_match_content_mod_is_required_without_dependents() {
+        let mut mods = vec![
+            entry("ArsNouveau.jar", true, &[]),
+            entry("JEI.jar", true, &[]),
+            entry("addon.jar", true, &["lib.jar"]),
+            entry("lib.jar", true, &[]),
+        ];
+        let cl = HashMap::from([
+            (
+                "ArsNouveau.jar".to_string(),
+                cls(Some(SideClass::Both), Some(MatchPolicy::MustMatch)),
+            ),
+            (
+                "JEI.jar".to_string(),
+                cls(Some(SideClass::Both), Some(MatchPolicy::Tolerant)),
+            ),
+        ]);
+        derive_required(&mut mods, &cl).unwrap();
+        assert_eq!(required_set(&mods), vec!["ArsNouveau.jar", "lib.jar"]);
+    }
+
+    // An opted-out must_match mod stays out: the curator removed it from the
+    // default server set, and forcing it back would erase the opt-out.
+    #[test]
+    fn opted_out_must_match_mod_stays_optional() {
+        let mut mods = vec![entry("lunary.jar", false, &[])];
+        let cl = HashMap::from([(
+            "lunary.jar".to_string(),
+            cls(Some(SideClass::Both), Some(MatchPolicy::MustMatch)),
+        )]);
+        derive_required(&mut mods, &cl).unwrap();
+        assert!(!mods[0].required);
+        assert!(!mods[0].default_enabled);
+    }
+
+    // A server-side mod is never required for the client and ships opted out,
+    // even when a hard edge pulls at it; nothing is removed from the manifest.
+    #[test]
+    fn server_side_mod_ships_opted_out_and_never_required() {
+        let mut mods = vec![
+            entry("needs-server-util.jar", true, &["chunky.jar"]),
+            entry("chunky.jar", true, &[]),
+        ];
+        let cl = HashMap::from([(
+            "chunky.jar".to_string(),
+            cls(Some(SideClass::Server), Some(MatchPolicy::Tolerant)),
+        )]);
+        derive_required(&mut mods, &cl).unwrap();
+        let chunky = &mods[1];
+        assert!(!chunky.required, "a server-side mod is never required");
+        assert!(!chunky.default_enabled, "it ships opted out");
+        assert_eq!(mods.len(), 2, "nothing is removed");
+    }
+
+    // The client invariant: a declared hard edge locking a client-side mod is
+    // an error naming the mod and its drivers, not a manifest.
+    #[test]
+    fn client_mod_locked_by_declared_edge_fails_the_build() {
+        let mut mods = vec![
+            entry("chisel.jar", true, &["ctm.jar"]),
+            entry("ctm.jar", true, &[]),
+        ];
+        let cl = HashMap::from([(
+            "ctm.jar".to_string(),
+            cls(Some(SideClass::Client), Some(MatchPolicy::Tolerant)),
+        )]);
+        let err = derive_required(&mut mods, &cl).unwrap_err().to_string();
+        assert!(err.contains("ctm.jar"), "names the client mod: {err}");
+        assert!(err.contains("chisel.jar"), "names the driver: {err}");
+    }
+
+    // A coremod/library jar is never required, even when an edge points at it.
+    #[test]
+    fn non_mod_jar_is_never_required() {
+        let mut mods = vec![
+            entry("ccl.jar", true, &["chickenasm.jar"]),
+            entry("chickenasm.jar", true, &[]),
+        ];
+        let mut asm = cls(None, None);
+        asm.kind = Some("library".into());
+        let cl = HashMap::from([("chickenasm.jar".to_string(), asm)]);
+        derive_required(&mut mods, &cl).unwrap();
+        assert!(!mods[1].required, "a not-a-mod jar stays toggleable");
+    }
 
     fn mc() -> MinecraftSpec {
         MinecraftSpec {

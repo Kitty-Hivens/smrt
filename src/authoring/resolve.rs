@@ -17,8 +17,9 @@
 //! about its mod as a whole. A jar the registry has never read gets the mod-level
 //! facts only -- it does not borrow a sibling version's dependencies.
 
-use crate::domain::{PackConfig, SourceDecl};
-use crate::registry::model::{GraphData, GraphEdge, RelKind};
+use crate::domain::{PackConfig, SideClass, SourceDecl};
+use crate::registry::classify::{Classification, classify_artifact};
+use crate::registry::model::{GraphData, GraphEdge, RelKind, Source};
 use crate::registry::{queries, semver};
 use anyhow::Result;
 use rusqlite::Connection;
@@ -71,6 +72,47 @@ pub struct ResolveReport {
     /// not plainly comparable (a classifier suffix, an embedded MC prefix).
     #[ts(type = "number")]
     pub version_windows_unchecked: usize,
+    /// Declared jars that are not mods at all (bare coremods / ASM libraries):
+    /// always toggleable, never lockable -- listed so the curator knows why.
+    pub coremods: Vec<String>,
+    /// Mods the classifier could not decide a match policy for: shipped
+    /// toggleable rather than guessed. Curator material, not an error.
+    pub unclassified: Vec<String>,
+    /// Modrinth environment flags and the bytecode derivation disagree on the
+    /// side. The flags win by priority, but they are authored upstream and
+    /// sometimes wrong -- the curator should see the conflict.
+    pub side_disagreements: Vec<SideDisagreement>,
+    /// A declared (non-inferred) hard dependency targets a client-side mod --
+    /// a data error the build will refuse: a client mod is never
+    /// force-installed. Inferred edges never get here (the guard downgrades
+    /// them to soft before they can lock anything).
+    pub forced_client_attempts: Vec<ForcedClientEdge>,
+    /// Server-side mods in the pack: legitimate, but the client manifest ships
+    /// them opted out (never required, default-disabled).
+    pub server_side: Vec<String>,
+}
+
+/// One Modrinth-vs-bytecode side conflict on a declared mod.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct SideDisagreement {
+    pub filename: String,
+    /// The winning side per the Modrinth environment flags.
+    pub modrinth_side: String,
+    /// What the bytecode derivation concluded instead.
+    pub bytecode_side: String,
+}
+
+/// A declared hard edge that would force-install a client-side mod.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct ForcedClientEdge {
+    /// The client-side mod being forced.
+    pub filename: String,
+    /// The declaring mods.
+    pub needed_by: Vec<String>,
+    /// Provenance of the offending edge (jar-meta / modrinth / authored / curator).
+    pub source: String,
 }
 
 /// A required target no present mod satisfies. `target` is the graph selector
@@ -181,6 +223,9 @@ struct Present {
     /// when the artifact was never harvested: then only mod-level facts apply,
     /// since we have never actually looked inside this jar.
     mod_version_id: Option<i64>,
+    /// The declared content hash (a `smrt_cache` declaration, or the harvested
+    /// artifact behind a Modrinth pin) -- the classification key.
+    sha1: Option<String>,
 }
 
 /// Place each declared jar mod on the registry graph, returning the ones that
@@ -190,13 +235,20 @@ struct Present {
 fn place_mods(conn: &Connection, cfg: &PackConfig) -> Result<PlacedMods> {
     let mut present: Vec<Present> = Vec::new();
     let mut unresolved: Vec<String> = Vec::new();
+    let mut non_mods: Vec<String> = Vec::new();
     let mut pinned_projects: Vec<String> = Vec::new();
     for m in &cfg.mods {
-        let (mod_id, version, mod_version_id) = match &m.source {
+        let (mod_id, version, mod_version_id, sha1) = match &m.source {
             SourceDecl::SmrtCache { sha1 } => match queries::artifact_by_sha1(conn, sha1)? {
-                Some((mv_id, id, ver)) => (id, Some(ver), Some(mv_id)),
+                Some((mv_id, id, ver)) => (id, Some(ver), Some(mv_id), Some(sha1.clone())),
                 None => {
-                    unresolved.push(m.filename.clone());
+                    // No identity, but the harvest may still have read the jar:
+                    // a bare coremod/ASM library (ChickenASM-class) is exactly
+                    // that, and it is classified, not "unresolved".
+                    match queries::jar_class_for_sha1(conn, sha1)? {
+                        Some(jc) if jc.kind != "mod" => non_mods.push(m.filename.clone()),
+                        _ => unresolved.push(m.filename.clone()),
+                    }
                     continue;
                 }
             },
@@ -204,11 +256,19 @@ fn place_mods(conn: &Connection, cfg: &PackConfig) -> Result<PlacedMods> {
                 project_id,
                 version_id,
             } => match queries::mod_id_for_alias(conn, "modrinth", project_id)? {
-                Some(id) => (
-                    id,
-                    queries::version_by_modrinth_version_id(conn, version_id)?,
-                    queries::mod_version_id_for_modrinth_version_id(conn, version_id)?,
-                ),
+                Some(id) => {
+                    let mv_id = queries::mod_version_id_for_modrinth_version_id(conn, version_id)?;
+                    let sha = match mv_id {
+                        Some(mv) => queries::sha1_for_mod_version(conn, mv)?,
+                        None => None,
+                    };
+                    (
+                        id,
+                        queries::version_by_modrinth_version_id(conn, version_id)?,
+                        mv_id,
+                        sha,
+                    )
+                }
                 // A Modrinth pin the mirror has not harvested yet is still valid: a
                 // build fetches it straight from Modrinth, so it will be present.
                 // This is a pre-build check, so it must not be reported as an
@@ -228,11 +288,13 @@ fn place_mods(conn: &Connection, cfg: &PackConfig) -> Result<PlacedMods> {
             mod_id,
             version,
             mod_version_id,
+            sha1,
         });
     }
     Ok(PlacedMods {
         present,
         unresolved,
+        non_mods,
         pinned_projects,
     })
 }
@@ -244,6 +306,9 @@ struct PlacedMods {
     /// Declared mods with no identity and no valid pin: an un-harvested `smrt_cache`
     /// upload. Listed, not judged.
     unresolved: Vec<String>,
+    /// Identity-less jars the harvest read and classified as not-a-mod (bare
+    /// coremods / ASM libraries) -- the coremod advisory, not "unresolved".
+    non_mods: Vec<String>,
     /// Modrinth project ids of declared Modrinth mods the mirror has not harvested.
     /// Valid pins (present at build); a `modrinth:<project>` dependency they cover
     /// is satisfied even though their own edges cannot be walked.
@@ -262,6 +327,45 @@ pub struct DepFillPlan {
     pub requires: Vec<(String, String)>,
 }
 
+/// Classify each placed jar mod of the pack through the decision layer, keyed
+/// by filename -- the map the build consumes to seed required-ness and emit
+/// presence. A mod the registry cannot place is absent (unclassified).
+pub fn classify_pack(
+    conn: &Connection,
+    cfg: &PackConfig,
+) -> Result<HashMap<String, Classification>> {
+    let placed = place_mods(conn, cfg)?;
+    let mut out = HashMap::new();
+    for p in &placed.present {
+        let c = classify_artifact(conn, Some(p.mod_id), p.sha1.as_deref())?;
+        out.insert(p.filename.clone(), c);
+    }
+    Ok(out)
+}
+
+/// The side-based downgrade of an inferred hard edge (the client-mod guard,
+/// extended to server-side targets). A bytecode-inferred "requires" pointing at
+/// a client-side mod is almost certainly a class-granularity artifact -- a real
+/// unconditional server-side dependency on a client mod would crash a dedicated
+/// server -- so it is treated as soft before it can lock, pull, or report the
+/// target missing. Same reasoning for a server-side target: a client pack never
+/// force-pulls a server-side mod. Only inferred edges downgrade; a declared
+/// edge to a client mod is a data error the resolve report surfaces instead.
+fn inferred_edge_downgraded(edge_source: Source, target_class: Option<&Classification>) -> bool {
+    edge_source == Source::Inferred
+        && matches!(
+            target_class.and_then(|c| c.side),
+            Some(SideClass::Client) | Some(SideClass::Server)
+        )
+}
+
+/// Mod-level classification of an edge target that may not be in the pack:
+/// the mod's Modrinth flags plus its newest scanned artifact's verdict.
+fn classify_target_mod(conn: &Connection, mod_id: i64) -> Result<Classification> {
+    let sha = queries::newest_sha1_for_mod(conn, mod_id)?;
+    classify_artifact(conn, Some(mod_id), sha.as_deref())
+}
+
 /// Walk each present mod's authoritative hard-dependency edges and classify each:
 /// satisfied by a present mod (an edge) or unsatisfied (missing). A loader dep is
 /// never missing, and a `modrinth:<project>` a declared Modrinth pin covers counts
@@ -273,6 +377,8 @@ pub fn dependency_fill_plan(conn: &Connection, cfg: &PackConfig) -> Result<DepFi
     for (i, p) in placed.present.iter().enumerate() {
         by_mod_id.entry(p.mod_id).or_insert(i);
     }
+    // target-mod classifications, resolved lazily once per mod id
+    let mut target_class: HashMap<i64, Classification> = HashMap::new();
     let mut missing: BTreeSet<String> = BTreeSet::new();
     let mut requires: Vec<(String, String)> = Vec::new();
     for a in &placed.present {
@@ -284,7 +390,18 @@ pub fn dependency_fill_plan(conn: &Connection, cfg: &PackConfig) -> Result<DepFi
             if is_loader_dep(&e.target) {
                 continue;
             }
-            match queries::mod_id_for_selector(conn, &e.target)?.and_then(|id| by_mod_id.get(&id)) {
+            let target_mod = queries::mod_id_for_selector(conn, &e.target)?;
+            if let Some(tid) = target_mod {
+                if !target_class.contains_key(&tid) {
+                    target_class.insert(tid, classify_target_mod(conn, tid)?);
+                }
+                // the client/server guard: an inferred hard edge into a sided
+                // mod neither records a requires edge nor pulls the target
+                if inferred_edge_downgraded(e.source, target_class.get(&tid)) {
+                    continue;
+                }
+            }
+            match target_mod.and_then(|id| by_mod_id.get(&id)) {
                 Some(&bi) => {
                     requires.push((a.filename.clone(), placed.present[bi].filename.clone()))
                 }
@@ -352,6 +469,7 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
     let PlacedMods {
         present,
         mut unresolved,
+        non_mods,
         pinned_projects,
     } = place_mods(conn, cfg)?;
     // Modrinth projects the pack pins but the mirror has not harvested: a
@@ -365,6 +483,15 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
         by_mod_id.entry(p.mod_id).or_insert(i);
     }
 
+    // Classification per mod id: the present mods' artifacts up front, absent
+    // edge targets lazily as the walk reaches them.
+    let mut class_of: HashMap<i64, Classification> = HashMap::new();
+    for p in &present {
+        if let std::collections::hash_map::Entry::Vacant(v) = class_of.entry(p.mod_id) {
+            v.insert(classify_artifact(conn, Some(p.mod_id), p.sha1.as_deref())?);
+        }
+    }
+
     // 2. Walk each present mod's authoritative edges.
     let mut missing: BTreeMap<String, MissingDep> = BTreeMap::new();
     let mut conflicts: Vec<ActiveConflict> = Vec::new();
@@ -372,6 +499,7 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
     let mut conflict_seen: HashSet<(usize, usize)> = HashSet::new();
     let mut provides: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut version_issues: Vec<VersionIssue> = Vec::new();
+    let mut forced_client: BTreeMap<String, ForcedClientEdge> = BTreeMap::new();
     let mut unchecked = 0usize;
 
     for (ai, a) in present.iter().enumerate() {
@@ -390,12 +518,40 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
             }
             match e.kind {
                 RelKind::Requires => {
-                    let tgt_present = queries::mod_id_for_selector(conn, &e.target)?
-                        .and_then(|id| by_mod_id.get(&id).copied());
+                    let target_mod = queries::mod_id_for_selector(conn, &e.target)?;
+                    if let Some(tid) = target_mod {
+                        if let std::collections::hash_map::Entry::Vacant(v) = class_of.entry(tid) {
+                            v.insert(classify_target_mod(conn, tid)?);
+                        }
+                        // the client/server guard: an inferred hard edge into a
+                        // sided mod is soft -- it neither reports the target
+                        // missing nor (downstream) locks it required
+                        if inferred_edge_downgraded(e.source, class_of.get(&tid)) {
+                            continue;
+                        }
+                    }
+                    let tgt_present = target_mod.and_then(|id| by_mod_id.get(&id).copied());
                     match tgt_present {
                         Some(bi) => {
+                            let b = &present[bi];
+                            // a DECLARED hard edge into a client-side mod is a
+                            // data error the build will refuse -- surface it
+                            // with its provenance instead of failing late
+                            if e.source != crate::registry::model::Source::Inferred
+                                && class_of.get(&b.mod_id).and_then(|c| c.side)
+                                    == Some(SideClass::Client)
+                            {
+                                let entry =
+                                    forced_client.entry(b.filename.clone()).or_insert_with(|| {
+                                        ForcedClientEdge {
+                                            filename: b.filename.clone(),
+                                            needed_by: Vec::new(),
+                                            source: e.source.as_str().to_string(),
+                                        }
+                                    });
+                                entry.needed_by.push(a.filename.clone());
+                            }
                             if let Some(range) = e.version_range.as_deref() {
-                                let b = &present[bi];
                                 match b
                                     .version
                                     .as_deref()
@@ -536,6 +692,48 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
         })
         .collect();
 
+    // Classification advisories over the placed mods: what is not a mod at
+    // all, what the classifier left undecided, where the sources disagree, and
+    // which mods are server-side (shipped opted out).
+    let mut coremods: Vec<String> = non_mods;
+    let mut unclassified: Vec<String> = Vec::new();
+    let mut side_disagreements: Vec<SideDisagreement> = Vec::new();
+    let mut server_side: Vec<String> = Vec::new();
+    for p in &present {
+        let Some(c) = class_of.get(&p.mod_id) else {
+            continue;
+        };
+        if c.is_non_mod() {
+            coremods.push(p.filename.clone());
+            continue;
+        }
+        if let Some((win, bc)) = c.side_disagreement() {
+            side_disagreements.push(SideDisagreement {
+                filename: p.filename.clone(),
+                modrinth_side: win.as_str().to_string(),
+                bytecode_side: bc.as_str().to_string(),
+            });
+        }
+        if c.side == Some(SideClass::Server) {
+            server_side.push(p.filename.clone());
+        }
+        if c.policy.is_none() {
+            unclassified.push(p.filename.clone());
+        }
+    }
+    coremods.sort();
+    unclassified.sort();
+    server_side.sort();
+    side_disagreements.sort_by(|x, y| x.filename.cmp(&y.filename));
+    let forced_client_attempts: Vec<ForcedClientEdge> = forced_client
+        .into_values()
+        .map(|mut f| {
+            f.needed_by.sort();
+            f.needed_by.dedup();
+            f
+        })
+        .collect();
+
     let mut missing: Vec<MissingDep> = missing
         .into_values()
         .map(|mut d| {
@@ -564,6 +762,11 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
         loader_bridged,
         unresolved,
         version_windows_unchecked: unchecked,
+        coremods,
+        unclassified,
+        side_disagreements,
+        forced_client_attempts,
+        server_side,
     })
 }
 
@@ -1154,6 +1357,158 @@ mod tests {
         assert_eq!(rep.version_issues[0].filename, "lib.jar");
         assert_eq!(rep.version_issues[0].present_version, "1.0.0");
         assert_eq!(rep.version_issues[0].required_range, "[2.0,)");
+    }
+
+    // The client/server guard: an inferred hard edge into a client-side mod is
+    // soft everywhere -- no requires edge for the fill plan, no missing report,
+    // no pull -- while a DECLARED hard edge stays and is reported as a
+    // forced-client attempt.
+    #[test]
+    fn inferred_hard_edge_into_a_client_mod_is_soft() {
+        use crate::registry::model::Source;
+        let r = Registry::open_in_memory().unwrap();
+        let chisel = add_mod(&r, "chisel", "1.0", "sha_chisel");
+        add_mod(&r, "ctm", "1.0", "sha_ctm");
+        r.with_conn_mut(|c| {
+            crate::registry::upsert::set_jar_class(c, "sha_ctm", "mod", Some("client"), None)?;
+            Ok(())
+        })
+        .unwrap();
+        relate(&r, chisel, "ctm", None, RelKind::Requires, Source::Inferred);
+
+        // ctm present: no requires edge lands in the fill plan
+        let both = config(vec![
+            declared("chisel.jar", true, cache("sha_chisel")),
+            declared("ctm.jar", true, cache("sha_ctm")),
+        ]);
+        let plan = r.with_conn(|c| dependency_fill_plan(c, &both)).unwrap();
+        assert!(
+            plan.requires.is_empty(),
+            "an inferred edge into a client mod records no requires edge: {:?}",
+            plan.requires
+        );
+        let rep = r.with_conn(|c| resolve_pack(c, &both)).unwrap();
+        assert!(
+            rep.forced_client_attempts.is_empty(),
+            "inferred edges never report forced"
+        );
+
+        // ctm absent: not missing, not pulled
+        let alone = config(vec![declared("chisel.jar", true, cache("sha_chisel"))]);
+        let plan = r.with_conn(|c| dependency_fill_plan(c, &alone)).unwrap();
+        assert!(
+            plan.missing.is_empty(),
+            "a client mod is never pulled: {:?}",
+            plan.missing
+        );
+        let rep = r.with_conn(|c| resolve_pack(c, &alone)).unwrap();
+        assert!(rep.missing.is_empty(), "not reported missing either");
+    }
+
+    #[test]
+    fn declared_hard_edge_into_a_client_mod_is_reported() {
+        use crate::registry::model::Source;
+        let r = Registry::open_in_memory().unwrap();
+        let a = add_mod(&r, "moda", "1.0", "sha_a");
+        add_mod(&r, "clientmod", "1.0", "sha_cl");
+        r.with_conn_mut(|c| {
+            crate::registry::upsert::set_jar_class(
+                c,
+                "sha_cl",
+                "mod",
+                Some("client"),
+                Some("tolerant"),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        relate(&r, a, "clientmod", None, RelKind::Requires, Source::JarMeta);
+        let cfg = config(vec![
+            declared("a.jar", true, cache("sha_a")),
+            declared("client.jar", true, cache("sha_cl")),
+        ]);
+        let rep = r.with_conn(|c| resolve_pack(c, &cfg)).unwrap();
+        assert_eq!(rep.forced_client_attempts.len(), 1);
+        let f = &rep.forced_client_attempts[0];
+        assert_eq!(f.filename, "client.jar");
+        assert_eq!(f.needed_by, vec!["a.jar"]);
+        assert_eq!(f.source, "jar-meta");
+        // the declared edge is NOT silently dropped from the plan
+        let plan = r.with_conn(|c| dependency_fill_plan(c, &cfg)).unwrap();
+        assert_eq!(
+            plan.requires,
+            vec![("a.jar".to_string(), "client.jar".to_string())]
+        );
+    }
+
+    // The classification advisories: an identity-less coremod jar, an
+    // unclassified mod, a server-side mod, and a Modrinth-vs-bytecode side
+    // disagreement all surface in their own report sections.
+    #[test]
+    fn report_carries_the_classification_advisories() {
+        let r = Registry::open_in_memory().unwrap();
+        // a bare ASM library: jar_class row, no registry identity
+        r.with_conn_mut(|c| {
+            crate::registry::upsert::set_jar_class(c, &"a".repeat(40), "library", None, None)?;
+            Ok(())
+        })
+        .unwrap();
+        // an unclassified placed mod (no jar_class, no env flags)
+        add_mod(&r, "mystery", "1.0", "sha_my");
+        // a server-side mod
+        add_mod(&r, "servux", "1.0", "sha_srv");
+        // a mod whose Modrinth flags say client while the bytecode says both
+        let dis = add_mod(&r, "disputed", "1.0", "sha_dis");
+        r.with_conn_mut(|c| {
+            crate::registry::upsert::set_jar_class(
+                c,
+                "sha_srv",
+                "mod",
+                Some("server"),
+                Some("tolerant"),
+            )?;
+            crate::registry::upsert::set_mod_env_flags(
+                c,
+                dis,
+                Some("required"),
+                Some("unsupported"),
+                NOW,
+            )?;
+            crate::registry::upsert::set_jar_class(
+                c,
+                "sha_dis",
+                "mod",
+                Some("both"),
+                Some("must_match"),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let cfg = config(vec![
+            declared("ChickenASM.jar", true, cache(&"a".repeat(40))),
+            declared("mystery.jar", true, cache("sha_my")),
+            declared("servux.jar", true, cache("sha_srv")),
+            declared("disputed.jar", true, cache("sha_dis")),
+        ]);
+        let rep = r.with_conn(|c| resolve_pack(c, &cfg)).unwrap();
+        assert_eq!(rep.coremods, vec!["ChickenASM.jar"]);
+        assert!(
+            rep.unresolved.is_empty(),
+            "a classified non-mod jar is not unresolved: {:?}",
+            rep.unresolved
+        );
+        assert!(rep.unclassified.contains(&"mystery.jar".to_string()));
+        assert_eq!(rep.server_side, vec!["servux.jar"]);
+        assert_eq!(rep.side_disagreements.len(), 1);
+        let d = &rep.side_disagreements[0];
+        assert_eq!(
+            (
+                d.filename.as_str(),
+                d.modrinth_side.as_str(),
+                d.bytecode_side.as_str()
+            ),
+            ("disputed.jar", "client", "both")
+        );
     }
 
     #[test]

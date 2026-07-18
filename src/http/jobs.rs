@@ -85,6 +85,7 @@ async fn build_pack(
         pack_id,
         state.storage.clone(),
         state.config.clone(),
+        state.registry.clone(),
         p.dry_run,
         pack_version,
         Some(state.harvest.clone()),

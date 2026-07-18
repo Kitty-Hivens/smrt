@@ -12,6 +12,29 @@ pub struct Modrinth {
     http: Client,
 }
 
+/// Send a request, absorbing one 429 by waiting out `Retry-After` (capped at
+/// two minutes, default 60s when absent) and retrying once. A build resolves
+/// one Modrinth version per declared mod, and a burst of those trips the rate
+/// limiter often enough that failing the whole build on the first 429 is not
+/// acceptable; anything past the single retry is a real upstream fault.
+async fn send_with_backoff(req: reqwest::RequestBuilder) -> Result<reqwest::Response> {
+    let first = req.try_clone().context("clone request")?;
+    let resp = first.send().await.context("modrinth send")?;
+    if resp.status().as_u16() != 429 {
+        return Ok(resp);
+    }
+    let wait = resp
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(60)
+        .min(120);
+    tracing::warn!(wait, "modrinth rate limit hit; backing off once");
+    tokio::time::sleep(Duration::from_secs(wait)).await;
+    req.send().await.context("modrinth send (retry)")
+}
+
 impl Modrinth {
     pub fn new() -> Result<Self> {
         let http = Client::builder()
@@ -37,13 +60,13 @@ impl Modrinth {
                 hashes: chunk,
                 algorithm: "sha1",
             };
-            let resp = self
-                .http
-                .post(format!("{MODRINTH_BASE}/v2/version_files"))
-                .json(&body)
-                .send()
-                .await
-                .context("version_files post")?;
+            let resp = send_with_backoff(
+                self.http
+                    .post(format!("{MODRINTH_BASE}/v2/version_files"))
+                    .json(&body),
+            )
+            .await
+            .context("version_files post")?;
             let status = resp.status();
             if !status.is_success() {
                 let body = resp.text().await.unwrap_or_default();
@@ -81,14 +104,11 @@ impl Modrinth {
     }
 
     pub async fn project_version(&self, project_id: &str, version_id: &str) -> Result<Version> {
-        let resp = self
-            .http
-            .get(format!(
-                "{MODRINTH_BASE}/v2/project/{project_id}/version/{version_id}"
-            ))
-            .send()
-            .await
-            .context("project version get")?;
+        let resp = send_with_backoff(self.http.get(format!(
+            "{MODRINTH_BASE}/v2/project/{project_id}/version/{version_id}"
+        )))
+        .await
+        .context("project version get")?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -157,10 +177,7 @@ impl Modrinth {
             url.push_str("?game_versions=");
             url.push_str(&qp.to_string());
         }
-        let resp = self
-            .http
-            .get(&url)
-            .send()
+        let resp = send_with_backoff(self.http.get(&url))
             .await
             .context("project versions get")?;
         let status = resp.status();
@@ -179,13 +196,13 @@ impl Modrinth {
         let mut out = HashMap::new();
         for chunk in ids.chunks(BATCH_SIZE) {
             let encoded = serde_json::to_string(chunk).context("encode project ids")?;
-            let resp = self
-                .http
-                .get(format!("{MODRINTH_BASE}/v2/projects"))
-                .query(&[("ids", encoded.as_str())])
-                .send()
-                .await
-                .context("projects get")?;
+            let resp = send_with_backoff(
+                self.http
+                    .get(format!("{MODRINTH_BASE}/v2/projects"))
+                    .query(&[("ids", encoded.as_str())]),
+            )
+            .await
+            .context("projects get")?;
             let status = resp.status();
             if !status.is_success() {
                 let body = resp.text().await.unwrap_or_default();

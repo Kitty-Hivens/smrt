@@ -10,6 +10,7 @@ use crate::authoring::{
 };
 use crate::config::Config;
 use crate::domain::{PackManifest, PackSummary};
+use crate::registry::Registry;
 use crate::storage::Storage;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -151,11 +152,13 @@ impl JobRegistry {
 
     /// Create a build job and run it on a background task. Returns immediately
     /// with the job handle so the caller can hand back a job id.
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn_build(
         &self,
         pack_id: String,
         storage: Arc<Storage>,
         config: Arc<Config>,
+        registry: Arc<Registry>,
         dry_run: bool,
         pack_version: Option<String>,
         harvest: Option<Arc<HarvestScheduler>>,
@@ -170,7 +173,7 @@ impl JobRegistry {
                 Some(l) => Some(l.lock_owned().await),
                 None => None,
             };
-            match run_build(&handle, &storage, &config, dry_run, pack_version).await {
+            match run_build(&handle, &storage, &config, &registry, dry_run, pack_version).await {
                 Ok(()) => {
                     handle.finish(Status::Done);
                     // a published build added a build + its mods to harvest -- a
@@ -219,6 +222,7 @@ async fn run_build(
     job: &Job,
     storage: &Storage,
     config: &Config,
+    registry: &Arc<Registry>,
     dry_run: bool,
     pack_version: Option<String>,
 ) -> Result<(), String> {
@@ -242,12 +246,27 @@ async fn run_build(
     infer_requires_from_mcmod_info(&mut cfg, storage.root())
         .map_err(|e| format!("infer-requires failed: {e}"))?;
 
+    // side/policy classification through the registry decision layer: the
+    // required-ness seeds and the side invariants ride on it
+    job.line("classifying mods (side / match policy)");
+    let classifications = {
+        let reg = registry.clone();
+        let cfg = cfg.clone();
+        tokio::task::spawn_blocking(move || {
+            reg.with_conn(|c| crate::authoring::resolve::classify_pack(c, &cfg))
+        })
+        .await
+        .map_err(|e| format!("classify task: {e}"))?
+        .map_err(|e| format!("classify failed: {e}"))?
+    };
+
     job.line("resolving sources (Modrinth lookups + cache reads)");
     let manifest = build_manifest(
         &cfg,
         storage.root(),
         pack_version.as_deref(),
         &config.mirror_base,
+        &classifications,
     )
     .await
     .map_err(|e| format!("resolve failed: {e}"))?;
@@ -401,7 +420,15 @@ mod tests {
         let config = Arc::new(test_config(tmp.path().to_path_buf()));
 
         let registry = JobRegistry::default();
-        let job = registry.spawn_build("Test".into(), storage.clone(), config, true, None, None);
+        let job = registry.spawn_build(
+            "Test".into(),
+            storage.clone(),
+            config,
+            Arc::new(crate::registry::Registry::open_in_memory().unwrap()),
+            true,
+            None,
+            None,
+        );
         assert_eq!(job.kind, "preview");
         assert_eq!(await_finish(&job).await, Status::Done);
 
@@ -445,7 +472,15 @@ mod tests {
         let config = Arc::new(test_config(tmp.path().to_path_buf()));
 
         let registry = JobRegistry::default();
-        let job = registry.spawn_build("Test".into(), storage.clone(), config, false, None, None);
+        let job = registry.spawn_build(
+            "Test".into(),
+            storage.clone(),
+            config,
+            Arc::new(crate::registry::Registry::open_in_memory().unwrap()),
+            false,
+            None,
+            None,
+        );
         assert_eq!(job.kind, "build");
         assert_eq!(await_finish(&job).await, Status::Done);
 
