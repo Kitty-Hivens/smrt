@@ -12,6 +12,7 @@ pub mod build;
 pub mod bytecode;
 pub mod classfile;
 pub mod curator;
+pub mod depfill;
 pub mod harvest;
 pub mod harvest_sched;
 pub mod jardiff;

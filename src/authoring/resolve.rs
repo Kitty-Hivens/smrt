@@ -250,6 +250,61 @@ struct PlacedMods {
     pinned_projects: Vec<String>,
 }
 
+/// What the dependency-fill pass on config save needs from the registry: the hard
+/// dependencies a pack's mods declare, split into the ones already satisfied by a
+/// present mod (an edge, for `display.requires`) and the ones nothing satisfies
+/// (candidates to auto-add).
+pub struct DepFillPlan {
+    /// Hard-dep selectors (a modid or `modrinth:<project>`) no present mod covers.
+    pub missing: Vec<String>,
+    /// `(mod filename, its hard-dep filename)` among present mods -- the graph
+    /// `display.requires` records so the build can derive required-ness.
+    pub requires: Vec<(String, String)>,
+}
+
+/// Walk each present mod's authoritative hard-dependency edges and classify each:
+/// satisfied by a present mod (an edge) or unsatisfied (missing). A loader dep is
+/// never missing, and a `modrinth:<project>` a declared Modrinth pin covers counts
+/// as satisfied even before the pin is harvested (it is present at build).
+pub fn dependency_fill_plan(conn: &Connection, cfg: &PackConfig) -> Result<DepFillPlan> {
+    let placed = place_mods(conn, cfg)?;
+    let pinned: HashSet<&str> = placed.pinned_projects.iter().map(String::as_str).collect();
+    let mut by_mod_id: HashMap<i64, usize> = HashMap::new();
+    for (i, p) in placed.present.iter().enumerate() {
+        by_mod_id.entry(p.mod_id).or_insert(i);
+    }
+    let mut missing: BTreeSet<String> = BTreeSet::new();
+    let mut requires: Vec<(String, String)> = Vec::new();
+    for a in &placed.present {
+        let mut seen: HashSet<String> = HashSet::new();
+        for e in queries::relations_for_artifact(conn, a.mod_version_id.unwrap_or(-1), a.mod_id)? {
+            if e.kind != RelKind::Requires || !seen.insert(e.target.clone()) {
+                continue;
+            }
+            if is_loader_dep(&e.target) {
+                continue;
+            }
+            match queries::mod_id_for_selector(conn, &e.target)?.and_then(|id| by_mod_id.get(&id)) {
+                Some(&bi) => {
+                    requires.push((a.filename.clone(), placed.present[bi].filename.clone()))
+                }
+                None => {
+                    if let Some(pid) = e.target.strip_prefix("modrinth:")
+                        && pinned.contains(pid.split('@').next().unwrap_or(pid))
+                    {
+                        continue;
+                    }
+                    missing.insert(e.target.clone());
+                }
+            }
+        }
+    }
+    Ok(DepFillPlan {
+        missing: missing.into_iter().collect(),
+        requires,
+    })
+}
+
 /// The relation graph of one pack: its own mods, wired by the relations the exact
 /// artifacts it ships declare.
 ///
@@ -643,6 +698,33 @@ mod tests {
         assert_eq!(
             rep.resolved_mods, 2,
             "the harvested mod and the pin both count as resolved"
+        );
+    }
+
+    // The dependency-fill plan: a hard dep on a present mod is an edge (for
+    // display.requires); a hard dep nothing ships is missing (to be auto-pulled).
+    #[test]
+    fn dependency_fill_plan_splits_present_edges_from_missing() {
+        use crate::registry::model::Source;
+        let r = Registry::open_in_memory().unwrap();
+        let a = add_mod(&r, "moda", "1", &"1".repeat(40));
+        add_mod(&r, "modb", "1", &"2".repeat(40));
+        relate(&r, a, "modb", None, RelKind::Requires, Source::Inferred);
+        relate(&r, a, "modc", None, RelKind::Requires, Source::Inferred);
+        let cfg = config(vec![
+            declared("a.jar", true, cache(&"1".repeat(40))),
+            declared("b.jar", true, cache(&"2".repeat(40))),
+        ]);
+        let plan = r.with_conn(|c| dependency_fill_plan(c, &cfg)).unwrap();
+        assert_eq!(
+            plan.missing,
+            vec!["modc".to_string()],
+            "modc is not in the pack"
+        );
+        assert_eq!(
+            plan.requires,
+            vec![("a.jar".to_string(), "b.jar".to_string())],
+            "a.jar -> b.jar is a present-mod edge"
         );
     }
 
