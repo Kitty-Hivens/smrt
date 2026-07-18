@@ -8,6 +8,7 @@
 //! Phase 2) and a re-harvest never clobbers the authored ones.
 
 pub(crate) mod authored;
+pub mod classify;
 mod db;
 mod migrations;
 pub mod model;
