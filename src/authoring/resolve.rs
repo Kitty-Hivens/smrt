@@ -392,8 +392,8 @@ pub fn dependency_fill_plan(conn: &Connection, cfg: &PackConfig) -> Result<DepFi
             }
             let target_mod = queries::mod_id_for_selector(conn, &e.target)?;
             if let Some(tid) = target_mod {
-                if !target_class.contains_key(&tid) {
-                    target_class.insert(tid, classify_target_mod(conn, tid)?);
+                if let std::collections::hash_map::Entry::Vacant(v) = target_class.entry(tid) {
+                    v.insert(classify_target_mod(conn, tid)?);
                 }
                 // the client/server guard: an inferred hard edge into a sided
                 // mod neither records a requires edge nor pulls the target
