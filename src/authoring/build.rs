@@ -306,6 +306,9 @@ pub fn make_pack_summary(cfg: &PackConfig, pack_version: &str) -> PackSummary {
         tier: cfg.tier,
         visibility: cfg.visibility,
         fork_of: cfg.fork_of.clone(),
+        // read-time derivations (from the latest manifest), never persisted
+        latest_built_at: None,
+        latest_channel: None,
     }
 }
 

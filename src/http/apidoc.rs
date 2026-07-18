@@ -15,8 +15,20 @@ use axum::routing::get;
 use axum::{Json, Router};
 use utoipa::OpenApi;
 
-use crate::domain::pack::{CommunityPack, PackListing, PackSummary, PackTier, Visibility};
-use crate::domain::server::{Featured, Health, ServerEntry, ServerListing};
+use crate::domain::manifest::{
+    AssetEntry, Display, JavaSpec, LoaderSpec, MinecraftSpec, ModEntry, PackManifest, Requirement,
+    Source,
+};
+use crate::domain::pack::{
+    CommunityPack, ManifestBuildInfo, ManifestVersionsListing, PackListing, PackSummary, PackTier,
+    Visibility,
+};
+use crate::domain::server::{
+    CacheInventory, CacheInventoryEntry, Featured, Health, ServerEntry, ServerListing,
+};
+use crate::domain::side::PresenceClass;
+use crate::domain::version::VersionChannel;
+use crate::registry::model::{ModDetail, ModEdge, ModUse, ReleaseRow, VersionRow};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -32,9 +44,19 @@ use crate::domain::server::{Featured, Health, ServerEntry, ServerListing};
         crate::http::public::health,
         crate::http::public::list_packs,
         crate::http::public::get_pack_summary,
+        crate::http::public::get_latest_manifest,
+        crate::http::public::get_manifest_version,
+        crate::http::public::list_manifest_versions,
+        crate::http::public::get_pack_static,
         crate::http::public::list_community,
         crate::http::public::list_servers,
+        crate::http::public::get_server,
         crate::http::public::get_featured,
+        crate::http::public::get_mod_detail,
+        crate::http::public::get_cache_jar,
+        crate::http::public::get_cache_icon,
+        crate::http::public::get_cache_inventory,
+        crate::http::public::get_user_avatar,
     ),
     components(schemas(
         Health,
@@ -43,11 +65,31 @@ use crate::domain::server::{Featured, Health, ServerEntry, ServerListing};
         PackTier,
         Visibility,
         CommunityPack,
+        PackManifest,
+        MinecraftSpec,
+        LoaderSpec,
+        JavaSpec,
+        ModEntry,
+        AssetEntry,
+        Display,
+        Requirement,
+        Source,
+        PresenceClass,
+        ManifestVersionsListing,
+        ManifestBuildInfo,
+        VersionChannel,
+        ModDetail,
+        ReleaseRow,
+        VersionRow,
+        ModEdge,
+        ModUse,
+        CacheInventory,
+        CacheInventoryEntry,
         ServerListing,
         ServerEntry,
         Featured,
     )),
-    tags((name = "public", description = "Unauthenticated reads: the launcher catalog, servers, featured set."))
+    tags((name = "public", description = "Unauthenticated reads: the launcher catalog, manifests, mods, cache, servers."))
 )]
 struct ApiDoc;
 

@@ -59,7 +59,7 @@ pub struct Featured {
 
 // ── Cache inventory ────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct CacheInventory {
     pub schema_version: u32,
@@ -67,7 +67,7 @@ pub struct CacheInventory {
     pub entries: Vec<CacheInventoryEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct CacheInventoryEntry {
     pub sha1: String,

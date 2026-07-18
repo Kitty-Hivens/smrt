@@ -4,6 +4,7 @@
 //! `sha1` / `size_bytes` for Modrinth sources -- those are resolved at build.
 
 use super::manifest::{Display, LoaderSpec};
+use super::version::VersionChannel;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
@@ -95,6 +96,17 @@ pub struct PackSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub fork_of: Option<String>,
+    /// When the latest build was produced (the latest manifest's
+    /// `generated_at`, RFC 3339). Derived at read time from the manifest --
+    /// never persisted in `summary.json`; absent when the pack has no build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub latest_built_at: Option<String>,
+    /// Channel of `latest_pack_version`; same derivation and absence rules
+    /// as `latest_built_at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub latest_channel: Option<VersionChannel>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, ToSchema)]
@@ -116,12 +128,44 @@ pub struct CommunityPack {
     pub owner_login: String,
 }
 
-#[derive(Debug, Clone, Serialize, TS)]
+/// One retained build of a pack, as the version picker sees it: the version
+/// label plus the metadata a launcher needs to render and order a list of
+/// builds without fetching each manifest.
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
+#[ts(export, export_to = "bindings/")]
+pub struct ManifestBuildInfo {
+    pub version: String,
+    /// `release` for operator-published `YYYY.MM.DD[.N]` versions, `snapshot`
+    /// for panel builds (`SNAPSHOT-` prefix).
+    pub channel: VersionChannel,
+    /// The manifest's `generated_at` (RFC 3339): when the build produced it.
+    pub built_at: String,
+    /// The manifest's content fingerprint where present -- the reliable
+    /// "did the content change?" signal between two builds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fingerprint: Option<String>,
+    #[ts(type = "number")]
+    pub mods_count: u64,
+    #[ts(type = "number")]
+    pub assets_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct ManifestVersionsListing {
     pub schema_version: u32,
     pub pack_id: String,
+    /// The version `manifests/latest` currently points at; absent when the
+    /// pack has no published build.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub latest: Option<String>,
+    /// Bare version labels, oldest first. Kept for clients that predate
+    /// `builds`; the two arrays list the same versions.
     pub versions: Vec<String>,
+    /// Per-build metadata, newest first (ordered by `built_at`).
+    pub builds: Vec<ManifestBuildInfo>,
 }
 
 /// Pack ids that carry editable authoring inputs (a config.json under

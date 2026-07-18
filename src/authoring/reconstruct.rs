@@ -176,6 +176,8 @@ mod tests {
             tier: PackTier::Official,
             visibility: Visibility::Published,
             fork_of: None,
+            latest_built_at: None,
+            latest_channel: None,
         }
     }
 

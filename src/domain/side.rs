@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 /// Axis A -- which side a mod's code executes on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -40,7 +41,7 @@ pub enum MatchPolicy {
 /// optional classes carry the side so a launcher can badge the toggle;
 /// `Coremod` marks a jar that is not a mod at all (a bare ASM/loader plugin),
 /// which is always toggleable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 #[serde(rename_all = "snake_case")]
 pub enum PresenceClass {

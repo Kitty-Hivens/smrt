@@ -107,9 +107,108 @@ impl Storage {
             }
             out.push(name.trim_end_matches(".json").to_string());
         }
-        // Lexicographic sort matches chronological order given YYYY.MM.DD scheme.
-        out.sort();
+        // Tuple comparison, not string sort: `.10` must land after `.2`
+        // (the spec's ordering rule; string sort inverts it).
+        out.sort_by(|a, b| compare_pack_versions(a, b));
         Ok(out)
+    }
+
+    /// Per-build metadata for every retained manifest of a pack, newest first
+    /// (by `generated_at`, tuple version comparison as the tiebreak). Reads
+    /// each manifest's header only -- the mod/asset arrays are counted, not
+    /// materialized.
+    pub async fn list_manifest_builds(
+        &self,
+        pack_id: &str,
+    ) -> Result<Vec<ManifestBuildInfo>, ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        let dir = self.root.join("packs").join(pack_id).join("manifests");
+        let mut out = Vec::new();
+        let mut entries = fs::read_dir(&dir).await.map_err(|_| ApiError::NotFound)?;
+        while let Some(entry) = entries.next_entry().await.map_err(io_err)? {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name == "latest" || !name.ends_with(".json") {
+                continue;
+            }
+            let bytes = fs::read(entry.path()).await.map_err(io_err)?;
+            // A manifest that no longer parses is skipped, not fatal: one
+            // corrupt historical file must not take the whole listing down.
+            let Ok(head) = serde_json::from_slice::<ManifestHead>(&bytes) else {
+                continue;
+            };
+            out.push(ManifestBuildInfo {
+                channel: version_channel(&head.pack_version),
+                version: head.pack_version,
+                built_at: head.generated_at,
+                fingerprint: head.fingerprint,
+                mods_count: head.mods.len() as u64,
+                assets_count: head.assets.len() as u64,
+            });
+        }
+        out.sort_by(|a, b| {
+            b.built_at
+                .cmp(&a.built_at)
+                .then_with(|| compare_pack_versions(&b.version, &a.version))
+        });
+        Ok(out)
+    }
+
+    /// The version `manifests/latest` points at, resolved from the symlink
+    /// target. `None` when the pack has no published build (or the link is
+    /// unreadable) -- callers treat both the same way.
+    pub async fn latest_manifest_version(&self, pack_id: &str) -> Result<Option<String>, ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        let latest = self
+            .root
+            .join("packs")
+            .join(pack_id)
+            .join("manifests")
+            .join("latest");
+        let Ok(target) = fs::read_link(&latest).await else {
+            return Ok(None);
+        };
+        Ok(target
+            .file_name()
+            .map(|n| n.to_string_lossy().trim_end_matches(".json").to_string()))
+    }
+
+    /// Header metadata of the latest build only (one link resolve + one file
+    /// read) -- the cheap form behind read-time summary enrichment.
+    pub async fn latest_build_info(
+        &self,
+        pack_id: &str,
+    ) -> Result<Option<ManifestBuildInfo>, ApiError> {
+        let Some(version) = self.latest_manifest_version(pack_id).await? else {
+            return Ok(None);
+        };
+        if !is_safe_version(&version) {
+            return Ok(None);
+        }
+        let path = self
+            .root
+            .join("packs")
+            .join(pack_id)
+            .join("manifests")
+            .join(format!("{version}.json"));
+        let Ok(bytes) = fs::read(&path).await else {
+            return Ok(None);
+        };
+        let Ok(head) = serde_json::from_slice::<ManifestHead>(&bytes) else {
+            return Ok(None);
+        };
+        Ok(Some(ManifestBuildInfo {
+            channel: version_channel(&head.pack_version),
+            version: head.pack_version,
+            built_at: head.generated_at,
+            fingerprint: head.fingerprint,
+            mods_count: head.mods.len() as u64,
+            assets_count: head.assets.len() as u64,
+        }))
     }
 
     /// Write a built manifest to `packs/<id>/manifests/<version>.json`. The
@@ -724,6 +823,22 @@ pub(crate) fn sha1_hex(bytes: &[u8]) -> String {
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
+/// The slice of a manifest the version listing needs: identity, timestamp,
+/// fingerprint, and the array LENGTHS. `IgnoredAny` elements make serde count
+/// `mods`/`assets` without materializing entries, so listing a pack's history
+/// stays cheap no matter how large its manifests grow.
+#[derive(serde::Deserialize)]
+struct ManifestHead {
+    pack_version: String,
+    generated_at: String,
+    #[serde(default)]
+    fingerprint: Option<String>,
+    #[serde(default)]
+    mods: Vec<serde::de::IgnoredAny>,
+    #[serde(default)]
+    assets: Vec<serde::de::IgnoredAny>,
+}
+
 fn io_err(e: std::io::Error) -> ApiError {
     ApiError::Internal(anyhow::Error::from(e))
 }
@@ -957,6 +1072,113 @@ mod tests {
         assert_eq!(
             s.list_authoring_packs().await.unwrap(),
             vec!["Industrial".to_string()]
+        );
+    }
+
+    fn manifest(version: &str, generated_at: &str, mods: usize) -> PackManifest {
+        PackManifest {
+            schema_version: 2,
+            pack_id: "Industrial".into(),
+            pack_version: version.into(),
+            generated_at: generated_at.into(),
+            fingerprint: Some(format!("fp-{version}")),
+            minecraft: MinecraftSpec {
+                version: "1.12.2".into(),
+            },
+            loader: LoaderSpec {
+                name: "forge".into(),
+                version: "14.23.5.2922".into(),
+            },
+            java: JavaSpec { major: 8 },
+            mods: (0..mods)
+                .map(|i| ModEntry {
+                    filename: format!("m{i}.jar"),
+                    sha1: format!("sha{i}"),
+                    size_bytes: 1,
+                    required: true,
+                    default_enabled: true,
+                    source: Source::SmrtCache { url: "u".into() },
+                    display: None,
+                    slug: None,
+                })
+                .collect(),
+            assets: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn manifest_builds_carry_metadata_newest_first_and_resolve_latest() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        // an operator release, then two panel snapshots on a later day
+        s.save_manifest(
+            "Industrial",
+            &manifest("2026.05.22.2", "2026-05-22T10:00:00Z", 3),
+        )
+        .await
+        .unwrap();
+        s.save_manifest(
+            "Industrial",
+            &manifest("SNAPSHOT-0.0.0-2026.07.18", "2026-07-18T09:00:00Z", 4),
+        )
+        .await
+        .unwrap();
+        s.save_manifest(
+            "Industrial",
+            &manifest("SNAPSHOT-0.0.0-2026.07.18.1", "2026-07-18T11:00:00Z", 5),
+        )
+        .await
+        .unwrap();
+        s.set_latest_manifest("Industrial", "SNAPSHOT-0.0.0-2026.07.18.1")
+            .await
+            .unwrap();
+
+        let builds = s.list_manifest_builds("Industrial").await.unwrap();
+        let versions: Vec<&str> = builds.iter().map(|b| b.version.as_str()).collect();
+        assert_eq!(
+            versions,
+            vec![
+                "SNAPSHOT-0.0.0-2026.07.18.1",
+                "SNAPSHOT-0.0.0-2026.07.18",
+                "2026.05.22.2"
+            ],
+            "newest first by built_at"
+        );
+        assert_eq!(builds[0].channel, VersionChannel::Snapshot);
+        assert_eq!(builds[2].channel, VersionChannel::Release);
+        assert_eq!(builds[0].mods_count, 5);
+        assert_eq!(
+            builds[0].fingerprint.as_deref(),
+            Some("fp-SNAPSHOT-0.0.0-2026.07.18.1")
+        );
+        assert_eq!(builds[0].built_at, "2026-07-18T11:00:00Z");
+
+        assert_eq!(
+            s.latest_manifest_version("Industrial").await.unwrap(),
+            Some("SNAPSHOT-0.0.0-2026.07.18.1".to_string())
+        );
+        let info = s.latest_build_info("Industrial").await.unwrap().unwrap();
+        assert_eq!(info.version, "SNAPSHOT-0.0.0-2026.07.18.1");
+        assert_eq!(info.channel, VersionChannel::Snapshot);
+
+        // a pack with no builds yields no latest, not an error
+        assert_eq!(s.latest_manifest_version("Ghost").await.unwrap(), None);
+        assert!(s.latest_build_info("Ghost").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn manifest_version_strings_sort_by_tuple_not_string() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        for v in ["2026.05.22.10", "2026.05.22.2"] {
+            s.save_manifest("Industrial", &manifest(v, "2026-05-22T00:00:00Z", 1))
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            s.list_manifest_versions("Industrial").await.unwrap(),
+            vec!["2026.05.22.2".to_string(), "2026.05.22.10".to_string()],
+            ".10 lands after .2 under tuple comparison"
         );
     }
 

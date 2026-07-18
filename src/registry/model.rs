@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 /// Provenance of a fact. Harvested rows are rebuildable; authored/curator rows
 /// are precious and never clobbered by a re-harvest. `rank` breaks per-fact
@@ -119,7 +120,7 @@ pub struct RelationRow {
 }
 
 /// Q1: a (pack build, version, filename) that ships a given mod.
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct ModUse {
     pub pack_id: String,
@@ -138,7 +139,7 @@ pub struct OrphanJar {
 
 /// Q3: one version of a mod, with every loader it targets (`any` for a
 /// loader-agnostic jar) and the Minecraft versions it was published for.
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct VersionRow {
     pub version: String,
@@ -162,7 +163,7 @@ pub struct VersionRow {
 /// One release (version node) of a mod for the management view: its version
 /// number + channel, the provenance, and the files (artifacts) grouped under it.
 /// Files carry the loader/mc facets; the release carries version + channel.
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct ReleaseRow {
     #[ts(type = "number")]
@@ -320,7 +321,7 @@ pub struct GraphSlice {
 /// catalogued counterpart when the selector resolves; `None` marks an external
 /// target (an uncatalogued modid or a `provides` capability), so the page can
 /// render it as a plain label rather than a link.
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct ModEdge {
     pub dir: String,
@@ -336,7 +337,7 @@ pub struct ModEdge {
 /// its artifacts, its releases (files), the relations that touch it, and the pack
 /// builds that ship it. Backs the public `GET /v1/mods/:id`; the same view serves
 /// operators, who additionally reach the gated edit/diff endpoints.
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct ModDetail {
     #[ts(type = "number")]
