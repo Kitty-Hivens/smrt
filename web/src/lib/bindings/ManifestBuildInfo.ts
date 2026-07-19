@@ -21,4 +21,8 @@ date_published: string,
  * The manifest's content fingerprint where present -- the reliable
  * "did the content change?" signal between two builds.
  */
-fingerprint?: string, mods_count: number, assets_count: number, };
+fingerprint?: string, 
+/**
+ * Curator-authored release notes, where the build carries them.
+ */
+changelog?: string, mods_count: number, assets_count: number, };

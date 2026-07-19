@@ -70,6 +70,9 @@ enum Cmd {
         /// Publishing a release is an explicit act, so the default is beta.
         #[arg(long, default_value = "beta")]
         channel: String,
+        /// Release notes stored on the manifest (CommonMark).
+        #[arg(long)]
+        changelog: Option<String>,
         #[arg(long, default_value = DEFAULT_MIRROR_BASE)]
         mirror_base: String,
     },
@@ -277,6 +280,7 @@ async fn main() -> Result<()> {
             storage,
             pack_version,
             channel,
+            changelog,
             mirror_base,
         } => {
             let channel = VersionChannel::parse(&channel)
@@ -286,6 +290,7 @@ async fn main() -> Result<()> {
                 &storage,
                 pack_version.as_deref(),
                 channel,
+                changelog,
                 &mirror_base,
             )
             .await
@@ -485,6 +490,7 @@ async fn run_build(
     storage: &Path,
     pack_version: Option<&str>,
     channel: VersionChannel,
+    changelog: Option<String>,
     mirror_base: &str,
 ) -> Result<()> {
     let mut cfg: PackConfig = read_json(config_path)?;
@@ -500,6 +506,7 @@ async fn run_build(
         storage,
         pack_version,
         channel,
+        changelog,
         mirror_base,
         &classifications,
     )

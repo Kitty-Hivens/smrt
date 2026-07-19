@@ -14,7 +14,14 @@ export type PackManifest = { schema_version: number, pack_id: string, pack_versi
  * legacy string rule (`SNAPSHOT-` prefix = beta). Additive, so the
  * schema version stays at 2.
  */
-channel?: VersionChannel, generated_at: string, 
+channel?: VersionChannel, 
+/**
+ * Curator-authored release notes for this build (the Modrinth
+ * `version.changelog` analog). CommonMark; absent when none were given.
+ * The structural diff endpoint complements it -- this is the "why", the
+ * diff is the "what".
+ */
+changelog?: string, generated_at: string, 
 /**
  * Content fingerprint: a stable hash of what actually lands in an instance
  * (artifact hashes + install flags + loader/java/mc), independent of the

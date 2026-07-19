@@ -24,6 +24,13 @@ pub struct PackManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub channel: Option<VersionChannel>,
+    /// Curator-authored release notes for this build (the Modrinth
+    /// `version.changelog` analog). CommonMark; absent when none were given.
+    /// The structural diff endpoint complements it -- this is the "why", the
+    /// diff is the "what".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub changelog: Option<String>,
     pub generated_at: String,
     /// Content fingerprint: a stable hash of what actually lands in an instance
     /// (artifact hashes + install flags + loader/java/mc), independent of the

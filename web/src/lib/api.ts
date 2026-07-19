@@ -205,16 +205,28 @@ export const api = {
   },
   async buildPack(
     id: string,
-    opts?: { dryRun?: boolean; packVersion?: string; channel?: 'release' | 'beta' | 'alpha' },
+    opts?: {
+      dryRun?: boolean;
+      packVersion?: string;
+      channel?: 'release' | 'beta' | 'alpha';
+      changelog?: string;
+    },
   ): Promise<{ job_id: string }> {
     const q = new URLSearchParams();
     if (opts?.dryRun) q.set('dry_run', 'true');
     if (opts?.packVersion) q.set('pack_version', opts.packVersion);
     if (opts?.channel) q.set('channel', opts.channel);
     const qs = q.toString();
+    const changelog = opts?.changelog?.trim();
     const r = await fetch(`/v1/authoring/packs/${encodeURIComponent(id)}/build${qs ? `?${qs}` : ''}`, {
       method: 'POST',
       credentials: 'include',
+      ...(changelog
+        ? {
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ changelog }),
+          }
+        : {}),
     });
     if (!r.ok) throw await toError(r);
     return (await r.json()) as { job_id: string };

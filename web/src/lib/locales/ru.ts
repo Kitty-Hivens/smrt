@@ -308,6 +308,8 @@ export const ru: Dict = {
   'bld.building': 'сборка...',
   'bld.version': 'Версия пака',
   'bld.channel': 'Канал',
+  'bld.changelog': 'Заметки к сборке',
+  'bld.changelogPlaceholder': 'Что изменилось и зачем (CommonMark, необязательно)',
   'bld.versionPlaceholder': '(авто: база.N)',
   'bld.hint':
     'Грузит конфиг пака, прогоняет пассы обогащения (display из mcmod.info + requires), резолвит источники и публикует манифест. Выполняется на зеркале, лог живой. Пустая версия нумеруется сама от базы из конфига; канал хранится в манифесте (release ставится осознанно).',

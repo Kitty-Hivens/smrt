@@ -310,6 +310,8 @@ export const en = {
   'bld.version': 'Pack version',
   'bld.versionPlaceholder': '(auto: base.N)',
   'bld.channel': 'Channel',
+  'bld.changelog': 'Release notes',
+  'bld.changelogPlaceholder': 'What changed and why (CommonMark, optional)',
   'bld.hint':
     "Loads the pack's config, runs the enrichment passes (mcmod.info display + requires), resolves sources, and publishes the manifest. Runs on the mirror; the log is live. Leave the version blank to auto-number from the config's version base; the channel is stored on the manifest (release is an explicit act).",
 

@@ -44,7 +44,8 @@ GET /v1/packs/{id}/manifest/{version}      # a specific build
    instance, whatever the labels say.
 3. **Version picker**: the versions listing's `builds[]` is newest-first by
    `date_published` and follows the Modrinth version-object naming
-   (`version_number`, `version_type`, `date_published`, plus `fingerprint`,
+   (`version_number`, `version_type`, `date_published`, `changelog` --
+   curator-authored release notes where given -- plus `fingerprint`,
    `mods_count`, `assets_count`). `latest` names the build the latest pointer
    serves. Filter by `version_type` to hide prereleases.
 4. **Ordering**, when a client must sort labels itself: numeric tuple
@@ -64,7 +65,9 @@ bumps (absent when unchanged), `mods_added` / `mods_removed` /
 slug, filename -- so a re-pin that renames the jar reads as an update, with
 version labels enriched from the registry where known), `mods_toggled`
 (install-default flips), and the asset equivalents. `content_changed: false`
-means the two builds share a fingerprint and the diff is a relabel.
+means the two builds share a fingerprint and the diff is a relabel. The diff
+is the "what"; the curator's `changelog` on each build (manifest and versions
+listing) is the "why" -- render both when present.
 
 ## Downloading an instance
 

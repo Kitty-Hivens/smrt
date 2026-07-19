@@ -158,6 +158,10 @@ pub struct ManifestBuildInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub fingerprint: Option<String>,
+    /// Curator-authored release notes, where the build carries them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub changelog: Option<String>,
     #[ts(type = "number")]
     pub mods_count: u64,
     #[ts(type = "number")]

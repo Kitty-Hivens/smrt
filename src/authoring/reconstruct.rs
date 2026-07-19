@@ -105,6 +105,7 @@ mod tests {
         PackManifest {
             schema_version: 2,
             channel: None,
+            changelog: None,
             pack_id: "Industrial".into(),
             pack_version: "2026.05.30.1".into(),
             generated_at: "now".into(),

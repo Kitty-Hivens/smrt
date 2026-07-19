@@ -196,6 +196,7 @@ impl JobRegistry {
         dry_run: bool,
         pack_version: Option<String>,
         channel: VersionChannel,
+        changelog: Option<String>,
         harvest: Option<Arc<HarvestScheduler>>,
     ) -> Arc<Job> {
         let job = self.create(if dry_run { "preview" } else { "build" }, pack_id);
@@ -232,6 +233,7 @@ impl JobRegistry {
                 dry_run,
                 pack_version,
                 channel,
+                changelog,
             )
             .await
             {
@@ -291,6 +293,7 @@ async fn run_build(
     dry_run: bool,
     pack_version: Option<String>,
     channel: VersionChannel,
+    changelog: Option<String>,
 ) -> Result<(), String> {
     let pack_id = job.pack_id.clone();
     job.line(format!("build {pack_id}: loading authoring inputs"));
@@ -332,6 +335,7 @@ async fn run_build(
         storage.root(),
         pack_version.as_deref(),
         channel,
+        changelog,
         &config.mirror_base,
         &classifications,
     )
@@ -497,6 +501,7 @@ mod tests {
             None,
             VersionChannel::Beta,
             None,
+            None,
         );
         assert_eq!(job.kind, "preview");
         assert_eq!(await_finish(&job).await, Status::Done);
@@ -550,6 +555,7 @@ mod tests {
             false,
             None,
             VersionChannel::Release,
+            None,
             None,
         );
         assert_eq!(job.kind, "build");

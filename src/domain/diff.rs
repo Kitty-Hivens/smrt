@@ -238,6 +238,7 @@ mod tests {
             pack_id: "Create".into(),
             pack_version: version.into(),
             channel: None,
+            changelog: None,
             generated_at: "T".into(),
             fingerprint: Some(format!("fp-{version}-{loader}")),
             minecraft: MinecraftSpec {

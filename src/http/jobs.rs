@@ -75,11 +75,20 @@ struct BuildParams {
     channel: Option<String>,
 }
 
+#[derive(Deserialize, Default)]
+struct BuildBody {
+    /// Curator-authored release notes stored on the built manifest
+    /// (Modrinth `version.changelog` analog). Body rather than query:
+    /// multi-line CommonMark does not belong in a URL.
+    changelog: Option<String>,
+}
+
 async fn build_pack(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
     Query(p): Query<BuildParams>,
+    body: Option<Json<BuildBody>>,
 ) -> Result<Json<JobRef>, ApiError> {
     if !super::auth::may_author(&identity, &pack_id) {
         return Err(ApiError::Forbidden);
@@ -90,6 +99,10 @@ async fn build_pack(
         Some(c) => VersionChannel::parse(c)
             .ok_or_else(|| ApiError::BadRequest("channel must be release, beta or alpha".into()))?,
     };
+    let changelog = body
+        .and_then(|Json(b)| b.changelog)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     let job = state.jobs.spawn_build(
         pack_id,
         state.storage.clone(),
@@ -98,6 +111,7 @@ async fn build_pack(
         p.dry_run,
         pack_version,
         channel,
+        changelog,
         Some(state.harvest.clone()),
     );
     Ok(Json(JobRef {

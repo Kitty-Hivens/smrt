@@ -18,7 +18,8 @@ use tracing::info;
 /// Reads cache jars under `storage` and looks up Modrinth sources; does not
 /// write anything. `pack_version` defaults to the next auto-numbered
 /// `<base>.<counter>` (see `resolve_auto_version`); `channel` is stored on the
-/// manifest verbatim -- the version string carries no channel semantics.
+/// manifest verbatim -- the version string carries no channel semantics;
+/// `changelog` is the curator's release notes, stored as given.
 /// `classifications` is the pack's side/policy map (`resolve::classify_pack`),
 /// keyed by filename; an absent entry reads as unclassified.
 pub async fn build_manifest(
@@ -26,6 +27,7 @@ pub async fn build_manifest(
     storage: &Path,
     pack_version: Option<&str>,
     channel: VersionChannel,
+    changelog: Option<String>,
     mirror_base: &str,
     classifications: &HashMap<String, Classification>,
 ) -> Result<PackManifest> {
@@ -84,6 +86,7 @@ pub async fn build_manifest(
         pack_id: cfg.pack_id.clone(),
         pack_version,
         channel: Some(channel),
+        changelog,
         generated_at: now_rfc3339(),
         fingerprint: Some(fingerprint),
         minecraft,

@@ -899,6 +899,8 @@ struct ManifestHead {
     pack_version: String,
     #[serde(default)]
     channel: Option<VersionChannel>,
+    #[serde(default)]
+    changelog: Option<String>,
     generated_at: String,
     #[serde(default)]
     fingerprint: Option<String>,
@@ -918,6 +920,7 @@ fn build_info_from_head(head: ManifestHead) -> ManifestBuildInfo {
         version_number: head.pack_version,
         date_published: head.generated_at,
         fingerprint: head.fingerprint,
+        changelog: head.changelog,
         mods_count: head.mods.len() as u64,
         assets_count: head.assets.len() as u64,
     }
@@ -1165,6 +1168,7 @@ mod tests {
             pack_id: "Industrial".into(),
             pack_version: version.into(),
             channel: None,
+            changelog: None,
             generated_at: generated_at.into(),
             fingerprint: Some(format!("fp-{version}")),
             minecraft: MinecraftSpec {
