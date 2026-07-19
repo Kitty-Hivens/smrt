@@ -11,6 +11,9 @@ const METADATA_TIMEOUT: Duration = Duration::from_secs(45);
 
 pub struct Modrinth {
     http: Client,
+    /// API origin; the real one by default, overridable so tests can point at
+    /// an unreachable or mock server without touching the network.
+    base: String,
 }
 
 /// Send a request, absorbing one 429 by waiting out `Retry-After` (capped at
@@ -45,13 +48,20 @@ async fn send_with_backoff(req: reqwest::RequestBuilder) -> Result<reqwest::Resp
 
 impl Modrinth {
     pub fn new() -> Result<Self> {
+        Self::with_base(MODRINTH_BASE)
+    }
+
+    pub fn with_base(base: &str) -> Result<Self> {
         let http = Client::builder()
             .user_agent(USER_AGENT)
             .connect_timeout(Duration::from_secs(30))
             .redirect(Policy::limited(5))
             .build()
             .context("modrinth http client")?;
-        Ok(Self { http })
+        Ok(Self {
+            http,
+            base: base.to_string(),
+        })
     }
 
     /// Batch lookup by sha1. Modrinth tolerates up to 100 hashes per call;
@@ -70,7 +80,7 @@ impl Modrinth {
             };
             let resp = send_with_backoff(
                 self.http
-                    .post(format!("{MODRINTH_BASE}/v2/version_files"))
+                    .post(format!("{}/v2/version_files", self.base))
                     .json(&body),
             )
             .await
@@ -92,7 +102,7 @@ impl Modrinth {
     pub async fn project_icon(&self, slug_or_id: &str) -> Result<Option<String>> {
         let resp = self
             .http
-            .get(format!("{MODRINTH_BASE}/v2/project/{slug_or_id}"))
+            .get(format!("{}/v2/project/{slug_or_id}", self.base))
             .send()
             .await
             .context("project get")?;
@@ -113,7 +123,8 @@ impl Modrinth {
 
     pub async fn project_version(&self, project_id: &str, version_id: &str) -> Result<Version> {
         let resp = send_with_backoff(self.http.get(format!(
-            "{MODRINTH_BASE}/v2/project/{project_id}/version/{version_id}"
+            "{}/v2/project/{project_id}/version/{version_id}",
+            self.base
         )))
         .await
         .context("project version get")?;
@@ -149,7 +160,7 @@ impl Modrinth {
         let facets = serde_json::to_string(&groups).context("encode facets")?;
         let resp = self
             .http
-            .get(format!("{MODRINTH_BASE}/v2/search"))
+            .get(format!("{}/v2/search", self.base))
             .query(&[
                 ("query", query),
                 ("facets", facets.as_str()),
@@ -174,7 +185,7 @@ impl Modrinth {
         slug_or_id: &str,
         mc_filter: Option<&str>,
     ) -> Result<Vec<Version>> {
-        let base = format!("{MODRINTH_BASE}/v2/project/{slug_or_id}/version");
+        let base = format!("{}/v2/project/{slug_or_id}/version", self.base);
         let Some(mc) = mc_filter else {
             return self.versions_at(&base).await;
         };
@@ -225,7 +236,7 @@ impl Modrinth {
             let encoded = serde_json::to_string(chunk).context("encode project ids")?;
             let resp = send_with_backoff(
                 self.http
-                    .get(format!("{MODRINTH_BASE}/v2/projects"))
+                    .get(format!("{}/v2/projects", self.base))
                     .query(&[("ids", encoded.as_str())]),
             )
             .await
@@ -252,7 +263,7 @@ impl Modrinth {
             let encoded = serde_json::to_string(chunk).context("encode team ids")?;
             let resp = self
                 .http
-                .get(format!("{MODRINTH_BASE}/v2/teams"))
+                .get(format!("{}/v2/teams", self.base))
                 .query(&[("ids", encoded.as_str())])
                 .send()
                 .await

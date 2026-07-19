@@ -38,8 +38,22 @@ pub async fn fill_dependencies(
         };
         let mut added = false;
         for target in &plan.missing {
-            let Some(decl) = resolve_target(target, cfg, registry, modrinth, cached).await? else {
-                continue;
+            // Per-target isolation: one unresolvable target (a Modrinth
+            // outage, a dead project) must not abort the whole pass -- the
+            // other targets still fill, and this one stays in the resolve
+            // report's missing list instead of silently taking the rest
+            // down with it.
+            let decl = match resolve_target(target, cfg, registry, modrinth, cached).await {
+                Ok(Some(d)) => d,
+                Ok(None) => continue,
+                Err(e) => {
+                    tracing::warn!(
+                        target = %target.selector,
+                        error = %e,
+                        "dependency target unresolved this pass; skipped"
+                    );
+                    continue;
+                }
             };
             if !already_present(cfg, &decl) {
                 cfg.mods.push(decl);
@@ -357,6 +371,61 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(again, 0, "idempotent: nothing re-added");
+    }
+
+    // One unresolvable target (here: a Modrinth-aliased dep with the API
+    // unreachable) must not abort the pass -- the cache-resolvable dependency
+    // still fills, and the fill itself reports success.
+    #[tokio::test]
+    async fn an_unreachable_target_does_not_abort_the_pass() {
+        let r = Registry::open_in_memory().unwrap();
+        let a = add_artifact(&r, "moda", "1.0", "sha_a", "a.jar");
+        add_artifact(&r, "modb", "1.0", "sha_b", "modb-1.0.jar");
+        r.with_conn_mut(|c| {
+            // netlib resolves through Modrinth (it carries a project alias)
+            let netlib = upsert::upsert_mod_by_alias(
+                c,
+                &[("modid", "netlib"), ("modrinth", "AAAAAAAA")],
+                NOW,
+            )?;
+            let _ = netlib;
+            upsert::upsert_relation(
+                c,
+                a,
+                None,
+                "netlib",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+            upsert::upsert_relation(
+                c,
+                a,
+                None,
+                "modb",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let mut c = cfg(vec![cache_mod("a.jar", "sha_a")]);
+        c.loader.name = "forge".into();
+        // nothing listens here: the Modrinth leg fails fast with a connect error
+        let modrinth = Modrinth::with_base("http://127.0.0.1:9").unwrap();
+        let cached: HashSet<String> = ["sha_a", "sha_b"].iter().map(|s| s.to_string()).collect();
+
+        let added = fill_dependencies(&mut c, &r, &modrinth, &cached)
+            .await
+            .expect("a dead target must not fail the whole fill");
+        assert_eq!(added, 1, "the cache-resolvable dependency still fills");
+        assert!(
+            c.mods.iter().any(|m| m.filename == "modb-1.0.jar"),
+            "modb pulled despite the netlib failure"
+        );
     }
 
     // A cached artifact plainly outside the requirer's version window is not
