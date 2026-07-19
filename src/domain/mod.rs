@@ -2,12 +2,14 @@
 //! version rules. No I/O. Submodules are flattened here so callers reach
 //! every model type via `crate::domain::*`.
 
+pub mod diff;
 pub mod manifest;
 pub mod pack;
 pub mod server;
 pub mod side;
 pub mod version;
 
+pub use diff::*;
 pub use manifest::*;
 pub use pack::*;
 pub use server::*;

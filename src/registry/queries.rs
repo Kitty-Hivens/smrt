@@ -124,6 +124,20 @@ pub fn mod_id_for_slug(conn: &Connection, slug: &str) -> Result<Option<i64>> {
         .optional()?)
 }
 
+/// The registry's version label for an artifact, where known -- the diff
+/// endpoint's enrichment (a filename rarely carries the version for curated
+/// names like `Configured.jar`).
+pub fn version_label_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT version FROM mod_version WHERE sha1 = ?1",
+            params![sha1],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()?
+        .filter(|v| v != "unknown"))
+}
+
 pub fn mod_id_for_sha1(conn: &Connection, sha1: &str) -> Result<Option<i64>> {
     Ok(conn
         .query_row(

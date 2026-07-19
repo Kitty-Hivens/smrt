@@ -51,6 +51,21 @@ GET /v1/packs/{id}/manifest/{version}      # a specific build
    comparison within a version base (`0.4.10` > `0.4.2`; lexicographic sort
    is wrong); across bases or historical labels, order by `date_published`.
 
+## The update dialog: what changed
+
+```
+GET /v1/packs/{id}/diff?from={installed}&to={target}   # to defaults to latest
+```
+
+The structured change summary between two builds -- what an update dialog
+renders instead of guessing from file lists: `loader` / `minecraft` / `java`
+bumps (absent when unchanged), `mods_added` / `mods_removed` /
+`mods_updated` (matched by stable identity -- Modrinth project, curator
+slug, filename -- so a re-pin that renames the jar reads as an update, with
+version labels enriched from the registry where known), `mods_toggled`
+(install-default flips), and the asset equivalents. `content_changed: false`
+means the two builds share a fingerprint and the diff is a relabel.
+
 ## Downloading an instance
 
 For each `mods[]` / `assets[]` entry, dispatch on `source.type`:

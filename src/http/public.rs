@@ -30,6 +30,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/packs/:pack_id/manifest/:version",
             get(get_manifest_version),
         )
+        .route("/v1/packs/:pack_id/diff", get(get_pack_diff))
         .route("/v1/packs/:pack_id/static/*rel_path", get(get_pack_static))
         .route("/v1/servers", get(list_servers))
         .route("/v1/servers/:server_id", get(get_server))
@@ -354,6 +355,80 @@ pub(crate) async fn list_manifest_versions(
         latest,
         builds,
     }))
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct DiffParams {
+    from: String,
+    /// Defaults to the latest build.
+    to: Option<String>,
+}
+
+/// The update-dialog endpoint: what actually changes between two builds --
+/// loader/minecraft/java bumps, mods added/removed/updated (matched by stable
+/// identity, so a re-pin that renames the jar reads as an update), install
+/// default flips, asset changes. Version labels are enriched from the
+/// registry where it knows the artifacts.
+#[utoipa::path(
+    get,
+    path = "/v1/packs/{pack_id}/diff",
+    tag = "public",
+    params(
+        ("pack_id" = String, Path, description = "Pack identifier"),
+        ("from" = String, Query, description = "Installed (older) version label"),
+        ("to" = Option<String>, Query, description = "Target version label; defaults to latest")
+    ),
+    responses(
+        (status = 200, description = "The structured change summary from -> to", body = PackDiff),
+        (status = 404, description = "No such pack or version")
+    )
+)]
+pub(crate) async fn get_pack_diff(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(pack_id): Path<String>,
+    axum::extract::Query(p): axum::extract::Query<DiffParams>,
+) -> Result<Json<PackDiff>, ApiError> {
+    gate_pack_read(&state, &headers, &pack_id).await?;
+    let from = state
+        .storage
+        .load_manifest_version(&pack_id, &p.from)
+        .await?;
+    let to = match &p.to {
+        Some(v) => state.storage.load_manifest_version(&pack_id, v).await?,
+        None => state.storage.load_latest_manifest(&pack_id).await?,
+    };
+    let mut diff = diff_manifests(&from, &to);
+
+    // enrich with the registry's version labels where it knows the artifacts
+    let shas: Vec<String> = diff
+        .mods_updated
+        .iter()
+        .flat_map(|u| [u.sha1_from.clone(), u.sha1_to.clone()])
+        .chain(diff.mods_added.iter().map(|_| String::new()))
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !shas.is_empty() {
+        let reg = state.registry.clone();
+        let labels: HashMap<String, String> = tokio::task::spawn_blocking(move || {
+            reg.with_conn(|c| {
+                let mut out = HashMap::new();
+                for sha in &shas {
+                    if let Some(v) = queries::version_label_for_sha1(c, sha)? {
+                        out.insert(sha.clone(), v);
+                    }
+                }
+                Ok(out)
+            })
+        })
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("diff label task: {e}")))??;
+        for u in &mut diff.mods_updated {
+            u.version_from = labels.get(&u.sha1_from).cloned();
+            u.version_to = labels.get(&u.sha1_to).cloned();
+        }
+    }
+    Ok(Json(diff))
 }
 
 #[utoipa::path(

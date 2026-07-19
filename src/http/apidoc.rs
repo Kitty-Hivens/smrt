@@ -15,6 +15,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use utoipa::OpenApi;
 
+use crate::domain::diff::{DiffEntry, DiffToggle, DiffUpdate, FieldChange, PackDiff};
 use crate::domain::manifest::{
     AssetEntry, Display, JavaSpec, LoaderSpec, MinecraftSpec, ModEntry, PackManifest, Requirement,
     Source,
@@ -47,6 +48,7 @@ use crate::registry::model::{FileDetail, ModDetail, ModEdge, ModUse, ReleaseRow,
         crate::http::public::get_latest_manifest,
         crate::http::public::get_manifest_version,
         crate::http::public::list_manifest_versions,
+        crate::http::public::get_pack_diff,
         crate::http::public::get_pack_static,
         crate::http::public::list_community,
         crate::http::public::list_servers,
@@ -78,6 +80,11 @@ use crate::registry::model::{FileDetail, ModDetail, ModEdge, ModUse, ReleaseRow,
         PresenceClass,
         ManifestVersionsListing,
         ManifestBuildInfo,
+        PackDiff,
+        FieldChange,
+        DiffEntry,
+        DiffUpdate,
+        DiffToggle,
         VersionChannel,
         ModDetail,
         FileDetail,
