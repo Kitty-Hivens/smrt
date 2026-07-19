@@ -66,9 +66,10 @@ Day to day, everything happens in the panel; the CLI mirrors it for scripting.
    latest pointer. Dry-run first when in doubt: same resolution, nothing
    published.
 5. **Converge** freshly added Modrinth mods: the first build downloads their
-   jars; the auto-harvest after it learns identities/env flags; the next
-   save + build classifies them fully. Newly pulled dependencies of new mods
-   may need one more save -> build cycle.
+   jars and pokes the harvest; the next build waits for that harvest to
+   settle and classifies them fully (the job log shows "waiting for the
+   registry harvest to settle" when it does). Newly pulled dependencies of
+   new mods may need one more save -> build cycle.
 
 CLI equivalents: `smrt-pack bootstrap | validate | depfill | build
 --channel ... | enrich-mcmod | infer-requires | apply-role-table |
@@ -116,9 +117,10 @@ The panel's Mods section is the curation surface:
   others hang or 500. Depfill may pull nothing (config stays as-is), env
   backfills lag, icons vanish from the panel until the CDN returns. All of it
   converges on the next healthy harvest + build.
-- **A build during a harvest** classifies against whatever the registry held
-  when it started; if env flags landed mid-run, rebuild once the harvest is
-  done.
+- **Builds wait out the harvest**: a build started while a harvest is running
+  (or poked and pending) waits for it to settle before classifying, capped at
+  five minutes -- past the cap it proceeds against current state with a log
+  line, so a busy harvester can never starve builds.
 - **Restart mid-build**: the job dies with the process; its snapshot reads
   failed/interrupted after the restart, and the pack lock dies with it too.
   Re-trigger the build; manifests are only written complete.

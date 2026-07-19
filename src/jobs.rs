@@ -211,6 +211,19 @@ impl JobRegistry {
             // evidence on disk before any work: a crash mid-build leaves a
             // running snapshot for the startup sweep to mark interrupted
             persist(&storage, &handle).await;
+            // Classify against a settled registry: an in-flight (or pending)
+            // harvest is about to rewrite the very rows classification reads,
+            // and building through it is how mods come out unclassified for
+            // one build. Bounded so a busy harvester can never starve builds.
+            if let Some(h) = &harvest
+                && h.is_unsettled()
+            {
+                handle.line("waiting for the registry harvest to settle");
+                if !h.await_settled(std::time::Duration::from_secs(300)).await {
+                    handle
+                        .line("harvest still busy after 5 minutes; building against current state");
+                }
+            }
             match run_build(
                 &handle,
                 &storage,

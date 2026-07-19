@@ -45,6 +45,11 @@ pub struct HarvestScheduler {
     wake: Notify,
     /// Set by [`force`] so the worker skips the debounce and harvests at once.
     force_now: AtomicBool,
+    /// A poke has been requested that no run has observed yet. Together with
+    /// `status.running` this is the "unsettled" signal builds wait out, so a
+    /// build never classifies against a registry a harvest is about to
+    /// rewrite (or should have rewritten already).
+    dirty: AtomicBool,
     status: Mutex<HarvestStatus>,
 }
 
@@ -60,6 +65,7 @@ impl HarvestScheduler {
             registry,
             wake: Notify::new(),
             force_now: AtomicBool::new(false),
+            dirty: AtomicBool::new(false),
             status: Mutex::new(HarvestStatus::default()),
         })
     }
@@ -68,6 +74,7 @@ impl HarvestScheduler {
     /// a change that the registry should reflect (a build, a cache write). A
     /// stored wake the worker drains -- repeated pokes before it fires are one.
     pub fn poke(&self) {
+        self.dirty.store(true, Ordering::SeqCst);
         self.wake.notify_one();
     }
 
@@ -76,6 +83,7 @@ impl HarvestScheduler {
     /// result lands in [`status`], so the caller returns at once instead of holding
     /// the request open for the whole harvest.
     pub fn force(&self) {
+        self.dirty.store(true, Ordering::SeqCst);
         self.force_now.store(true, Ordering::SeqCst);
         self.wake.notify_one();
     }
@@ -85,10 +93,34 @@ impl HarvestScheduler {
         self.status.lock().expect("harvest status mutex").clone()
     }
 
+    /// True while a harvest is running or a poke is waiting to become one --
+    /// the state a build should not classify under.
+    pub fn is_unsettled(&self) -> bool {
+        self.dirty.load(Ordering::SeqCst)
+            || self.status.lock().expect("harvest status mutex").running
+    }
+
+    /// Wait until no harvest is running and no poke is pending, up to
+    /// `max_wait`. Returns whether it settled (false = timed out; the caller
+    /// proceeds against current state rather than starving). Half-second
+    /// polling: one waiter, bounded wait, no missed-notify subtleties.
+    pub async fn await_settled(&self, max_wait: Duration) -> bool {
+        let start = tokio::time::Instant::now();
+        loop {
+            if !self.is_unsettled() {
+                return true;
+            }
+            if start.elapsed() >= max_wait {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
     /// Spawn the worker loop and request an initial harvest so the registry is
     /// built/refreshed shortly after startup. Call once, after the runtime is up.
     pub fn spawn(self: Arc<Self>) {
-        self.wake.notify_one(); // refresh on boot
+        self.poke(); // refresh on boot
         tokio::spawn(async move {
             loop {
                 // wait for a poke, then settle: each further poke restarts the
@@ -109,8 +141,10 @@ impl HarvestScheduler {
                     }
                 }
                 self.status.lock().expect("harvest status mutex").running = true;
-                // pokes arriving during the run leave a wake for the next pass --
-                // those are genuinely-newer changes, worth a follow-up harvest.
+                // this run observes everything requested up to now; a poke
+                // arriving DURING it re-sets dirty and leaves a wake, so the
+                // follow-up pass covers the genuinely-newer changes
+                self.dirty.store(false, Ordering::SeqCst);
                 // Run in a child task so a panic deep in harvest is isolated and
                 // logged instead of killing this loop and silently stopping all
                 // auto-harvests for the rest of the process.
@@ -154,5 +188,39 @@ impl HarvestScheduler {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bare() -> Arc<HarvestScheduler> {
+        HarvestScheduler::new(
+            Arc::new(Storage::new(std::env::temp_dir().join("smrt-sched-test"))),
+            Arc::new(Modrinth::with_base("http://127.0.0.1:9").unwrap()),
+            Arc::new(Registry::open_in_memory().unwrap()),
+        )
+    }
+
+    #[tokio::test]
+    async fn settled_when_idle_unsettled_after_a_poke() {
+        let s = bare();
+        assert!(!s.is_unsettled(), "a fresh scheduler is settled");
+        assert!(s.await_settled(Duration::from_millis(50)).await);
+
+        s.poke();
+        assert!(s.is_unsettled(), "a pending poke is unsettled");
+        assert!(
+            !s.await_settled(Duration::from_millis(200)).await,
+            "with no worker draining it, the wait times out false"
+        );
+
+        // simulate the worker observing the poke: dirty clears, run starts
+        s.dirty.store(false, Ordering::SeqCst);
+        s.status.lock().unwrap().running = true;
+        assert!(s.is_unsettled(), "a running harvest is unsettled");
+        s.status.lock().unwrap().running = false;
+        assert!(s.await_settled(Duration::from_millis(50)).await);
     }
 }
