@@ -809,6 +809,87 @@ pub(crate) fn sha1_hex(bytes: &[u8]) -> String {
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
+impl Storage {
+    // -- Job snapshots ------------------------------------------------------
+
+    /// Persist a job's snapshot to `jobs/<id>.json` (atomic). Job ids are
+    /// self-generated (hex millis + counter), but validate anyway so a
+    /// hand-crafted id can never traverse.
+    pub async fn save_job_snapshot(&self, snap: &crate::jobs::JobSnapshot) -> Result<(), ApiError> {
+        if !is_safe_job_id(&snap.job_id) {
+            return Err(ApiError::BadRequest("invalid job id".into()));
+        }
+        let dir = self.root.join("jobs");
+        fs::create_dir_all(&dir).await.map_err(io_err)?;
+        let bytes = serde_json::to_vec_pretty(snap)
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("job snapshot encode: {e}")))?;
+        atomic_write(&dir.join(format!("{}.json", snap.job_id)), &bytes).await
+    }
+
+    pub async fn load_job_snapshot(
+        &self,
+        job_id: &str,
+    ) -> Result<Option<crate::jobs::JobSnapshot>, ApiError> {
+        if !is_safe_job_id(job_id) {
+            return Err(ApiError::BadRequest("invalid job id".into()));
+        }
+        let path = self.root.join("jobs").join(format!("{job_id}.json"));
+        let bytes = match fs::read(&path).await {
+            Ok(b) => b,
+            Err(_) => return Ok(None),
+        };
+        Ok(serde_json::from_slice(&bytes).ok())
+    }
+
+    /// Startup sweep: a snapshot still `running` belonged to a process that no
+    /// longer exists -- mark it failed with an explicit line, so a client
+    /// polling the id learns the truth instead of waiting forever. Then prune
+    /// to the newest `keep` snapshots (ids are zero-padded millis + counter,
+    /// so lexical order is chronological).
+    pub async fn sweep_job_snapshots(&self, keep: usize) -> Result<usize, ApiError> {
+        let dir = self.root.join("jobs");
+        let mut entries = match fs::read_dir(&dir).await {
+            Ok(e) => e,
+            Err(_) => return Ok(0), // no jobs dir yet
+        };
+        let mut ids: Vec<String> = Vec::new();
+        while let Some(entry) = entries.next_entry().await.map_err(io_err)? {
+            if let Some(name) = entry.file_name().to_str()
+                && let Some(stem) = name.strip_suffix(".json")
+            {
+                ids.push(stem.to_string());
+            }
+        }
+        let mut interrupted = 0usize;
+        for id in &ids {
+            let Some(mut snap) = self.load_job_snapshot(id).await? else {
+                continue;
+            };
+            if snap.status == crate::jobs::Status::Running {
+                snap.status = crate::jobs::Status::Failed;
+                snap.log.push("interrupted by service restart".to_string());
+                self.save_job_snapshot(&snap).await?;
+                interrupted += 1;
+            }
+        }
+        ids.sort();
+        if ids.len() > keep {
+            for id in &ids[..ids.len() - keep] {
+                let _ = fs::remove_file(dir.join(format!("{id}.json"))).await;
+            }
+        }
+        Ok(interrupted)
+    }
+}
+
+/// Job ids as `JobRegistry::create` mints them: lowercase hex + `-`.
+fn is_safe_job_id(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 64
+        && s.chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase() || c == '-')
+}
+
 /// The slice of a manifest the version listing needs: identity, timestamp,
 /// fingerprint, and the array LENGTHS. `IgnoredAny` elements make serde count
 /// `mods`/`assets` without materializing entries, so listing a pack's history
@@ -1187,6 +1268,59 @@ mod tests {
             info.version_type,
             VersionChannel::Alpha,
             "the stored channel wins; the string rule would have said release"
+        );
+    }
+
+    #[tokio::test]
+    async fn job_snapshot_sweep_marks_orphans_and_prunes() {
+        use crate::jobs::{JobSnapshot, Status};
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let snap = |id: &str, status: Status| JobSnapshot {
+            job_id: id.into(),
+            kind: "build".into(),
+            pack_id: "Industrial".into(),
+            status,
+            log: vec!["building".into()],
+        };
+        // oldest done, middle running (orphan), newest done
+        s.save_job_snapshot(&snap("0000000000001-00000000", Status::Done))
+            .await
+            .unwrap();
+        s.save_job_snapshot(&snap("0000000000002-00000000", Status::Running))
+            .await
+            .unwrap();
+        s.save_job_snapshot(&snap("0000000000003-00000000", Status::Done))
+            .await
+            .unwrap();
+
+        let interrupted = s.sweep_job_snapshots(2).await.unwrap();
+        assert_eq!(interrupted, 1, "one orphaned running job");
+
+        // the orphan is now failed, with the reason on its log
+        let orphan = s
+            .load_job_snapshot("0000000000002-00000000")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(orphan.status, Status::Failed);
+        assert_eq!(
+            orphan.log.last().map(String::as_str),
+            Some("interrupted by service restart")
+        );
+        // pruned to the newest two: the oldest snapshot is gone
+        assert!(
+            s.load_job_snapshot("0000000000001-00000000")
+                .await
+                .unwrap()
+                .is_none(),
+            "oldest pruned past the keep bound"
+        );
+        assert!(
+            s.load_job_snapshot("0000000000003-00000000")
+                .await
+                .unwrap()
+                .is_some()
         );
     }
 

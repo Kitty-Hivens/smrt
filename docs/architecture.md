@@ -46,6 +46,7 @@ Shared by all three:
 /var/lib/smrt/
   registry.db                    # the mod-identity registry (SQLite, WAL)
   removed.txt                    # takedown list: sha1s that must never serve again
+  jobs/<id>.json                 # job snapshots (status + log; newest 200 kept)
   featured.json                  # editorial: featured packs/servers
   servers/<id>.json              # curated server metadata
   cache/<xx>/<sha1>.jar          # content-addressed jar cache (xx = first two hex)

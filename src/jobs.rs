@@ -20,12 +20,46 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Notify;
 use ts_rs::TS;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     Running,
     Done,
     Failed,
+}
+
+/// The persisted form of a job: everything a status poll needs, written to
+/// `jobs/<id>.json` at spawn and at finish so job ids survive a service
+/// restart instead of turning into 404s. Dry-run results are not persisted --
+/// a preview is a transient artifact of the session that requested it.
+#[derive(Clone, Serialize, serde::Deserialize)]
+pub struct JobSnapshot {
+    pub job_id: String,
+    pub kind: String,
+    pub pack_id: String,
+    pub status: Status,
+    pub log: Vec<String>,
+}
+
+impl JobSnapshot {
+    fn of(job: &Job) -> Self {
+        let (log, status) = job.since(0);
+        JobSnapshot {
+            job_id: job.id.clone(),
+            kind: job.kind.to_string(),
+            pack_id: job.pack_id.clone(),
+            status,
+            log,
+        }
+    }
+}
+
+/// Best-effort persistence: a snapshot write failure is logged, never fatal --
+/// the in-memory job keeps working and only restart survival degrades.
+async fn persist(storage: &Storage, job: &Job) {
+    if let Err(e) = storage.save_job_snapshot(&JobSnapshot::of(job)).await {
+        tracing::warn!(job_id = %job.id, error = %e, "job snapshot write failed");
+    }
 }
 
 /// What a dry-run build computes without publishing: the resolved manifest the
@@ -174,6 +208,9 @@ impl JobRegistry {
                 Some(l) => Some(l.lock_owned().await),
                 None => None,
             };
+            // evidence on disk before any work: a crash mid-build leaves a
+            // running snapshot for the startup sweep to mark interrupted
+            persist(&storage, &handle).await;
             match run_build(
                 &handle,
                 &storage,
@@ -198,6 +235,7 @@ impl JobRegistry {
                     handle.finish(Status::Failed);
                 }
             }
+            persist(&storage, &handle).await;
         });
         job
     }
@@ -214,6 +252,7 @@ impl JobRegistry {
         let job = self.create("bootstrap", pack_id);
         let handle = job.clone();
         tokio::spawn(async move {
+            persist(&storage, &handle).await;
             match run_bootstrap(&handle, args, archive, &storage).await {
                 Ok(()) => handle.finish(Status::Done),
                 Err(e) => {
@@ -221,6 +260,7 @@ impl JobRegistry {
                     handle.finish(Status::Failed);
                 }
             }
+            persist(&storage, &handle).await;
         });
         job
     }
@@ -460,6 +500,7 @@ mod tests {
         assert_eq!(result.summary.display_name, "Test Pack");
 
         // The whole point of a dry run: nothing reaches the public surface.
+        // (Its snapshot still persists, so the job id answers after a restart.)
         assert!(
             storage.load_latest_manifest("Test").await.is_err(),
             "dry run must not publish a latest manifest"
@@ -500,6 +541,21 @@ mod tests {
         );
         assert_eq!(job.kind, "build");
         assert_eq!(await_finish(&job).await, Status::Done);
+
+        // the finished job leaves a snapshot a restarted service can answer
+        // from; the write lands just after the status flip, so poll briefly
+        let mut snap = None;
+        for _ in 0..50 {
+            snap = storage.load_job_snapshot(&job.id).await.unwrap();
+            if snap.as_ref().is_some_and(|s| s.status == Status::Done) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let snap = snap.expect("a finished build persists its snapshot");
+        assert_eq!(snap.status, Status::Done);
+        assert_eq!(snap.pack_id, "Test");
+        assert!(!snap.log.is_empty());
 
         assert!(
             job.result().is_none(),

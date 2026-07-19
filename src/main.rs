@@ -23,6 +23,14 @@ async fn main() -> anyhow::Result<()> {
 
     let bind_addr = cfg.bind_addr;
     let state = state::AppState::new(cfg)?;
+    // Jobs that were running when the previous process died can never finish:
+    // mark their snapshots failed so pollers learn the truth, and bound the
+    // archive while at it.
+    match state.storage.sweep_job_snapshots(200).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(interrupted = n, "marked orphaned job snapshots failed"),
+        Err(e) => tracing::warn!(error = %e, "job snapshot sweep failed"),
+    }
     // start the coalescing background harvester (refreshes on boot + on changes)
     state.harvest.clone().spawn();
     let app = http::router(state).layer(TraceLayer::new_for_http());

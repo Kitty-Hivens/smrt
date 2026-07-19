@@ -29,8 +29,12 @@ and the emergency local-deploy script for when Actions is down.
 
 Two operational consequences of a deploy:
 
-- **jobs are in-memory** -- a restart kills running builds and 404s their job
-  ids. Do not start long server-side jobs while a deploy is in flight.
+- **a restart kills running builds** -- the job dies with the process, and at
+  the next start its persisted snapshot is marked failed with an
+  "interrupted by service restart" line, so pollers learn the truth. Finished
+  job ids keep answering from `jobs/<id>.json` snapshots across restarts
+  (newest 200 kept). Still: do not start long server-side jobs while a deploy
+  is in flight.
 - **migrations run at service start** (`registry_meta.schema_version`
   gates them). A failed migration keeps the old schema and refuses further
   steps; fix forward.
@@ -115,6 +119,6 @@ The panel's Mods section is the curation surface:
 - **A build during a harvest** classifies against whatever the registry held
   when it started; if env flags landed mid-run, rebuild once the harvest is
   done.
-- **Restart mid-build**: the job dies with the process (in-memory); the pack
-  lock dies with it too. Re-trigger the build; manifests are only written
-  complete.
+- **Restart mid-build**: the job dies with the process; its snapshot reads
+  failed/interrupted after the restart, and the pack lock dies with it too.
+  Re-trigger the build; manifests are only written complete.

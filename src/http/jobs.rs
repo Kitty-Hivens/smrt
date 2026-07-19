@@ -149,7 +149,7 @@ async fn bootstrap_pack(
 #[derive(Serialize)]
 struct JobStatusResp {
     job_id: String,
-    kind: &'static str,
+    kind: String,
     pack_id: String,
     status: Status,
     log: Vec<String>,
@@ -162,15 +162,32 @@ async fn job_status(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
 ) -> Result<Json<JobStatusResp>, ApiError> {
-    let job = state.jobs.get(&job_id).ok_or(ApiError::NotFound)?;
-    let (log, status) = job.since(0);
+    if let Some(job) = state.jobs.get(&job_id) {
+        let (log, status) = job.since(0);
+        return Ok(Json(JobStatusResp {
+            job_id: job.id.clone(),
+            kind: job.kind.to_string(),
+            pack_id: job.pack_id.clone(),
+            status,
+            log,
+            result: job.result(),
+        }));
+    }
+    // Not in memory (evicted, or from before a restart): answer from the
+    // persisted snapshot instead of a 404, so a job id stays meaningful for
+    // the lifetime of its snapshot. Dry-run results are memory-only.
+    let snap = state
+        .storage
+        .load_job_snapshot(&job_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
     Ok(Json(JobStatusResp {
-        job_id: job.id.clone(),
-        kind: job.kind,
-        pack_id: job.pack_id.clone(),
-        status,
-        log,
-        result: job.result(),
+        job_id: snap.job_id,
+        kind: snap.kind,
+        pack_id: snap.pack_id,
+        status: snap.status,
+        log: snap.log,
+        result: None,
     }))
 }
 

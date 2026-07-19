@@ -118,5 +118,7 @@ Not needed by a launcher, listed for completeness: GitHub OAuth session
 (`/v1/authoring/...`, `/v1/registry/...`; bearer `SMRT_ADMIN_TOKEN` or an
 allowlisted OAuth session), and a debug rung above admin for compat-affecting
 registry writes. Job endpoints (`/v1/jobs/{id}`, `/v1/jobs/{id}/events` --
-SSE) track builds; job state is in-memory and does not survive a service
-restart.
+SSE) track builds; finished jobs keep answering the status endpoint from
+persisted snapshots across restarts (a job running at a restart reads failed,
+with an explicit interrupted line), while the live SSE tail is
+memory-only.
