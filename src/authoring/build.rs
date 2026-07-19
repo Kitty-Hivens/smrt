@@ -92,6 +92,7 @@ pub async fn build_manifest(
         minecraft,
         loader: cfg.loader.clone(),
         java,
+        auth: cfg.auth.clone(),
         mods: mod_entries,
         assets: asset_entries,
     })

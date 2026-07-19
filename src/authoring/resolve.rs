@@ -896,6 +896,7 @@ mod tests {
             featured: false,
             mods,
             assets: vec![],
+            auth: None,
             pack_meta: Default::default(),
             owner: 0,
             tier: PackTier::Official,

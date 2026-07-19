@@ -143,6 +143,7 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
         loader: args.loader,
         java_major: args.java_major,
         version: None,
+        auth: None,
         tags: Vec::new(),
         featured: false,
         mods: declared_mods,

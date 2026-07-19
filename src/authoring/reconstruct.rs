@@ -25,6 +25,7 @@ pub fn reconstruct_config(manifest: &PackManifest, summary: &PackSummary) -> Pac
         featured: summary.featured,
         mods: manifest.mods.iter().map(reconstruct_mod).collect(),
         assets: manifest.assets.iter().map(reconstruct_asset).collect(),
+        auth: manifest.auth.clone(),
         pack_meta: PackMeta {
             icon_url: summary.icon_url.clone(),
             banner_url: summary.banner_url.clone(),
@@ -118,6 +119,7 @@ mod tests {
                 version: "14.23.5.2922".into(),
             },
             java: JavaSpec { major: 8 },
+            auth: None,
             mods: vec![
                 ModEntry {
                     filename: "jei.jar".into(),

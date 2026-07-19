@@ -17,8 +17,8 @@ use utoipa::OpenApi;
 
 use crate::domain::diff::{DiffEntry, DiffToggle, DiffUpdate, FieldChange, PackDiff};
 use crate::domain::manifest::{
-    AssetEntry, Display, JavaSpec, LoaderSpec, MinecraftSpec, ModEntry, PackManifest, Requirement,
-    Source,
+    AssetEntry, AuthSpec, Display, JavaSpec, LoaderSpec, MinecraftSpec, ModEntry, PackManifest,
+    Requirement, Source,
 };
 use crate::domain::pack::{
     CommunityPack, ManifestBuildInfo, ManifestVersionsListing, PackListing, PackSummary, PackTier,
@@ -69,6 +69,7 @@ use crate::registry::model::{FileDetail, ModDetail, ModEdge, ModUse, ReleaseRow,
         Visibility,
         CommunityPack,
         PackManifest,
+        AuthSpec,
         MinecraftSpec,
         LoaderSpec,
         JavaSpec,

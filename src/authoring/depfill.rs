@@ -370,6 +370,7 @@ mod tests {
             featured: false,
             mods,
             assets: vec![],
+            auth: None,
             pack_meta: Default::default(),
             owner: default_owner(),
             tier: default_tier(),

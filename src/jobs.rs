@@ -433,6 +433,7 @@ mod tests {
             },
             java_major: 8,
             version: None,
+            auth: None,
             tags: vec![],
             featured: false,
             mods: vec![DeclaredMod {

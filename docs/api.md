@@ -86,6 +86,13 @@ For each `mods[]` / `assets[]` entry, dispatch on `source.type`:
   `/v1/packs/{id}/static/...`. Not content-addressed; re-fetch per version
   and verify the manifest's `sha1`.
 
+**Auth precondition**: the optional root-level `auth` block
+(`{"kind": "smartycraft", "server_id": "Create"}`) names the provider the
+user must be signed in with before the game spawns, and for
+SmartyCraft-bound content the SC game-server id the join and session bind
+to. Absent = no precondition. `kind` is an open vocabulary (`smartycraft`,
+`microsoft`, `both` today); treat unknown kinds as advisory.
+
 Install flags: `required` is enforcing (never offer a toggle); for optional
 entries `default_enabled` (absent = true) is the install-time default. The
 `display` block is advisory UX metadata -- names, descriptions, icons, the

@@ -3,7 +3,7 @@
 //! distinct type from the wire manifest: authoring does not hand-write
 //! `sha1` / `size_bytes` for Modrinth sources -- those are resolved at build.
 
-use super::manifest::{Display, LoaderSpec};
+use super::manifest::{AuthSpec, Display, LoaderSpec};
 use super::version::VersionChannel;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -222,6 +222,11 @@ pub struct PackConfig {
     pub mods: Vec<DeclaredMod>,
     #[serde(default)]
     pub assets: Vec<DeclaredAsset>,
+    /// Auth precondition copied verbatim onto every built manifest
+    /// (`smartycraft`/`microsoft`/`both` + the SC server id where relevant).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub auth: Option<AuthSpec>,
     #[serde(default)]
     pub pack_meta: PackMeta,
     /// GitHub uid of the pack owner. Official packs are owned by the operator;

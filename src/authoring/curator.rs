@@ -546,6 +546,7 @@ mod tests {
             },
             java_major: 8,
             version: None,
+            auth: None,
             tags: Vec::new(),
             featured: false,
             mods: Vec::new(),

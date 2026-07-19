@@ -45,9 +45,30 @@ pub struct PackManifest {
     pub minecraft: MinecraftSpec,
     pub loader: LoaderSpec,
     pub java: JavaSpec,
+    /// See [`AuthSpec`]. Absent = no auth precondition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub auth: Option<AuthSpec>,
     pub mods: Vec<ModEntry>,
     #[serde(default)]
     pub assets: Vec<AssetEntry>,
+}
+
+/// Auth precondition the launcher enforces before spawning the game: which
+/// provider the user must be signed in with, and (for SmartyCraft-bound
+/// content) which SC game server the join + session bind to. Optional and
+/// additive -- a manifest without it launches with no auth precondition.
+/// `kind` is an open vocabulary the launcher matches (`smartycraft`,
+/// `microsoft`, `both` today); unknown kinds are advisory, never blocking.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export, export_to = "bindings/")]
+pub struct AuthSpec {
+    pub kind: String,
+    /// The SC game-server id the join binds to (e.g. `Industrial`); absent
+    /// for providers with no SC join.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub server_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, ToSchema)]
@@ -378,6 +399,30 @@ mod tests {
             pm.fingerprint.is_none(),
             "a manifest from before the fingerprint field must parse with None"
         );
+    }
+
+    #[test]
+    fn auth_block_round_trips_and_is_omitted_when_absent() {
+        let json = r#"{
+            "schema_version": 2,
+            "pack_id": "Create",
+            "pack_version": "0.1.9",
+            "generated_at": "2026-07-19T00:00:00Z",
+            "minecraft": {"version": "1.21.1"},
+            "loader": {"name": "neoforge", "version": "21.1.241"},
+            "java": {"major": 21},
+            "auth": {"kind": "smartycraft", "server_id": "Create"},
+            "mods": []
+        }"#;
+        let pm: PackManifest = serde_json::from_str(json).unwrap();
+        let auth = pm.auth.as_ref().expect("auth block parsed");
+        assert_eq!(auth.kind, "smartycraft");
+        assert_eq!(auth.server_id.as_deref(), Some("Create"));
+
+        // absent on manifests that predate the field, and never serialized as null
+        let bare = PackManifest { auth: None, ..pm };
+        let s = serde_json::to_string(&bare).unwrap();
+        assert!(!s.contains("\"auth\""), "absent auth must omit: {s}");
     }
 
     #[test]

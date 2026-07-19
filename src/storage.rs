@@ -1124,6 +1124,7 @@ mod tests {
             },
             java_major: 8,
             version: None,
+            auth: None,
             tags: vec![],
             featured: false,
             mods: vec![],
@@ -1179,6 +1180,7 @@ mod tests {
                 version: "14.23.5.2922".into(),
             },
             java: JavaSpec { major: 8 },
+            auth: None,
             mods: (0..mods)
                 .map(|i| ModEntry {
                     filename: format!("m{i}.jar"),

@@ -249,6 +249,7 @@ mod tests {
                 version: loader.into(),
             },
             java: JavaSpec { major: 21 },
+            auth: None,
             mods,
             assets: vec![AssetEntry {
                 dest: "resourcepacks/FreshAnimations.zip".into(),
