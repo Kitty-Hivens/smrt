@@ -47,8 +47,11 @@ impl Config {
             .map(|v| !matches!(v.as_str(), "false" | "0" | "no"))
             .unwrap_or(true);
 
+        // Default to the local bind so a fresh self-hosted instance emits
+        // working manifest URLs out of the box; a public deployment sets its
+        // real origin here.
         let mirror_base = std::env::var("SMRT_MIRROR_BASE")
-            .unwrap_or_else(|_| "https://smrt.hivens.dev".to_string());
+            .unwrap_or_else(|_| "http://127.0.0.1:9000".to_string());
 
         let nonempty = |k: &str| std::env::var(k).ok().filter(|s| !s.trim().is_empty());
         let github_client_id = nonempty("SMRT_GITHUB_CLIENT_ID");

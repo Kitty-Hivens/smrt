@@ -1,13 +1,15 @@
 # smrt
 
-HTTP mirror backend for SmartyCraft Minecraft servers.
+A self-hostable Minecraft mod mirror and pack registry.
 
-Sits between [Nexira](https://github.com/Kitty-Hivens/Nexira) and
-SmartyCraft: serves per-pack manifests (every mod and asset with an explicit
-source and verified hash), curated server metadata, and self-hosted jars for
-mods unreachable through Modrinth. SC's own infrastructure remains the source
-of truth for live game-server endpoints and authentication; the mirror does
-not proxy those.
+One binary serves per-pack manifests (every mod and asset with an explicit
+source and verified hash), a Modrinth-shaped mod registry over everything it
+caches, curated server metadata, and self-hosted jars for mods unreachable
+through Modrinth -- plus the control panel to curate all of it. Launchers are
+clients of the HTTP API; the reference deployment backs the
+[Nexira](https://github.com/Kitty-Hivens/Nexira) launcher for the SmartyCraft
+server family, but nothing in the mirror is tied to either -- point it at
+your own packs and run your own.
 
 What it does today:
 

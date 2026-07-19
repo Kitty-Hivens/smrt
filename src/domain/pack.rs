@@ -11,9 +11,21 @@ use utoipa::ToSchema;
 
 // ── Ownership ──────────────────────────────────────────────────────────────
 
-/// The mirror operator's GitHub uid. Packs authored before ownership existed
-/// backfill their `owner` to it, and operator-authored packs default to it.
-const OPERATOR_UID: i64 = 211033194;
+/// The deployment operator's GitHub uid, from `SMRT_OPERATOR_UID`, read once.
+/// Packs authored before ownership existed backfill their `owner` to it, and
+/// operator-authored packs default to it. 0 (no operator identity) when the
+/// variable is unset -- a fresh self-hosted instance works before one is
+/// configured. Lives here rather than `Config` because serde `default` fns
+/// take no arguments; the one env read is cached for the process lifetime.
+fn operator_uid() -> i64 {
+    static UID: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+    *UID.get_or_init(|| {
+        std::env::var("SMRT_OPERATOR_UID")
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0)
+    })
+}
 
 /// Curation tier. `official` = the mirror's own packs (the launcher's catalog,
 /// no personal byline); `community` = a member's pack. The launcher reads
@@ -42,7 +54,7 @@ pub enum Visibility {
 /// predating ownership is). `pub(crate)` so authoring code that mints a fresh
 /// operator pack reuses the same defaults instead of re-hardcoding them.
 pub(crate) fn default_owner() -> i64 {
-    OPERATOR_UID
+    operator_uid()
 }
 pub(crate) fn default_tier() -> PackTier {
     PackTier::Official
@@ -354,7 +366,7 @@ mod tests {
         assert!(s.description_md.is_none());
         // the ownership fields backfill via serde defaults, so a summary predating
         // them reads as an owned, official, published pack -- no migration needed
-        assert_eq!(s.owner, OPERATOR_UID);
+        assert_eq!(s.owner, default_owner());
         assert_eq!(s.tier, PackTier::Official);
         assert_eq!(s.visibility, Visibility::Published);
         assert!(s.fork_of.is_none());

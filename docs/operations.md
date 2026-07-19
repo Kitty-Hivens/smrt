@@ -8,8 +8,9 @@ Running the mirror and curating its content.
 |---|---|---|
 | `SMRT_BIND_ADDR` | `127.0.0.1:9000` | TCP bind address (nginx terminates TLS in front). |
 | `SMRT_STORAGE_DIR` | `/var/lib/smrt` | Storage root (see the tree in [architecture.md](architecture.md)). |
-| `SMRT_MIRROR_BASE` | `https://smrt.hivens.dev` | Public base URL baked into manifest source URLs. |
+| `SMRT_MIRROR_BASE` | `http://127.0.0.1:9000` | Public base URL baked into manifest source URLs. Set to your real origin on any public deployment. |
 | `SMRT_ADMIN_TOKEN` | none | Bearer for headless admin calls; admin routes refuse without a valid identity. |
+| `SMRT_OPERATOR_UID` | `0` | GitHub uid that owns operator-authored packs (and backfills ownership on packs predating the field). |
 | `SMRT_GITHUB_CLIENT_ID` / `SMRT_GITHUB_CLIENT_SECRET` | none | GitHub OAuth app for panel sign-in. Absent = OAuth login disabled. |
 | `SMRT_ADMIN_GITHUB_UIDS` | empty | Comma-separated GitHub uids granted Admin on sign-in. |
 | `SMRT_DEBUG_TOKEN` / `SMRT_DEBUG_GITHUB_UIDS` | none | The Debug rung above Admin: gates compat-affecting registry writes (authored classification, forced overrides). Leave unset in production unless needed. |

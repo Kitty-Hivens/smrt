@@ -5,8 +5,8 @@ parameters and response schemas live at `/docs` (Scalar over
 `/openapi.json`) on any running mirror; this page carries the semantics that
 a schema cannot: flows, ordering rules, compatibility promises.
 
-Base URL in production: `https://smrt.hivens.dev`. All public reads are
-anonymous.
+The reference deployment lives at `https://smrt.hivens.dev`; substitute your
+own origin throughout. All public reads are anonymous.
 
 ## Schema versioning and forward compatibility
 
