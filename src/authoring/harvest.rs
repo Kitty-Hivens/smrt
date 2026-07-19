@@ -129,6 +129,12 @@ pub struct ScanData {
     /// aliases are settled, so the flags land on whatever mod owns the project
     /// -- including a self-hosted provider linked to it by slug.
     pub project_envs: HashMap<String, (String, String)>,
+    /// Whether the Modrinth sha1-identity leg of this scan actually answered.
+    /// False on an error AND on a suspiciously empty answer (hashes sent,
+    /// nothing matched -- the shape a degraded upstream returns): `write_scan`
+    /// then keeps the last good `modrinth` relations instead of wiping the
+    /// layer and rewriting it with nothing.
+    pub modrinth_leg_ok: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -526,10 +532,18 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
     // longer cached keeps its edges); authored/curator relations are a different
     // source and untouched.
     conn.execute("DELETE FROM mod_package", [])?;
-    conn.execute(
-        "DELETE FROM relation WHERE source IN ('inferred', 'modrinth')",
-        [],
-    )?;
+    if scan.modrinth_leg_ok {
+        conn.execute(
+            "DELETE FROM relation WHERE source IN ('inferred', 'modrinth')",
+            [],
+        )?;
+    } else {
+        // the Modrinth identity leg did not answer this run: rewrite only the
+        // locally-derived layer and keep the last good modrinth relations --
+        // upstream weather must not erase derived state
+        tracing::warn!("modrinth leg degraded; keeping last good modrinth relations");
+        conn.execute("DELETE FROM relation WHERE source = 'inferred'", [])?;
+    }
 
     let mut sides_derived = 0i64;
     let mut match_policies_derived = 0i64;
@@ -1155,11 +1169,21 @@ pub async fn scan(
 
     // one batched identity lookup over every sha1 we know
     let sha_vec: Vec<String> = all_shas.iter().cloned().collect();
-    let modrinth_by_sha = match modrinth.version_files_by_sha1(&sha_vec).await {
-        Ok(m) => m,
+    let (modrinth_by_sha, modrinth_leg_ok) = match modrinth.version_files_by_sha1(&sha_vec).await {
+        Ok(m) if m.is_empty() && !sha_vec.is_empty() => {
+            // a degraded upstream can answer 200 with nothing matched; on a
+            // mirror that has ever matched anything, believing that would
+            // wipe the modrinth relation layer until the next healthy run
+            tracing::warn!(
+                hashes = sha_vec.len(),
+                "modrinth sha lookup returned no matches; treating the leg as degraded"
+            );
+            (m, false)
+        }
+        Ok(m) => (m, true),
         Err(e) => {
             tracing::warn!(error = %e, "modrinth lookup failed; harvesting jar-meta only");
-            HashMap::new()
+            (HashMap::new(), false)
         }
     };
 
@@ -1425,6 +1449,7 @@ pub async fn scan(
         modrinth_modids_learned,
         dep_project_slugs,
         project_envs,
+        modrinth_leg_ok,
     })
 }
 
@@ -1578,6 +1603,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         }
     }
 
@@ -1752,6 +1778,7 @@ mod tests {
             modrinth_modids_learned: 1,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
@@ -1791,6 +1818,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: HashMap::from([("NvZ9ZhwE".to_string(), "autoreglib".to_string())]),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.modrinth_selfhost_links, 1);
@@ -1824,6 +1852,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
@@ -1863,6 +1892,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: HashMap::from([("NvZ9ZhwE".to_string(), "autoreglib".to_string())]),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T1")).unwrap();
         assert_eq!(
@@ -1880,6 +1910,56 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    #[test]
+    fn a_degraded_modrinth_leg_keeps_the_last_good_relations() {
+        let r = Registry::open_in_memory().unwrap();
+        // healthy run first: sample's appleskin/jei land, including a modrinth
+        // relation seeded by hand on top of it
+        let scan = sample();
+        r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        r.with_conn_mut(|c| {
+            let apple = queries::mod_id_for_alias(c, "modid", "appleskin")?.unwrap();
+            upsert::upsert_relation(
+                c,
+                apple,
+                None,
+                "somedep",
+                None,
+                crate::registry::model::RelKind::Requires,
+                crate::registry::model::Source::Modrinth,
+                "T0",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let count = |r: &Registry, src: &str| -> i64 {
+            r.with_conn(|c| {
+                Ok(c.query_row(
+                    "SELECT count(*) FROM relation WHERE source = ?1",
+                    [src],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap()
+        };
+        assert_eq!(count(&r, "modrinth"), 1);
+
+        // degraded run: the modrinth layer survives untouched
+        let mut degraded = sample();
+        degraded.modrinth_leg_ok = false;
+        r.with_txn(|c| write_scan(c, &degraded, "T1")).unwrap();
+        assert_eq!(
+            count(&r, "modrinth"),
+            1,
+            "upstream weather must not erase the modrinth relation layer"
+        );
+
+        // healthy run again: the layer is authoritative and rewritten (the
+        // hand-seeded edge is not in the scan, so it goes away)
+        r.with_txn(|c| write_scan(c, &sample(), "T2")).unwrap();
+        assert_eq!(count(&r, "modrinth"), 0);
     }
 
     #[test]
@@ -1905,6 +1985,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
@@ -2062,6 +2143,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
 
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
@@ -2153,6 +2235,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(
@@ -2205,6 +2288,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.inferred_requires, 0, "ambiguous prefix -> no edge");
@@ -2241,6 +2325,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
 
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
@@ -2331,6 +2416,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
@@ -2373,6 +2459,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.declared_deps, 3);
@@ -2437,6 +2524,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(
@@ -2480,6 +2568,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.modrinth_deps, 0);
@@ -2578,6 +2667,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         assert_eq!(rep.mods, 1, "same modid -> one identity");
@@ -2609,6 +2699,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
@@ -2630,6 +2721,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         r.with_txn(|c| write_scan(c, &scan2, "T1")).unwrap();
         r.with_conn(|c| {
@@ -2656,6 +2748,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_txn(|c| {
@@ -2674,6 +2767,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         r.with_txn(|c| write_scan(c, &scan2, "T1")).unwrap();
         r.with_conn(|c| {
@@ -2709,6 +2803,7 @@ mod tests {
                 .iter()
                 .map(|(p, c, s)| (p.to_string(), (c.to_string(), s.to_string())))
                 .collect(),
+            modrinth_leg_ok: true,
         };
         let env = |r: &Registry| -> (Option<String>, Option<String>) {
             r.with_conn(|c| {
@@ -2772,6 +2867,7 @@ mod tests {
                 "NvZ9ZhwE".to_string(),
                 ("required".to_string(), "required".to_string()),
             )]),
+            modrinth_leg_ok: true,
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
@@ -2803,6 +2899,7 @@ mod tests {
             modrinth_modids_learned: 0,
             dep_project_slugs: Default::default(),
             project_envs: Default::default(),
+            modrinth_leg_ok: true,
         };
         r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
         r.with_conn(|c| {
