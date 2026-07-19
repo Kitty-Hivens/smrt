@@ -430,6 +430,7 @@
             filename: file.name,
             default_enabled: true,
             source: { type: 'smrt_cache', sha1 },
+            pulled: false,
           },
         ];
       }
@@ -468,6 +469,7 @@
         filename: sel.filename,
         default_enabled: sel.default_enabled ?? true,
         source: sel.source,
+        pulled: false,
       },
     ];
     return true;
@@ -523,6 +525,7 @@
           filename: `${sel.slug}.jar`,
           default_enabled: true,
           source: { type: 'modrinth', project_id: sel.project_id, version_id: sel.version_id },
+          pulled: false,
         },
       ];
     } else {

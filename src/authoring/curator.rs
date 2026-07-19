@@ -640,6 +640,7 @@ mod tests {
                 ..Display::default()
             }),
             slug: None,
+            pulled: false,
         });
 
         let report = enrich_from_mcmod_info(&mut cfg, dir.path()).unwrap();
@@ -669,6 +670,7 @@ mod tests {
                     None
                 },
                 slug: None,
+                pulled: false,
             });
         }
         let mut table = RoleTable::default();
@@ -717,6 +719,7 @@ mod tests {
             source: SourceDecl::SmrtCache { sha1: sha_jei },
             display: None,
             slug: None,
+            pulled: false,
         });
         cfg.mods.push(DeclaredMod {
             filename: "JEIAddon.jar".into(),
@@ -724,6 +727,7 @@ mod tests {
             source: SourceDecl::SmrtCache { sha1: sha_addon },
             display: None,
             slug: None,
+            pulled: false,
         });
 
         let report = infer_requires_from_mcmod_info(&mut cfg, dir.path()).unwrap();
@@ -751,6 +755,7 @@ mod tests {
             source: SourceDecl::SmrtCache { sha1: sha },
             display: None,
             slug: None,
+            pulled: false,
         });
 
         let report = infer_requires_from_mcmod_info(&mut cfg, dir.path()).unwrap();

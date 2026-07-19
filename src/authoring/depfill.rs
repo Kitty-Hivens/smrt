@@ -71,7 +71,93 @@ pub async fn fill_dependencies(
         registry.with_conn(|c| resolve::dependency_fill_plan(c, cfg))?
     };
     apply_requires(cfg, &plan.requires);
+    prune_orphaned_pulled(cfg);
     Ok(added_total)
+}
+
+/// Sticky-dependency merge, run by the save path BEFORE the fill: every pulled
+/// entry the previously-saved config carries and the incoming body lacks is
+/// carried over. A client that never saw a server-pulled dependency (a stale
+/// editor, a scripted PUT of a hand-written list) must not delete it -- and an
+/// upstream outage during the following fill must not either, because the
+/// entry no longer depends on being re-resolvable that moment. Curator-declared
+/// entries are never resurrected: removing one is an explicit act.
+pub fn merge_pulled(saved: &PackConfig, incoming: &mut PackConfig) {
+    let mut present: HashSet<String> = HashSet::new();
+    for m in &incoming.mods {
+        present.insert(source_identity(&m.source));
+        present.insert(format!("f:{}", m.filename));
+    }
+    for m in saved.mods.iter().filter(|m| m.pulled) {
+        // matched by source identity OR filename: either means the incoming
+        // body already carries this dependency in some form
+        if !present.contains(&source_identity(&m.source))
+            && !present.contains(&format!("f:{}", m.filename))
+        {
+            incoming.mods.push(m.clone());
+        }
+    }
+}
+
+/// The identity a pulled entry is matched by across saves: the Modrinth
+/// project (a re-pin to another version is still the same dependency), the
+/// cache sha1, the static path.
+fn source_identity(s: &SourceDecl) -> String {
+    match s {
+        SourceDecl::Modrinth { project_id, .. } => format!("m:{project_id}"),
+        SourceDecl::SmrtCache { sha1 } => format!("c:{sha1}"),
+        SourceDecl::SmrtStatic { rel_path } => format!("s:{rel_path}"),
+    }
+}
+
+/// Drop pulled entries no curator-declared mod still reaches through hard
+/// requires edges. Reachability, not per-edge presence, so a chain of pulled
+/// libraries (A -> lib1 -> lib2) lives exactly as long as its curator root
+/// does. Runs after `apply_requires`, which derives the edges from the
+/// registry locally -- available in any upstream weather.
+fn prune_orphaned_pulled(cfg: &mut PackConfig) {
+    let hard_edges: HashMap<&str, Vec<&str>> = cfg
+        .mods
+        .iter()
+        .map(|m| {
+            let targets = m
+                .display
+                .as_ref()
+                .map(|d| {
+                    d.requires
+                        .iter()
+                        .filter(|r| !r.optional)
+                        .map(|r| r.filename.as_str())
+                        .collect()
+                })
+                .unwrap_or_default();
+            (m.filename.as_str(), targets)
+        })
+        .collect();
+    let mut reachable: HashSet<String> = HashSet::new();
+    let mut queue: Vec<&str> = cfg
+        .mods
+        .iter()
+        .filter(|m| !m.pulled)
+        .map(|m| m.filename.as_str())
+        .collect();
+    while let Some(f) = queue.pop() {
+        if reachable.insert(f.to_string())
+            && let Some(targets) = hard_edges.get(f)
+        {
+            queue.extend(targets.iter().copied());
+        }
+    }
+    let before = cfg.mods.len();
+    cfg.mods
+        .retain(|m| !m.pulled || reachable.contains(&m.filename));
+    let dropped = before - cfg.mods.len();
+    if dropped > 0 {
+        tracing::info!(
+            dropped,
+            "pruned pulled dependencies nothing declares anymore"
+        );
+    }
 }
 
 /// Resolve a missing dependency to a declarable source, by priority: a Modrinth
@@ -128,6 +214,7 @@ async fn resolve_target(
                 },
                 display: None,
                 slug: None,
+                pulled: true,
             }));
         }
     }
@@ -189,6 +276,7 @@ fn resolve_from_cache(
                 },
                 display: None,
                 slug: None,
+                pulled: true,
             };
             // rows come version-ordered; keep the last acceptable one (newest)
             best = Some((i as i64, decl));
@@ -262,6 +350,7 @@ mod tests {
             },
             display: None,
             slug: None,
+            pulled: false,
         }
     }
 
@@ -301,6 +390,7 @@ mod tests {
             source: SourceDecl::SmrtCache { sha1: sha.into() },
             display: None,
             slug: None,
+            pulled: false,
         }
     }
 
@@ -371,6 +461,103 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(again, 0, "idempotent: nothing re-added");
+    }
+
+    // The sticky-dependency contract: a pulled entry survives a save body that
+    // lacks it, survives an upstream outage during the fill, and dies exactly
+    // when nothing declared reaches it anymore.
+    #[tokio::test]
+    async fn pulled_dependencies_stick_through_outages_and_prune_as_orphans() {
+        let r = Registry::open_in_memory().unwrap();
+        let a = add_artifact(&r, "moda", "1.0", "sha_a", "a.jar");
+        add_artifact(&r, "modb", "1.0", "sha_b", "modb-1.0.jar");
+        r.with_conn_mut(|c| {
+            upsert::upsert_relation(
+                c,
+                a,
+                None,
+                "modb",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        // the previously-saved config: curator mod + its pulled dependency
+        let mut saved = cfg(vec![cache_mod("a.jar", "sha_a")]);
+        saved.loader.name = "forge".into();
+        let mut dep = cache_mod("modb-1.0.jar", "sha_b");
+        dep.source = SourceDecl::SmrtCache {
+            sha1: "sha_b".into(),
+        };
+        dep.pulled = true;
+        saved.mods.push(dep);
+
+        // a stale client body: the curator mod only -- and Modrinth is down
+        let mut incoming = cfg(vec![cache_mod("a.jar", "sha_a")]);
+        incoming.loader.name = "forge".into();
+        merge_pulled(&saved, &mut incoming);
+        assert!(
+            incoming.mods.iter().any(|m| m.filename == "modb-1.0.jar"),
+            "the pulled dependency is carried over from the saved config"
+        );
+
+        let modrinth = Modrinth::with_base("http://127.0.0.1:9").unwrap();
+        let cached: HashSet<String> = ["sha_a", "sha_b"].iter().map(|s| s.to_string()).collect();
+        fill_dependencies(&mut incoming, &r, &modrinth, &cached)
+            .await
+            .unwrap();
+        let kept = incoming
+            .mods
+            .iter()
+            .find(|m| m.filename == "modb-1.0.jar")
+            .expect("outage weather must not drop a previously-resolved dependency");
+        assert!(kept.pulled, "the sticky marker survives the round trip");
+
+        // a curator-declared mod removed from the body is NOT resurrected
+        let mut without_curator = cfg(vec![]);
+        without_curator.loader.name = "forge".into();
+        merge_pulled(&saved, &mut without_curator);
+        assert!(
+            !without_curator.mods.iter().any(|m| m.filename == "a.jar"),
+            "removing a curator mod is an explicit act"
+        );
+        // ...and once the dependent is gone, the orphaned pulled dep prunes
+        fill_dependencies(&mut without_curator, &r, &modrinth, &cached)
+            .await
+            .unwrap();
+        assert!(
+            without_curator.mods.is_empty(),
+            "a pulled dependency nothing reaches is dropped"
+        );
+    }
+
+    // merge matches by source identity OR filename, so a re-pin of the same
+    // project (new version, new filename) never duplicates the dependency.
+    #[test]
+    fn merge_does_not_duplicate_a_repinned_project() {
+        let mk = |version_id: &str, filename: &str, pulled: bool| DeclaredMod {
+            filename: filename.into(),
+            default_enabled: true,
+            source: SourceDecl::Modrinth {
+                project_id: "PROJ".into(),
+                version_id: version_id.into(),
+            },
+            display: None,
+            slug: None,
+            pulled,
+        };
+        let saved = cfg(vec![mk("v1", "lib-1.0.jar", true)]);
+        let mut incoming = cfg(vec![mk("v2", "lib-2.0.jar", false)]);
+        merge_pulled(&saved, &mut incoming);
+        assert_eq!(
+            incoming.mods.len(),
+            1,
+            "same project under a new pin is the same dependency"
+        );
     }
 
     // One unresolvable target (here: a Modrinth-aliased dep with the API

@@ -870,6 +870,7 @@ mod tests {
             source,
             display: None::<Display>,
             slug: None,
+            pulled: false,
         }
     }
 
@@ -1309,6 +1310,7 @@ mod tests {
             source: cache(&"e".repeat(40)),
             display: None::<Display>,
             slug: None,
+            pulled: false,
         };
         let rep = r
             .with_conn(|c| {

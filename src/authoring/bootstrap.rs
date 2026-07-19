@@ -84,6 +84,7 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
                         },
                         display: None,
                         slug: None,
+                        pulled: false,
                     }
                 } else {
                     write_to_cache(&storage, &m.sha1, &m.bytes)?;
@@ -95,6 +96,7 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
                         },
                         display: None,
                         slug: None,
+                        pulled: false,
                     }
                 }
             } else {
@@ -107,6 +109,7 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
                     },
                     display: None,
                     slug: None,
+                    pulled: false,
                 }
             };
             declared_mods.push(decl);

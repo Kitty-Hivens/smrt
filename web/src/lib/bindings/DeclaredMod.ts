@@ -14,4 +14,12 @@ default_enabled: boolean, source: SourceDecl, display?: Display,
  * launcher can key an optional mod's toggle by it across version bumps (ADR
  * 0002). Optional; a Modrinth mod already has a stable key in its project id.
  */
-slug?: string, };
+slug?: string, 
+/**
+ * True when depfill appended this entry as a resolved hard dependency
+ * (server-managed), false for curator-declared mods. A pulled entry is
+ * sticky: a save whose body lacks it merges it back in (a client that
+ * never saw it must not delete it), and it is dropped only when no
+ * curator-declared mod still reaches it through hard requires edges.
+ */
+pulled: boolean, };

@@ -45,6 +45,7 @@ fn reconstruct_mod(m: &ModEntry) -> DeclaredMod {
         source: source_decl(&m.source, &m.sha1),
         display: m.display.clone(),
         slug: m.slug.clone(),
+        pulled: false,
     }
 }
 

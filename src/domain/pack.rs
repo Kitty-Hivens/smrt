@@ -271,6 +271,19 @@ pub struct DeclaredMod {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub slug: Option<String>,
+    /// True when depfill appended this entry as a resolved hard dependency
+    /// (server-managed), false for curator-declared mods. A pulled entry is
+    /// sticky: a save whose body lacks it merges it back in (a client that
+    /// never saw it must not delete it), and it is dropped only when no
+    /// curator-declared mod still reaches it through hard requires edges.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pulled: bool,
+}
+
+/// `skip_serializing_if` helper: omit `pulled` when false so existing configs
+/// and the wire stay byte-identical for curator-declared mods.
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

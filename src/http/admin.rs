@@ -760,7 +760,13 @@ async fn put_pack_config(
             cfg.owner = existing.owner;
             cfg.tier = existing.tier;
             cfg.visibility = existing.visibility;
-            cfg.fork_of = existing.fork_of;
+            cfg.fork_of = existing.fork_of.clone();
+            // Sticky pulled dependencies: entries the fill appended on earlier
+            // saves survive a body that lacks them (the client may never have
+            // seen them), independent of whether the fill below can reach
+            // Modrinth right now. Orphans are pruned by the fill itself once
+            // nothing declared reaches them.
+            crate::authoring::depfill::merge_pulled(&existing, &mut cfg);
         }
         Err(_) => match super::auth::pack_namespace_uid(&pack_id) {
             Some(uid) => {
