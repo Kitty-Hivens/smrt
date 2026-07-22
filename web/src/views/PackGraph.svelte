@@ -1,6 +1,7 @@
 <script lang="ts">
   import GraphCanvas from './GraphCanvas.svelte';
   import { api, ApiError } from '../lib/api';
+  import { notifyFail, toasts } from '../lib/toasts.svelte';
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
   import type { GraphData } from '../lib/types';
@@ -16,15 +17,13 @@
 
   let raw = $state<GraphData | null>(null);
   let loading = $state(true);
-  let err = $state('');
 
   async function load() {
     loading = true;
-    err = '';
     try {
       raw = await api.packGraph(packId);
     } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      notifyFail(e);
     } finally {
       loading = false;
     }
@@ -43,9 +42,8 @@
     </div>
     <button class="sm" onclick={load} disabled={loading}>{t('graph.refresh')}</button>
   </div>
-  {#if err}<div class="err mono">{err}</div>{/if}
 
-  <GraphCanvas {raw} {loading} onError={(m) => (err = m)}>
+  <GraphCanvas {raw} {loading} onError={(m) => toasts.push({ kind: 'error', text: m })}>
     {#snippet actions(focusId: number)}
       <button class="sm" onclick={() => route.openMod(focusId)}>{t('graph.openPage')}</button>
     {/snippet}
@@ -63,7 +61,7 @@
     align-items: center;
     gap: var(--space-3) var(--space-4);
     flex-wrap: wrap;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .legend {
     display: flex;
@@ -72,7 +70,7 @@
     margin-left: auto;
   }
   .lg {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--fg-dim);
     display: inline-flex;
     align-items: center;
@@ -91,16 +89,8 @@
     border-top: 1px dashed var(--fg-faint);
     height: 0;
   }
-  .err {
-    color: var(--danger);
-    background: var(--danger-soft);
-    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
-    border-radius: var(--radius-sm);
-    padding: var(--space-2) var(--space-3);
-    font-size: 12px;
-  }
   button.sm {
     padding: 4px 10px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
 </style>

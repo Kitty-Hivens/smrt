@@ -95,7 +95,7 @@
     max-width: 100%;
     font-family: var(--mono);
     font-weight: 400;
-    font-size: 13px;
+    font-size: var(--fs-md);
     padding: 9px 12px;
     box-shadow: none;
     text-align: left;
@@ -104,7 +104,7 @@
     width: 100%;
   }
   :global(.sel-trg.sm) {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 5px 10px;
   }
   :global(.sel-trg:hover) {
@@ -158,7 +158,7 @@
     padding: 6px 8px;
     border-radius: var(--radius-sm);
     font-family: var(--mono);
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     color: var(--fg-dim);
     cursor: pointer;
     user-select: none;

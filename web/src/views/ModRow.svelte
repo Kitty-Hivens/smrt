@@ -133,14 +133,14 @@
     flex-wrap: wrap;
   }
   .nm {
-    font-size: 13.5px;
+    font-size: var(--fs-md);
     font-weight: 600;
     color: var(--p-fg);
   }
   .l2 {
     display: flex;
     gap: 12px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--p-fg-dim);
     margin-top: 3px;
   }
@@ -152,13 +152,13 @@
     opacity: 0.6;
   }
   .desc {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--p-fg-dim);
     margin-top: 5px;
     line-height: 1.45;
   }
   .chip {
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     padding: 1px 7px;
     border-radius: 999px;
     border: 1px solid var(--p-outline);
@@ -192,7 +192,7 @@
     background: transparent;
     border: 1px solid var(--p-outline);
     color: var(--p-fg-dim);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     padding: 4px 9px;
     border-radius: 6px;
     cursor: pointer;
@@ -224,7 +224,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--p-fg);
   }
   .dot {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
@@ -31,7 +32,6 @@
   let mods = $state<ModSummary[]>([]);
   let unassigned = $state<UnassignedJar[]>([]);
   let removed = $state<string[]>([]);
-  let err = $state('');
   let loading = $state(true);
   let q = $state('');
 
@@ -51,11 +51,9 @@
   let uploading = $state(false);
   let upMsg = $state('');
 
-  const fail = (e: unknown) => (e instanceof ApiError ? `${e.status} ${e.body}` : String(e));
 
   async function load() {
     loading = true;
-    err = '';
     try {
       mods = await api.registryMods(q.trim() || undefined);
       // the needs-identity bucket and the takedown list are operator-only reads
@@ -65,7 +63,7 @@
         removed = rm.removed;
       }
     } catch (e) {
-      err = fail(e);
+      notifyFail(e);
     } finally {
       loading = false;
     }
@@ -112,7 +110,7 @@
     try {
       releases = await api.modReleases(m.mod_id);
     } catch (e) {
-      err = fail(e);
+      notifyFail(e);
     } finally {
       relLoading = false;
     }
@@ -123,7 +121,7 @@
     try {
       releases = await api.modReleases(openId);
     } catch (e) {
-      err = fail(e);
+      notifyFail(e);
     }
   }
 
@@ -139,7 +137,7 @@
       }
       upMsg = t('mm.uploaded', { count: n });
     } catch (x) {
-      upMsg = fail(x);
+      upMsg = detailOf(x);
     } finally {
       await load();
       uploading = false;
@@ -180,7 +178,7 @@
       await api.renameMod(m.mod_id, { name });
       await load();
     } catch (x) {
-      err = fail(x);
+      notifyFail(x);
     }
   }
 
@@ -194,7 +192,7 @@
     if (raw == null) return;
     const into = parseInt(raw.trim(), 10);
     if (!Number.isFinite(into) || into === m.mod_id) {
-      err = t('mm.mergeBadId');
+      toasts.push({ kind: 'error', text: t('mm.mergeBadId') });
       return;
     }
     const ok = await dialogs.confirm(t('mm.mergeConfirm', { from: m.mod_id, into }), {
@@ -206,7 +204,7 @@
       if (openId === m.mod_id) openId = null;
       await load();
     } catch (x) {
-      err = fail(x);
+      notifyFail(x);
     }
   }
 
@@ -231,7 +229,7 @@
     try {
       diffData = await api.repackDiff(f.sha1);
     } catch (e) {
-      diffErr = fail(e);
+      diffErr = detailOf(e);
     } finally {
       diffLoading = false;
     }
@@ -249,7 +247,7 @@
       await api.editRelease(rel.release_id, { version_number: v });
       await reloadOpen();
     } catch (x) {
-      err = fail(x);
+      notifyFail(x);
     }
   }
 
@@ -265,7 +263,7 @@
       await load();
       await reloadOpen();
     } catch (x) {
-      err = fail(x);
+      notifyFail(x);
     }
   }
 
@@ -283,7 +281,7 @@
       await load();
       await reloadOpen();
     } catch (x) {
-      err = fail(x);
+      notifyFail(x);
     }
   }
 
@@ -292,7 +290,7 @@
       await api.restoreJar(sha1);
       removed = removed.filter((s) => s !== sha1);
     } catch (x) {
-      err = fail(x);
+      notifyFail(x);
     }
   }
 
@@ -321,7 +319,6 @@
 </script>
 
 <div class="view">
-  {#if err}<div class="err mono">{err}</div>{/if}
 
   {#if canOperate}
     <DropZone
@@ -351,7 +348,7 @@
     </section>
   {/if}
 
-  <input class="search" bind:value={q} oninput={onSearch} placeholder={t('mm.search')} />
+  <input class="search" bind:value={q} oninput={onSearch} placeholder={t('mm.search')} aria-label={t('mm.search')} />
 
   <div class="panel modlist">
     {#each mods as m (m.mod_id)}
@@ -544,10 +541,10 @@
     border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
     border-radius: var(--radius-sm);
     padding: var(--space-3) var(--space-4);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .upmsg {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     margin-top: -8px;
   }
   .bucket {
@@ -564,7 +561,7 @@
     margin-bottom: 4px;
   }
   .btitle {
-    font-size: 13px;
+    font-size: var(--fs-md);
     color: var(--warn);
   }
   .urow {
@@ -578,7 +575,7 @@
     flex: 1;
     display: flex;
     gap: var(--space-3);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .search {
     max-width: 420px;
@@ -609,7 +606,7 @@
   }
   .chev {
     color: var(--fg-faint);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     flex: none;
     transition: transform 0.15s ease;
   }
@@ -622,7 +619,7 @@
     min-width: 0;
   }
   .mname {
-    font-size: 14px;
+    font-size: var(--fs-lg);
     font-weight: 600;
   }
   .namelink {
@@ -630,7 +627,7 @@
     border: none;
     border-radius: 0;
     padding: 0;
-    font-size: 14px;
+    font-size: var(--fs-lg);
     font-weight: 600;
     color: var(--fg);
     cursor: pointer;
@@ -643,7 +640,7 @@
   }
   .mby {
     color: var(--fg-faint);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     font-weight: 400;
     margin-left: 6px;
   }
@@ -667,10 +664,10 @@
   }
   .ell {
     color: var(--fg-faint);
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .fcount {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--fg-faint);
     margin-left: 1px;
   }
@@ -682,7 +679,7 @@
     padding: 0 0 4px;
   }
   .modid {
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .factions {
     display: flex;
@@ -700,24 +697,24 @@
     background: var(--panel-2);
   }
   .diffsum {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--fg-dim);
     margin-bottom: 6px;
   }
   .diffh {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--warn);
     margin: 4px 0;
   }
   .diffrow {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     padding: 1px 0;
     overflow-wrap: anywhere;
   }
   .cnt {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--fg-faint);
     flex-shrink: 0;
   }
@@ -738,7 +735,7 @@
     padding: 4px 0;
   }
   .rver {
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
   }
   .file {
     display: flex;
@@ -751,19 +748,19 @@
     min-width: 0;
   }
   .fname {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .fmeta {
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .chip {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     padding: 1px 7px;
     border: 1px solid var(--seam);
     border-radius: 999px;
@@ -786,7 +783,7 @@
     border-radius: 0;
     color: var(--fg-dim);
     padding: 2px 6px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     flex-shrink: 0;
   }
   .link:hover {
@@ -797,23 +794,23 @@
   }
   button.sm {
     padding: 4px 10px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     flex-shrink: 0;
   }
   .empty,
   .s {
     padding: var(--space-3);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .sec {
-    font-size: 13px;
+    font-size: var(--fs-md);
     color: var(--fg-dim);
     text-transform: uppercase;
     letter-spacing: 0.08em;
     margin: var(--space-3) 0 6px;
   }
   .cache-head {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     margin-bottom: 8px;
   }
   .rmrow {
@@ -822,7 +819,7 @@
     justify-content: space-between;
     gap: var(--space-3);
     padding: 4px var(--space-3);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     border-bottom: 1px solid var(--seam);
   }
 </style>

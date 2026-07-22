@@ -78,7 +78,7 @@
     border-radius: var(--radius-md);
     background: var(--bg-2);
     color: var(--fg-dim);
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     cursor: pointer;
     text-align: center;
     transition:

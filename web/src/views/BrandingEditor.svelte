@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { notifyFail } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
   import DropZone from './ui/DropZone.svelte';
@@ -13,7 +14,6 @@
   let dest = $state<Dest>('asset');
   let files = $state<string[]>([]);
   let busy = $state(false);
-  let err = $state('');
   // a raster icon/banner drop opens the cropper before upload
   let crop = $state<{ file: File; aspect: number; target: 'icon' | 'banner' } | null>(null);
   const RASTER = /^image\/(png|jpeg|webp|gif)$/;
@@ -21,12 +21,11 @@
   const isRaster = (f: File) => RASTER.test(f.type) || /\.(png|jpe?g|webp|gif)$/i.test(f.name);
 
   async function load() {
-    err = '';
     try {
       files = (await api.packStatic(packId)).files;
     } catch (e) {
       if (!(e instanceof ApiError && e.status === 404)) {
-        err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+        notifyFail(e);
       }
       files = [];
     }
@@ -43,14 +42,13 @@
 
   async function uploadOne(relPath: string, data: File | Blob) {
     busy = true;
-    err = '';
     try {
       const name = relPath.split('/').pop() || 'file';
       const f = data instanceof File ? data : new File([data], name, { type: data.type });
       await api.uploadStatic(packId, relPath, f);
       await load();
     } catch (x) {
-      err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+      notifyFail(x);
     } finally {
       busy = false;
     }
@@ -75,12 +73,11 @@
     if (dest === 'asset') {
       // an asset drop may carry many; no crop
       busy = true;
-      err = '';
       try {
         for (const file of dropped) await api.uploadStatic(packId, destFor(file), file);
         await load();
       } catch (x) {
-        err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+        notifyFail(x);
       } finally {
         busy = false;
       }
@@ -114,7 +111,7 @@
       await api.deleteStatic(packId, f);
       await load();
     } catch (x) {
-      err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+      notifyFail(x);
     }
   }
 
@@ -157,7 +154,6 @@
 />
 <div class="formats faint">{t('be.formats')}</div>
 
-{#if err}<div class="err mono">{err}</div>{/if}
 
 <div class="grid">
   {#each files as f}
@@ -192,7 +188,7 @@
 
 <style>
   .hint {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     margin: 0 0 var(--space-3);
     max-width: 720px;
     line-height: 1.5;
@@ -204,13 +200,13 @@
     margin-bottom: var(--space-3);
   }
   .ml {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--fg-dim);
     margin-right: var(--space-1);
   }
   .mode {
     padding: 5px 12px;
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     color: var(--fg-dim);
     background: transparent;
   }
@@ -220,17 +216,8 @@
     border-color: var(--seam-bright);
   }
   .formats {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     margin: var(--space-2) 0 var(--space-4);
-  }
-  .err {
-    color: var(--danger);
-    background: var(--danger-soft);
-    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
-    border-radius: var(--radius-sm);
-    padding: var(--space-2) var(--space-3);
-    font-size: 12px;
-    margin-bottom: var(--space-3);
   }
   .grid {
     display: grid;
@@ -253,13 +240,13 @@
     place-items: center;
     color: var(--fg-faint);
     background: var(--bg);
-    font-size: 18px;
+    font-size: var(--fs-xl);
   }
   .meta {
     padding: 8px 10px;
   }
   .fn {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -272,6 +259,6 @@
   }
   button.danger.sm {
     padding: 3px 9px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
 </style>

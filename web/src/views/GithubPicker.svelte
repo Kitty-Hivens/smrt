@@ -50,11 +50,11 @@
     <p class="muted hint">{t('gh.hint')}</p>
     <div class="form">
       <Field label={t('gh.repo')}>
-        <input class="mono" bind:value={repo} placeholder="Kitty-Hivens/open-smrt-network" />
+        <input class="mono" bind:value={repo} placeholder="Kitty-Hivens/open-smrt-network" aria-label="Kitty-Hivens/open-smrt-network" />
       </Field>
-      <Field label={t('gh.tag')}><input class="mono" bind:value={tag} placeholder="v1.0.0" /></Field>
+      <Field label={t('gh.tag')}><input class="mono" bind:value={tag} placeholder="v1.0.0" aria-label="v1.0.0" /></Field>
       <Field label={t('gh.asset')}>
-        <input class="mono" bind:value={asset} placeholder="open-smrt-network-1.0.0.jar" />
+        <input class="mono" bind:value={asset} placeholder="open-smrt-network-1.0.0.jar" aria-label="open-smrt-network-1.0.0.jar" />
       </Field>
     </div>
     {#if err}<div class="err mono">{err}</div>{/if}
@@ -85,13 +85,13 @@
     margin-bottom: var(--space-2);
   }
   :global(.ghp-h) {
-    font-size: 14px;
+    font-size: var(--fs-lg);
   }
   .sp {
     flex: 1;
   }
   .hint {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     margin: 0 0 var(--space-4);
   }
   .form {
@@ -101,7 +101,7 @@
   }
   .err {
     color: var(--danger);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     margin-top: var(--space-3);
   }
   .foot {

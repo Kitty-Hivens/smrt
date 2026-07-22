@@ -48,7 +48,7 @@
     margin-top: 4px;
   }
   .st {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--fg-dim);
   }
   .st.ok {
@@ -62,7 +62,7 @@
     border: 1px solid var(--seam);
     padding: 14px;
     margin: 10px 0 0;
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     line-height: 1.6;
     white-space: pre-wrap;
     word-break: break-word;

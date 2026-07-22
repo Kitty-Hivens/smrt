@@ -354,7 +354,7 @@
     class="pick mono"
     list="gv-mods"
     bind:value={query}
-    placeholder={t('graph.focusPlaceholder')}
+    placeholder={t('graph.focusPlaceholder')} aria-label={t('graph.focusPlaceholder')}
     onchange={applyQuery}
     onkeydown={(e) => {
       if (e.key === 'Enter') {
@@ -427,11 +427,11 @@
   }
   .pick {
     width: 260px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 6px 10px;
   }
   .fname {
-    font-size: 13px;
+    font-size: var(--fs-md);
     font-weight: 600;
     margin-left: var(--space-2);
   }
@@ -446,7 +446,7 @@
     border-radius: 0;
     padding: 4px 10px;
     font-family: var(--mono);
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     color: var(--fg-dim);
     background: transparent;
   }
@@ -458,11 +458,11 @@
     color: var(--accent-strong);
   }
   .count {
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   button.sm {
     padding: 4px 10px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
 
   .flowwrap {
@@ -479,7 +479,7 @@
     inset: 0;
     display: grid;
     place-items: center;
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .prompt {
     align-content: center;
@@ -494,7 +494,7 @@
 
   /* node chrome, themed with the panel tokens rather than Svelte Flow defaults */
   .flowwrap :global(.svelte-flow__node) {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-family: var(--mono);
     padding: 6px 10px;
     border-radius: var(--radius-sm);

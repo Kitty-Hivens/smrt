@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { notifyFail } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
@@ -28,7 +29,6 @@
   let packs = $state<PackSummary[]>([]);
   let community = $state<CommunityPack[]>([]);
   let loading = $state(true);
-  let err = $state('');
 
   let openId = $state<string | null>(null);
   let manifest = $state<PackManifest | null>(null);
@@ -36,13 +36,12 @@
 
   async function load() {
     loading = true;
-    err = '';
     try {
       const [p, c] = await Promise.all([api.packs(), api.community()]);
       packs = p.packs;
       community = c;
     } catch (e) {
-      err = String(e);
+      notifyFail(e);
     } finally {
       loading = false;
     }
@@ -68,7 +67,7 @@
     try {
       manifest = await api.manifest(p.pack_id);
     } catch (e) {
-      err = String(e);
+      notifyFail(e);
     } finally {
       mLoading = false;
     }
@@ -92,7 +91,7 @@
       await api.fork(p.pack_id, name);
       await dialogs.confirm(t('browse.forked', { name }), { title: t('browse.fork') });
     } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      notifyFail(e);
     }
   }
 
@@ -103,7 +102,6 @@
 </script>
 
 <div class="view">
-  {#if err}<div class="err mono">{err}</div>{/if}
 
   <TabStrip variant="pill" value={tab} tabs={tabTabs} onChange={(v) => (tab = v as Tab)} />
 
@@ -190,25 +188,17 @@
     flex-direction: column;
     gap: var(--space-4);
   }
-  .err {
-    color: var(--danger);
-    background: var(--danger-soft);
-    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
-    border-radius: var(--radius-sm);
-    padding: var(--space-3) var(--space-4);
-    font-size: 12px;
-  }
   .plist {
     overflow: hidden;
   }
   .pby {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     margin-top: 2px;
   }
   .forkbtn {
     align-self: flex-start;
     padding: 5px 14px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .pack {
     border-bottom: 1px solid var(--seam);
@@ -233,7 +223,7 @@
   }
   .chev {
     color: var(--fg-faint);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     flex: none;
     transition: transform 0.15s ease;
   }
@@ -253,26 +243,26 @@
     place-items: center;
     background: var(--panel-3);
     color: var(--fg-dim);
-    font-size: 14px;
+    font-size: var(--fs-lg);
   }
   .pinfo {
     flex: 1;
     min-width: 0;
   }
   .pname {
-    font-size: 14px;
+    font-size: var(--fs-lg);
     font-weight: 600;
   }
   .feat {
     margin-left: 8px;
-    font-size: 9px;
+    font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--accent);
     font-weight: 400;
   }
   .ptag {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     margin-top: 2px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -285,7 +275,7 @@
     flex-shrink: 0;
   }
   .pver {
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .detail {
     padding: 2px var(--space-3) var(--space-4) 42px;
@@ -294,13 +284,13 @@
     gap: var(--space-3);
   }
   .desc {
-    font-size: 13px;
+    font-size: var(--fs-md);
     line-height: 1.55;
     color: var(--fg-dim);
     max-width: 65ch;
   }
   .modhead {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: 0.08em;
   }
@@ -333,13 +323,13 @@
     text-underline-offset: 2px;
   }
   .mn {
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .opt {
-    font-size: 9px;
+    font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--fg-faint);
@@ -347,7 +337,7 @@
   }
   .s {
     padding: var(--space-4);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
 
   /* Empty catalog: a centred block with somewhere to go, not a thin bar of text
@@ -370,13 +360,13 @@
     margin-bottom: var(--space-1);
   }
   .etitle {
-    font-size: 15px;
+    font-size: var(--fs-lg);
     font-weight: 600;
   }
   .esub {
     margin: 0;
     max-width: 44ch;
-    font-size: 13px;
+    font-size: var(--fs-md);
     line-height: 1.55;
   }
   .emptystate .primary {

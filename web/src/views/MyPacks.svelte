@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { notifyFail } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
   import { reload } from '../lib/reload.svelte';
@@ -19,19 +20,17 @@
   let authoring = $state<string[]>([]);
   let uploads = $state<UploadRow[]>([]);
   let packEdit = $state<string | null>(null);
-  let err = $state('');
   let loading = $state(true);
 
   async function load() {
     loading = true;
-    err = '';
     try {
       const [s, a, u] = await Promise.all([api.mePacks(), api.meAuthoring(), api.myUploads()]);
       summaries = s;
       authoring = a;
       uploads = u;
     } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      notifyFail(e);
     } finally {
       loading = false;
     }
@@ -68,7 +67,7 @@
       await api.setVisibility(p.pack_id, next);
       await load();
     } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      notifyFail(e);
     }
   }
 
@@ -92,7 +91,6 @@
   {/key}
 {:else}
   <div class="view">
-    {#if err}<div class="err mono">{err}</div>{/if}
     <div class="bar">
       <button class="primary" onclick={create}>{t('mypacks.new')}</button>
     </div>
@@ -161,7 +159,7 @@
   }
   .err {
     color: var(--danger);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .bar {
     margin-bottom: 4px;
@@ -196,25 +194,25 @@
     border-radius: var(--radius-sm);
     background: var(--panel-3);
     color: var(--fg-dim);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     font-weight: 700;
   }
   .col {
     min-width: 0;
   }
   .nm {
-    font-size: 14px;
+    font-size: var(--fs-lg);
     font-weight: 600;
   }
   .mm {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     margin-top: 2px;
   }
   .grow {
     flex: 1;
   }
   .tag {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     padding: 2px 8px;
     border: 1px solid var(--seam);
     border-radius: 999px;
@@ -234,17 +232,17 @@
   .pub {
     flex-shrink: 0;
     padding: 4px 10px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .empty {
     padding: var(--space-4);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .uploads {
     overflow: hidden;
   }
   .uptitle {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -258,7 +256,7 @@
     gap: var(--space-3);
     padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--seam);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .uprow:last-child {
     border-bottom: none;
@@ -268,10 +266,10 @@
     text-overflow: ellipsis;
   }
   .upnote {
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .upst {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     flex-shrink: 0;

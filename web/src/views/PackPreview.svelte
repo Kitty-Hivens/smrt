@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { notifyFail, toasts } from '../lib/toasts.svelte';
   import { t } from '../lib/i18n.svelte';
   import JobLog from './JobLog.svelte';
   import ModRow from './ModRow.svelte';
@@ -23,7 +24,6 @@
   let jobId = $state<string | null>(null);
   let running = $state(false);
   let showLog = $state(false);
-  let err = $state('');
   let result = $state<DryRun | null>(null);
   let prev = $state<PackManifest | null>(null);
   let prevMissing = $state(false);
@@ -69,7 +69,6 @@
 
   async function runPreview() {
     running = true;
-    err = '';
     result = null;
     heroBroken = false;
     showLog = true;
@@ -78,7 +77,7 @@
       const { job_id } = await api.buildPack(packId, { dryRun: true });
       jobId = job_id;
     } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      notifyFail(e);
       running = false;
     }
   }
@@ -94,10 +93,10 @@
         result = js.result;
         showLog = false;
       } else {
-        err = 'preview finished without a result';
+        toasts.push({ kind: 'error', text: t('prev.noResult') });
       }
     } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      notifyFail(e);
     }
   }
 
@@ -125,7 +124,6 @@
     </button>
   </div>
 
-  {#if err}<div class="err mono">{err}</div>{/if}
 
   {#if running && !jobId}
     <div class="note">{t('prev.starting')}</div>
@@ -363,7 +361,7 @@
     border-radius: 10px;
     padding: 0 0 18px;
     overflow: hidden;
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .ctl {
     display: flex;
@@ -378,14 +376,14 @@
     color: var(--p-fg);
   }
   .ctl .sub {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--p-fg-dim);
   }
   .sp {
     flex: 1;
   }
   .ver {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--p-accent);
   }
   .refresh {
@@ -399,15 +397,10 @@
   .refresh:hover:not(:disabled) {
     border-color: var(--p-accent);
   }
-  .err {
-    color: var(--p-danger);
-    font-size: 12px;
-    margin: 12px 16px;
-  }
   .note {
     color: var(--p-fg-dim);
     margin: 14px 16px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .skeleton {
     margin: 14px 16px 0;
@@ -450,7 +443,7 @@
     border: 1px solid var(--p-outline);
     border-radius: 8px;
     background: var(--p-surface);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .diff.clean {
     border-color: color-mix(in srgb, var(--p-ok) 35%, transparent);
@@ -475,7 +468,7 @@
     border: none;
     color: var(--p-accent);
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 0;
   }
   .difflist {
@@ -484,7 +477,7 @@
     border: 1px solid var(--p-outline);
     border-radius: 8px;
     background: var(--p-bg);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 1.7;
     max-height: 220px;
     overflow: auto;
@@ -518,20 +511,20 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 30px;
+    font-size: var(--fs-3xl);
     font-weight: 700;
     color: #fff;
   }
   .herotext h1 {
     margin: 0;
-    font-size: 24px;
+    font-size: var(--fs-2xl);
     font-weight: 700;
     color: #fff;
   }
   .herotext .tag {
     margin: 5px 0 0;
     color: rgba(255, 255, 255, 0.88);
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .metachips {
     display: flex;
@@ -540,7 +533,7 @@
     margin-top: 11px;
   }
   .metachips .mc {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     padding: 2px 9px;
     border-radius: 999px;
     background: rgba(0, 0, 0, 0.4);
@@ -572,7 +565,7 @@
     background: var(--p-bg);
     padding: 1px 5px;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .about :global(pre) {
     background: var(--p-bg);
@@ -602,13 +595,13 @@
   }
   .warns h3 {
     margin: 0 0 8px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--p-danger);
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
   .warn-line {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--p-fg);
     padding: 2px 0;
   }
@@ -617,7 +610,7 @@
     margin: 18px 16px 0;
   }
   .sec {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--p-fg-dim);
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -637,7 +630,7 @@
     color: var(--p-fg-dim);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     cursor: pointer;
     padding: 0 0 9px;
   }
@@ -665,11 +658,11 @@
     background: var(--p-surface);
   }
   .arow .anm {
-    font-size: 13px;
+    font-size: var(--fs-md);
     color: var(--p-fg);
   }
   .arow .apath {
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .arow .faint:last-child {
     margin-left: auto;

@@ -2,6 +2,7 @@
   import GraphCanvas, { type EdgeFacts } from './GraphCanvas.svelte';
   import Select from './ui/Select.svelte';
   import { api, ApiError } from '../lib/api';
+  import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
@@ -21,17 +22,14 @@
   let loader = $state<string | null>(null);
 
   let raw = $state<GraphData | null>(null);
-  let err = $state('');
   let loading = $state(true);
   let canDebug = $state(false);
 
   const KINDS = ['requires', 'optional_dep', 'recommends', 'conflicts', 'breaks', 'provides'];
 
-  const fail = (e: unknown) => (e instanceof ApiError ? `${e.status} ${e.body}` : String(e));
 
   async function load() {
     loading = true;
-    err = '';
     try {
       const [me, sl] = await Promise.all([api.me(), api.graphSlices()]);
       canDebug = isDebug(me?.role);
@@ -43,7 +41,7 @@
       }
       raw = await api.graph(mc ?? undefined, loader ?? undefined);
     } catch (e) {
-      err = fail(e);
+      notifyFail(e);
     } finally {
       loading = false;
     }
@@ -76,11 +74,10 @@
   async function loadSlice() {
     if (mc == null || loader == null) return;
     loading = true;
-    err = '';
     try {
       raw = await api.graph(mc, loader);
     } catch (e) {
-      err = fail(e);
+      notifyFail(e);
     } finally {
       loading = false;
     }
@@ -102,7 +99,7 @@
     if (raw_ == null) return null;
     const kind = raw_.trim();
     if (!KINDS.includes(kind)) {
-      err = t('graph.badKind');
+      toasts.push({ kind: 'error', text: t('graph.badKind') });
       return null;
     }
     return kind;
@@ -116,7 +113,7 @@
       await api.authorRelation({ from_mod_id: from, target_modid: targetModid, kind });
       await load();
     } catch (e) {
-      err = fail(e);
+      notifyFail(e);
     }
   }
 
@@ -133,7 +130,7 @@
           remove: true,
         });
       } catch (e) {
-        err = fail(e);
+        notifyFail(e);
         await load(); // restore the view to the server truth on failure
       }
     }
@@ -155,7 +152,6 @@
       <span class="lg" style="--c:var(--fg-dim)">{t('graph.optional')}</span>
     </div>
   </div>
-  {#if err}<div class="err mono">{err}</div>{/if}
 
   {#if slices.length > 1}
     <div class="slicebar">
@@ -191,7 +187,7 @@
     {canDebug}
     {onAuthorEdge}
     {onRemoveEdges}
-    onError={(m) => (err = m)}
+    onError={(m) => toasts.push({ kind: 'error', text: m })}
   >
     {#snippet actions(focusId: number)}
       <button class="sm" onclick={() => route.openMod(focusId)}>{t('graph.openPage')}</button>
@@ -210,7 +206,7 @@
     align-items: center;
     gap: var(--space-3) var(--space-4);
     flex-wrap: wrap;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .legend {
     display: flex;
@@ -219,7 +215,7 @@
     margin-left: auto;
   }
   .lg {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--fg-dim);
     display: inline-flex;
     align-items: center;
@@ -233,20 +229,12 @@
     display: inline-block;
   }
   .dbg {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--fg-dim);
-  }
-  .err {
-    color: var(--danger);
-    background: var(--danger-soft);
-    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
-    border-radius: var(--radius-sm);
-    padding: var(--space-2) var(--space-3);
-    font-size: 12px;
   }
   button.sm {
     padding: 4px 10px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
 
   /* slice bar: which world the graph is answering for */
@@ -257,7 +245,7 @@
     flex-wrap: wrap;
   }
   .slabel {
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--fg-faint);

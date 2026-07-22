@@ -75,7 +75,7 @@
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--fg-dim);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 5px 14px;
   }
   :global(.tabstrip.pill .tabstrip-trg:hover) {

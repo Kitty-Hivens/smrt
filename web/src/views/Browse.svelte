@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { notifyFail } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
   import { reload } from '../lib/reload.svelte';
@@ -29,13 +30,11 @@
   let authoring = $state<string[]>([]);
   let cacheBytes = $state(0);
   let cacheCount = $state(0);
-  let err = $state('');
   let loading = $state(true);
 
   async function loadAll() {
     loading = true;
     reload.setBusy(true);
-    err = '';
     try {
       const [p, s, md, u, a, rm, ci] = await Promise.all([
         api.adminSummaries(),
@@ -55,7 +54,7 @@
       cacheBytes = ci.entries.reduce((n, e) => n + e.size_bytes, 0);
       cacheCount = ci.entries.length;
     } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      notifyFail(e);
     } finally {
       loading = false;
       reload.setBusy(false);
@@ -77,7 +76,7 @@
       await api.deleteServer(id);
       await loadAll();
     } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      notifyFail(e);
     }
   }
 
@@ -89,7 +88,7 @@
       await api.setVisibility(p.pack_id, next);
       await loadAll();
     } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      notifyFail(e);
     }
   }
 
@@ -186,7 +185,6 @@
 </script>
 
 <div class="view">
-  {#if err}<div class="err mono">{err}</div>{/if}
 
   <div class="body">
     {#if route.section === 'overview'}
@@ -294,7 +292,7 @@
       {:else}
         <div class="bar">
           <button class="primary" onclick={newPack}>{t('packs.new')}</button>
-          <input class="tfilter mono" bind:value={packFilter} placeholder={t('packs.filter')} />
+          <input class="tfilter mono" bind:value={packFilter} placeholder={t('packs.filter')} aria-label={t('packs.filter')} />
         </div>
         <div class="panel">
           <DataTable data={packRows} columns={packColumns} filter={packFilter} row={packRow} empty={packEmpty} />
@@ -435,7 +433,7 @@
     border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
     border-radius: var(--radius-sm);
     padding: var(--space-3) var(--space-4);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .ov {
     display: flex;
@@ -459,7 +457,7 @@
     border-right: none;
   }
   .stat .k {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--fg-dim);
     display: flex;
     align-items: center;
@@ -473,20 +471,20 @@
   }
   .stat .v {
     font-family: var(--mono);
-    font-size: 30px;
+    font-size: var(--fs-3xl);
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     letter-spacing: 0;
     margin-top: 6px;
   }
   .stat .v .unit {
-    font-size: 15px;
+    font-size: var(--fs-lg);
     font-weight: 600;
     color: var(--fg-dim);
     margin-left: 3px;
   }
   .stat .s {
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     color: var(--fg-faint);
     margin-top: 3px;
   }
@@ -509,7 +507,7 @@
   }
   .card h3 {
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -546,7 +544,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     color: var(--fg-dim);
     flex: none;
@@ -556,11 +554,11 @@
   }
   .lrow .nm {
     font-weight: 600;
-    font-size: 13.5px;
+    font-size: var(--fs-md);
   }
   .lrow .mm {
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--fg-faint);
   }
   .lrow .grow {
@@ -571,7 +569,7 @@
     align-items: center;
     gap: 6px;
     white-space: nowrap;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     padding: 3px 10px;
     border-radius: 999px;
@@ -593,7 +591,7 @@
   }
   .seclabel {
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -606,14 +604,14 @@
     gap: var(--space-3);
     padding: 10px var(--space-4);
     border-bottom: 1px solid var(--seam);
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .frow:last-child {
     border-bottom: none;
   }
   .frow .ft {
     color: var(--fg-faint);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     white-space: nowrap;
     font-family: var(--mono);
   }
@@ -640,14 +638,14 @@
     width: 240px;
     max-width: 100%;
     padding: 7px 11px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .actions {
     white-space: nowrap;
   }
   .actions button {
     padding: 4px 10px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     margin-right: 6px;
   }
   .vis-published {

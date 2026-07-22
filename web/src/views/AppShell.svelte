@@ -178,7 +178,7 @@
     gap: 9px;
     font-family: var(--mono);
     font-weight: 700;
-    font-size: 15px;
+    font-size: var(--fs-lg);
     letter-spacing: 0;
     padding: var(--space-2) var(--space-3) var(--space-5);
   }
@@ -211,7 +211,7 @@
     padding: 10px 12px 10px 14px;
     color: var(--fg-dim);
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     letter-spacing: 0.08em;
     text-transform: uppercase;
     box-shadow: none;
@@ -244,16 +244,16 @@
     padding: var(--space-3) var(--space-2) var(--space-1);
   }
   .health {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     padding: 0 var(--space-2);
   }
   .signout {
     width: 100%;
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
   }
   .signin {
     width: 100%;
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
   }
   .who {
     display: flex;
@@ -271,7 +271,7 @@
     background: var(--panel-2);
   }
   .whotext {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -333,7 +333,7 @@
   }
   .crumb {
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--fg);
@@ -344,7 +344,7 @@
   .refresh {
     position: relative;
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     letter-spacing: 0.06em;
     text-transform: uppercase;
     padding: 6px 12px;
@@ -388,7 +388,7 @@
     border: none;
     border-radius: 0;
     padding: 5px 11px;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     letter-spacing: 0.04em;
     color: var(--fg-dim);
     background: transparent;

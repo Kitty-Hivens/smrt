@@ -36,15 +36,15 @@
     min-width: 0;
   }
   .login {
-    font-size: 18px;
+    font-size: var(--fs-xl);
     font-weight: 700;
   }
   .meta {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     margin-top: 3px;
   }
   .chip {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     padding: 2px 10px;
     border: 1px solid var(--seam);
     border-radius: 999px;

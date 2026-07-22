@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from '../lib/api';
+  import { notifyFail } from '../lib/toasts.svelte';
   import { t } from '../lib/i18n.svelte';
   import type { UserRow } from '../lib/types';
   import Avatar from './Avatar.svelte';
@@ -9,18 +10,16 @@
 
   let users = $state<UserRow[]>([]);
   let meUid = $state<number | null>(null);
-  let err = $state('');
   let loading = $state(true);
 
   async function load() {
     loading = true;
-    err = '';
     try {
       const [u, me] = await Promise.all([api.listUsers(), api.me()]);
       users = u;
       meUid = me?.uid ?? null;
     } catch (e) {
-      err = String(e);
+      notifyFail(e);
     } finally {
       loading = false;
     }
@@ -28,12 +27,11 @@
   load();
 
   async function setRole(u: UserRow, role: string) {
-    err = '';
     try {
       await api.setUserRole(u.github_uid, role);
       await load();
     } catch (e) {
-      err = String(e);
+      notifyFail(e);
     }
   }
 
@@ -45,7 +43,6 @@
 </script>
 
 <div class="view">
-  {#if err}<div class="err mono">{err}</div>{/if}
 
   <div class="panel ulist">
     {#each users as u (u.github_uid)}
@@ -87,7 +84,7 @@
     border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
     border-radius: var(--radius-sm);
     padding: var(--space-3) var(--space-4);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .ulist {
     overflow: hidden;
@@ -107,23 +104,23 @@
     min-width: 0;
   }
   .uname {
-    font-size: 14px;
+    font-size: var(--fs-lg);
     font-weight: 600;
   }
   .me {
     margin-left: 6px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--fg-faint);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     font-weight: 400;
   }
   .umeta {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     margin-top: 2px;
   }
   .chip {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     padding: 1px 8px;
     border: 1px solid var(--seam);
     border-radius: 999px;
@@ -153,7 +150,7 @@
     border-radius: 0;
     color: var(--fg-dim);
     padding: 4px 8px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     flex-shrink: 0;
   }
   .link:hover {
@@ -161,6 +158,6 @@
   }
   .empty {
     padding: var(--space-4);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
 </style>

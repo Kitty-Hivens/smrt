@@ -5,7 +5,7 @@
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
-  import { toasts } from '../lib/toasts.svelte';
+  import { notifyFail, toasts } from '../lib/toasts.svelte';
   import { isDebug } from '../lib/roles';
   import type {
     DeclaredAsset,
@@ -153,14 +153,9 @@
   // pack-card gallery as newline-separated text, mirrored into cfg.pack_meta on save
   let cardGalleryStr = $state('');
   let loading = $state(true);
-  // Failures are notices now, not banners wedged above the form: reporting a
+  // Failures are notices, not banners wedged above the form: reporting a
   // problem must not move the thing the operator was working on.
-  const fail = (e: unknown) =>
-    toasts.push({
-      kind: 'error',
-      text: e instanceof ApiError ? t('pe.requestFailed') : t('pe.unexpected'),
-      detail: e instanceof ApiError ? `${e.status} ${e.body}` : String(e),
-    });
+  const fail = notifyFail;
 
   // autosave
   type SaveState = 'idle' | 'saving' | 'saved' | 'error';
@@ -733,9 +728,9 @@
           {#if bootstrapMode}
             <div class="bootform">
               <div class="brow">
-                <Field label={t('pe.mcVersion')}><input bind:value={bootMc} placeholder="1.12.2" /></Field>
-                <Field label={t('pe.loaderVersion')}><input bind:value={bootLoader} placeholder="14.23.5.2922" /></Field>
-                <Field label={t('pe.displayName')}><input bind:value={bootName} placeholder={packId} /></Field>
+                <Field label={t('pe.mcVersion')}><input bind:value={bootMc} placeholder="1.12.2" aria-label="1.12.2" /></Field>
+                <Field label={t('pe.loaderVersion')}><input bind:value={bootLoader} placeholder="14.23.5.2922" aria-label="14.23.5.2922" /></Field>
+                <Field label={t('pe.displayName')}><input bind:value={bootName} placeholder={packId} aria-label={packId} /></Field>
               </div>
               <label class="upbtn">
                 {bootBusy ? t('pe.bootWorking') : t('pe.bootChoose')}
@@ -815,7 +810,7 @@
             {#each cfg.mods as m, i (m)}
               <div class="modrow" animate:flip={{ duration: 200 }} in:fade={{ duration: 180 }}>
                 <ModIcon name={m.filename} iconUrl={m.display?.icon_url} source={m.source} size={24} mono />
-                <input class="fn mono" bind:value={m.filename} placeholder={t('pe.filename')} />
+                <input class="fn mono" bind:value={m.filename} placeholder={t('pe.filename')} aria-label={t('pe.filename')} />
                 <span class="srcsel">
                   <Select
                     compact
@@ -834,11 +829,11 @@
                     <button class="sm" onclick={() => (pick = { src: 'modrinth', row: i })}>{t('pe.choose')}</button>
                     <span class="refval mono faint">{m.source.project_id || t('pe.unset')}</span>
                   {:else}
-                    <input class="mono" bind:value={m.source.rel_path} placeholder="rel_path" />
+                    <input class="mono" bind:value={m.source.rel_path} placeholder="rel_path" aria-label="rel_path" />
                   {/if}
                 </div>
                 <label class="ck" title={t('pe.defHint')}><input type="checkbox" bind:checked={m.default_enabled} /> {t('pe.def')}</label>
-                <input class="slug mono" bind:value={m.slug} placeholder={t('pe.slug')} title={t('pe.slugHint')} />
+                <input class="slug mono" bind:value={m.slug} placeholder={t('pe.slug')} aria-label={t('pe.slug')} title={t('pe.slugHint')} />
                 <button class="danger sm del" onclick={() => removeMod(i)} aria-label={t('common.delete')}>x</button>
               </div>
             {/each}
@@ -886,12 +881,12 @@
                     </td>
                     <td>
                       {#if a.source.type === 'modrinth'}
-                        <input class="mono" bind:value={a.source.project_id} placeholder="project_id" />
-                        <input class="mono" bind:value={a.source.version_id} placeholder="version_id" />
+                        <input class="mono" bind:value={a.source.project_id} placeholder="project_id" aria-label="project_id" />
+                        <input class="mono" bind:value={a.source.version_id} placeholder="version_id" aria-label="version_id" />
                       {:else if a.source.type === 'smrt_cache'}
-                        <input class="mono" bind:value={a.source.sha1} placeholder="sha1" />
+                        <input class="mono" bind:value={a.source.sha1} placeholder="sha1" aria-label="sha1" />
                       {:else}
-                        <input class="mono" bind:value={a.source.rel_path} placeholder="rel_path" />
+                        <input class="mono" bind:value={a.source.rel_path} placeholder="rel_path" aria-label="rel_path" />
                       {/if}
                     </td>
                     <td class="ctr"><input type="checkbox" bind:checked={a.required} /></td>
@@ -908,8 +903,8 @@
 
         <Section title={t('pe.card.title')}>
           <div class="card">
-            <Field label={t('pe.card.icon')} wide><input class="mono" bind:value={cfg.pack_meta.icon_url} placeholder="https://.../icon.png" /></Field>
-            <Field label={t('pe.card.banner')} wide><input class="mono" bind:value={cfg.pack_meta.banner_url} placeholder="https://.../banner.png" /></Field>
+            <Field label={t('pe.card.icon')} wide><input class="mono" bind:value={cfg.pack_meta.icon_url} placeholder="https://.../icon.png" aria-label="https://.../icon.png" /></Field>
+            <Field label={t('pe.card.banner')} wide><input class="mono" bind:value={cfg.pack_meta.banner_url} placeholder="https://.../banner.png" aria-label="https://.../banner.png" /></Field>
             <Field label={t('pe.card.gallery')} wide><textarea class="mono" rows="3" bind:value={cardGalleryStr}></textarea></Field>
             <Field label={t('pe.card.description')} wide><textarea class="mono" rows="5" bind:value={cfg.pack_meta.description_md}></textarea></Field>
           </div>
@@ -1045,13 +1040,13 @@
     margin-bottom: var(--space-4);
   }
   .ttl {
-    font-size: 16px;
+    font-size: var(--fs-lg);
   }
   .spacer {
     flex: 1;
   }
   .savestate {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--fg-dim);
     min-width: 78px;
     text-align: right;
@@ -1090,7 +1085,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    font-size: 13px;
+    font-size: var(--fs-md);
     align-self: end;
     padding-bottom: 8px;
   }
@@ -1100,7 +1095,7 @@
   }
   button.sm {
     padding: 4px 10px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   button.sm.active {
     border-color: var(--accent);
@@ -1131,7 +1126,7 @@
   }
   .modrow input {
     padding: 5px 7px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   /* curator slug in the 7th grid column: the stable optional-toggle key for
      smrt_cache mods (ADR 0002) */
@@ -1155,13 +1150,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .ck {
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--fg-dim);
     white-space: nowrap;
   }
@@ -1170,7 +1165,7 @@
   }
   .empty-row {
     padding: var(--space-3);
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .flushtable {
     margin-top: var(--space-3);
@@ -1180,7 +1175,7 @@
   }
   td input {
     padding: 5px 7px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   /* A file-input label styled as a button: the global `button` rules do not reach
      a <label>, and the `.sm` class only styles `button.sm`, so without this the
@@ -1189,7 +1184,7 @@
     display: inline-flex;
     align-items: center;
     font-family: var(--sans);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     color: var(--fg);
     background: var(--panel-2);
@@ -1205,25 +1200,25 @@
     background: var(--panel-3);
   }
   .valrep {
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .valhead {
     display: flex;
     gap: var(--space-4);
     flex-wrap: wrap;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .vallist {
     margin-top: var(--space-3);
   }
   .vl-h {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin-bottom: 6px;
   }
   .vl-row {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 2px 0;
   }
   .bootform {
@@ -1238,7 +1233,7 @@
   }
   .upbtn {
     display: inline-block;
-    font-size: 13px;
+    font-size: var(--fs-md);
     color: var(--fg);
     background: var(--panel-2);
     border: 1px solid var(--seam-bright);
@@ -1272,7 +1267,7 @@
     overflow: hidden;
   }
   .dztitle {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -1289,7 +1284,7 @@
   }
   .dztext {
     flex: 1;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
 
   /* ---- responsive reflow ---- */

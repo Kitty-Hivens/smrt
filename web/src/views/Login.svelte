@@ -82,7 +82,7 @@
         <input
           type="password"
           bind:value={token}
-          placeholder="SMRT_ADMIN_TOKEN"
+          placeholder="SMRT_ADMIN_TOKEN" aria-label="SMRT_ADMIN_TOKEN"
           autocomplete="off"
         />
         {#if error}<div class="err mono">{error}</div>{/if}
@@ -116,7 +116,7 @@
     border: none;
     border-radius: 0;
     color: var(--fg-faint);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 4px 6px;
   }
   .back:hover {
@@ -135,7 +135,7 @@
     border: none;
     border-radius: 0;
     padding: 5px 11px;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     letter-spacing: 0.04em;
     color: var(--fg-dim);
     background: transparent;
@@ -161,7 +161,7 @@
     gap: 10px;
     font-family: var(--mono);
     font-weight: 700;
-    font-size: 20px;
+    font-size: var(--fs-xl);
     letter-spacing: 0;
   }
   .brand .mk {
@@ -175,7 +175,7 @@
   }
   .sub {
     margin: 0;
-    font-size: 13px;
+    font-size: var(--fs-md);
     line-height: 1.5;
   }
   .gh {
@@ -195,7 +195,7 @@
     border: none;
     border-radius: 0;
     color: var(--fg-faint);
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     padding: 2px 6px;
   }
   .toggle:hover {
@@ -206,7 +206,7 @@
     align-items: center;
     gap: var(--space-3);
     color: var(--fg-faint);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: 0.08em;
   }
@@ -224,14 +224,14 @@
   }
   .err {
     color: var(--danger);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .note {
     color: var(--fg-dim);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 1.5;
   }
   .foot {
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
 </style>

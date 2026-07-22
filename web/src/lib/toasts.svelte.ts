@@ -7,6 +7,9 @@
 // A sticky notice stays until dismissed or replaced -- it reports a state that
 // is still true (a save the server refused), not an event that happened.
 
+import { ApiError } from './api';
+import { t } from './i18n.svelte';
+
 export type ToastKind = 'error' | 'ok' | 'info';
 
 export type Toast = {
@@ -60,3 +63,20 @@ export const toasts = {
     items = items.filter((x) => x.id !== id);
   },
 };
+
+/// The one way a view reports a failed request. Keeps the machine detail (the
+/// status and body the server sent) next to a plain sentence, instead of either
+/// dumping a raw string into the layout or hiding the reason in a tooltip.
+export function notifyFail(e: unknown, text?: string): number {
+  return toasts.push({
+    kind: 'error',
+    text: text ?? (e instanceof ApiError ? t('common.requestFailed') : t('common.unexpected')),
+    detail: e instanceof ApiError ? `${e.status} ${e.body}` : String(e),
+  });
+}
+
+/// The machine detail alone, for the few places that render a failure inside
+/// the row that produced it (a per-row diff) rather than as a page notice.
+export function detailOf(e: unknown): string {
+  return e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+}

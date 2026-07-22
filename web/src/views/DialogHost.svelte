@@ -44,7 +44,7 @@
             {a.label}
             <input
               bind:value
-              placeholder={a.placeholder}
+              placeholder={a.placeholder} aria-label={a.placeholder}
               onkeydown={(e) => {
                 if (e.key === 'Enter') accept();
               }}
@@ -87,20 +87,20 @@
   }
   :global(.dlg .ttl) {
     margin: 0 0 12px;
-    font-size: 14px;
+    font-size: var(--fs-lg);
     color: var(--fg);
   }
   :global(.dlg .msg) {
     margin: 0 0 18px;
     color: var(--fg-dim);
-    font-size: 13px;
+    font-size: var(--fs-md);
     line-height: 1.5;
   }
   :global(.dlg .fld) {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--fg-dim);
     margin-bottom: 18px;
   }

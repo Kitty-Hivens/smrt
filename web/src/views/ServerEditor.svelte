@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { api, ApiError } from '../lib/api';
+  import { notifyFail } from '../lib/toasts.svelte';
   import { t } from '../lib/i18n.svelte';
   import Section from './ui/Section.svelte';
   import Field from './ui/Field.svelte';
@@ -47,12 +48,10 @@
   );
   let tagsStr = $state(untrack(() => (initial?.tags ?? []).join(', ')));
   let busy = $state(false);
-  let err = $state('');
 
   async function save(e: Event) {
     e.preventDefault();
     busy = true;
-    err = '';
     const payload: ServerEntry = {
       ...$state.snapshot(f),
       tags: tagsStr
@@ -69,7 +68,7 @@
       await api.saveServer(payload);
       onSaved();
     } catch (x) {
-      err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+      notifyFail(x);
     } finally {
       busy = false;
     }
@@ -85,15 +84,14 @@
       {busy ? t('se.saving') : isNew ? t('se.create') : t('se.save')}
     </button>
   </div>
-  {#if err}<div class="err mono">{err}</div>{/if}
 
   <Section title={t('pe.basics')}>
     <div class="grid">
       <Field label={t('se.serverId')} hint={t('se.serverIdHint')}>
-        <input bind:value={f.server_id} disabled={!isNew} placeholder="main" />
+        <input bind:value={f.server_id} disabled={!isNew} placeholder="main" aria-label="main" />
       </Field>
       <Field label={t('packs.col.pack')}>
-        <input bind:value={f.pack_id} list="packids" placeholder="Industrial" />
+        <input bind:value={f.pack_id} list="packids" placeholder="Industrial" aria-label="Industrial" />
         <datalist id="packids">{#each packIds as p}<option value={p}></option>{/each}</datalist>
       </Field>
       <Field label={t('pe.displayName')}>
@@ -115,10 +113,10 @@
         <input bind:value={f.tagline} />
       </Field>
       <Field label={t('se.banner')} wide>
-        <input bind:value={f.banner_url} placeholder="https://..." />
+        <input bind:value={f.banner_url} placeholder="https://..." aria-label="https://..." />
       </Field>
       <Field label={t('pe.tags')} hint={t('pe.tagsHint')} wide>
-        <input bind:value={tagsStr} placeholder="tech, economy" />
+        <input bind:value={tagsStr} placeholder="tech, economy" aria-label="tech, economy" />
       </Field>
       <Field label={t('se.description')} hint={t('se.descHint')} wide>
         <textarea rows="5" bind:value={f.description_md}></textarea>
@@ -129,10 +127,10 @@
   <Section title={t('se.links')}>
     <div class="grid">
       <Field label={t('se.discord')}>
-        <input bind:value={f.discord_url} placeholder="https://discord.gg/..." />
+        <input bind:value={f.discord_url} placeholder="https://discord.gg/..." aria-label="https://discord.gg/..." />
       </Field>
       <Field label={t('se.website')}>
-        <input bind:value={f.website_url} placeholder="https://..." />
+        <input bind:value={f.website_url} placeholder="https://..." aria-label="https://..." />
       </Field>
     </div>
   </Section>
@@ -151,18 +149,10 @@
     gap: var(--space-3);
   }
   .ttl {
-    font-size: 15px;
+    font-size: var(--fs-lg);
   }
   .spacer {
     flex: 1;
-  }
-  .err {
-    color: var(--danger);
-    background: var(--danger-soft);
-    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
-    border-radius: var(--radius-sm);
-    padding: var(--space-3) var(--space-4);
-    font-size: 12px;
   }
   .grid {
     display: grid;
@@ -173,7 +163,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    font-size: 13px;
+    font-size: var(--fs-md);
     color: var(--fg);
     grid-column: 1 / -1;
   }

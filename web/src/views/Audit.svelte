@@ -1,19 +1,18 @@
 <script lang="ts">
   import { api } from '../lib/api';
+  import { notifyFail } from '../lib/toasts.svelte';
   import { t } from '../lib/i18n.svelte';
   import type { AuditRow } from '../lib/types';
 
   let rows = $state<AuditRow[]>([]);
-  let err = $state('');
   let loading = $state(true);
 
   async function load() {
     loading = true;
-    err = '';
     try {
       rows = await api.auditLog();
     } catch (e) {
-      err = String(e);
+      notifyFail(e);
     } finally {
       loading = false;
     }
@@ -27,7 +26,6 @@
 </script>
 
 <div class="view">
-  {#if err}<div class="err mono">{err}</div>{/if}
 
   <div class="panel alist">
     {#each rows as r (r.id)}
@@ -58,14 +56,6 @@
     flex-direction: column;
     gap: var(--space-4);
   }
-  .err {
-    color: var(--danger);
-    background: var(--danger-soft);
-    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
-    border-radius: var(--radius-sm);
-    padding: var(--space-3) var(--space-4);
-    font-size: 12px;
-  }
   .alist {
     overflow: hidden;
   }
@@ -80,7 +70,7 @@
     border-bottom: none;
   }
   .chip {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     padding: 1px 8px;
     border: 1px solid var(--seam);
     border-radius: 999px;
@@ -95,22 +85,22 @@
     min-width: 0;
   }
   .who {
-    font-size: 13px;
+    font-size: var(--fs-md);
     font-weight: 600;
   }
   .tgt {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     margin-top: 2px;
     overflow-wrap: anywhere;
   }
   .when {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     flex-shrink: 0;
     align-self: flex-start;
     margin-top: 3px;
   }
   .empty {
     padding: var(--space-4);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
 </style>

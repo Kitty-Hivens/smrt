@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
   import { isDebug } from '../lib/roles';
@@ -25,15 +26,12 @@
 
   let detail = $state<ModDetail | null>(null);
   let loading = $state(true);
-  let err = $state('');
 
-  const fail = (e: unknown) => (e instanceof ApiError ? `${e.status} ${e.body}` : String(e));
 
   // reload whenever the focused mod ref changes (deps navigate between mods)
   $effect(() => {
     const ref = modRef;
     loading = true;
-    err = '';
     detail = null;
     api
       .modDetail(ref)
@@ -41,7 +39,7 @@
         if (modRef === ref) detail = d;
       })
       .catch((e) => {
-        if (modRef === ref) err = fail(e);
+        if (modRef === ref) notifyFail(e);
       })
       .finally(() => {
         if (modRef === ref) loading = false;
@@ -119,7 +117,7 @@
     try {
       diffData = await api.repackDiff(f.sha1);
     } catch (e) {
-      diffErr = fail(e);
+      diffErr = detailOf(e);
     } finally {
       diffLoading = false;
     }
@@ -129,7 +127,6 @@
 <div class="view">
   <button class="back mono" onclick={onBack}>&larr; {t('mod.back')}</button>
 
-  {#if err}<div class="err mono">{err}</div>{/if}
 
   {#if loading}
     <div class="muted s">{t('common.loading')}</div>
@@ -270,7 +267,7 @@
         {/if}
       </div>
     </Section>
-  {:else if !err}
+  {:else if !loading}
     <div class="muted s">{t('mod.notFound')}</div>
   {/if}
 </div>
@@ -288,7 +285,7 @@
     border: none;
     border-radius: 0;
     color: var(--fg-faint);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 2px 4px;
   }
   .back:hover {
@@ -300,7 +297,7 @@
     border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
     border-radius: var(--radius-sm);
     padding: var(--space-3) var(--space-4);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .head {
     display: flex;
@@ -311,7 +308,7 @@
     min-width: 0;
   }
   .hname {
-    font-size: 22px;
+    font-size: var(--fs-2xl);
     font-weight: 680;
     letter-spacing: -0.01em;
     display: flex;
@@ -320,7 +317,7 @@
     flex-wrap: wrap;
   }
   .hby {
-    font-size: 13px;
+    font-size: var(--fs-md);
     font-weight: 400;
     color: var(--fg-faint);
   }
@@ -332,7 +329,7 @@
     margin-top: 8px;
   }
   .modid {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--fg-dim);
     padding: 2px 8px;
     border: 1px solid var(--seam);
@@ -345,10 +342,10 @@
   }
   .ell {
     color: var(--fg-faint);
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .fcount {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--fg-faint);
   }
 
@@ -369,7 +366,7 @@
     padding: 2px 0 4px;
   }
   .rver {
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
   }
   .file {
     display: flex;
@@ -382,19 +379,19 @@
     min-width: 0;
   }
   .fname {
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .fmeta {
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .chip {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     padding: 1px 7px;
     border: 1px solid var(--seam);
     border-radius: 999px;
@@ -417,7 +414,7 @@
     border-radius: 0;
     color: var(--fg-dim);
     padding: 2px 6px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     flex-shrink: 0;
   }
   .link:hover,
@@ -432,12 +429,12 @@
     background: var(--panel-2);
   }
   .diffsum {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--fg-dim);
     margin-bottom: 6px;
   }
   .diffrow {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     padding: 1px 0;
     overflow-wrap: anywhere;
   }
@@ -452,14 +449,14 @@
     gap: var(--space-2);
     padding: 9px var(--space-4);
     border-bottom: 1px solid var(--seam);
-    font-size: 13px;
+    font-size: var(--fs-md);
     flex-wrap: wrap;
   }
   .edge:last-child {
     border-bottom: none;
   }
   .kind {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--c);
@@ -480,7 +477,7 @@
     border-radius: 0;
     padding: 0;
     color: var(--fg);
-    font-size: 13px;
+    font-size: var(--fs-md);
     text-decoration: underline;
     text-decoration-color: var(--seam-bright);
     text-underline-offset: 2px;
@@ -492,7 +489,7 @@
   .ext {
     color: var(--fg-faint);
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
 
   .uses {
@@ -505,7 +502,7 @@
     gap: var(--space-2);
     padding: 9px var(--space-4);
     border-bottom: 1px solid var(--seam);
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .use:last-child {
     border-bottom: none;
@@ -514,17 +511,17 @@
     flex: 1;
   }
   .uver {
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .ufile {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 45%;
   }
   .s {
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .pad {
     padding: var(--space-4);

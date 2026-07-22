@@ -94,6 +94,8 @@ export const ru: Dict = {
   'overview.col.release': 'Релиз',
   'overview.col.provenance': 'Происхождение',
 
+  'common.requestFailed': 'Сервер отклонил запрос.',
+  'common.unexpected': 'Запрос не прошёл.',
   'common.close': 'Закрыть',
   'common.delete': 'Удалить',
 
@@ -193,8 +195,6 @@ export const ru: Dict = {
   'pe.filename': 'имя файла',
   'pe.choose': 'Выбрать',
   'pe.reports': 'Отчёты',
-  'pe.requestFailed': 'Сервер отклонил запрос.',
-  'pe.unexpected': 'Запрос не прошёл.',
   'pe.dupAsset': '{dest} уже есть в сборке.',
   'pe.saveFailed': 'Не сохранено -- конфиг на экране отличается от того, что на сервере.',
   'pe.saveRetry': 'Повторить',
@@ -327,11 +327,11 @@ export const ru: Dict = {
   'job.failed': 'ошибка',
   'job.interrupted': '(поток лога прерван)',
 
+  'prev.noResult': 'Превью завершилось, но манифест не собрался.',
   'prev.rebuild': 'Пересобрать',
   'prev.title': 'Превью',
   'prev.subtitle': 'рендер как в лаунчере: последний сохранённый конфиг',
   'prev.starting': 'запуск сборки превью...',
-  'prev.noResult': 'превью завершилось без результата',
   'prev.noChanges': 'Нет изменений модов против {v}.',
   'prev.vs': 'против {v}',
   'prev.added': '+{n} добавлено',

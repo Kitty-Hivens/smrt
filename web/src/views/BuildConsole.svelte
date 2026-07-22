@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { notifyFail } from '../lib/toasts.svelte';
   import { t } from '../lib/i18n.svelte';
   import JobLog from './JobLog.svelte';
 
@@ -7,7 +8,6 @@
 
   let jobId = $state<string | null>(null);
   let busy = $state(false);
-  let err = $state('');
   let packVersion = $state('');
   // publishing a release is an explicit act; the everyday build is a beta
   let channel = $state<'release' | 'beta' | 'alpha'>('beta');
@@ -15,7 +15,6 @@
 
   async function build() {
     busy = true;
-    err = '';
     jobId = null;
     try {
       const { job_id } = await api.buildPack(packId, {
@@ -25,7 +24,7 @@
       });
       jobId = job_id;
     } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      notifyFail(e);
       busy = false;
     }
   }
@@ -38,7 +37,7 @@
     </button>
     <label class="ver">
       {t('bld.version')}
-      <input class="mono" bind:value={packVersion} placeholder={t('bld.versionPlaceholder')} />
+      <input class="mono" bind:value={packVersion} placeholder={t('bld.versionPlaceholder')} aria-label={t('bld.versionPlaceholder')} />
     </label>
     <label class="ver">
       {t('bld.channel')}
@@ -54,7 +53,6 @@
     <textarea rows="3" bind:value={changelog} placeholder={t('bld.changelogPlaceholder')}></textarea>
   </label>
   <p class="muted hint">{t('bld.hint')}</p>
-  {#if err}<div class="err mono">{err}</div>{/if}
   {#if jobId}
     {#key jobId}
       <JobLog {jobId} onDone={() => (busy = false)} />
@@ -75,7 +73,7 @@
     display: flex;
     flex-direction: column;
     gap: 5px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--fg-dim);
   }
   .ver input {
@@ -85,7 +83,7 @@
     display: flex;
     flex-direction: column;
     gap: 5px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--fg-dim);
     margin-top: 12px;
     max-width: 640px;
@@ -95,14 +93,9 @@
     font: inherit;
   }
   .hint {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     margin: 10px 0 14px;
     max-width: 640px;
-  }
-  .err {
-    color: var(--danger);
-    font-size: 12px;
-    margin-bottom: 10px;
   }
   @media (max-width: 560px) {
     .bar {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { notifyFail } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
   import type { UploadRow } from '../lib/types';
@@ -7,16 +8,14 @@
   // The operator's moderation queue: pending member jar uploads. Approve promotes
   // the jar into the shared cache; reject drops the staged jar with a note.
   let uploads = $state<UploadRow[]>([]);
-  let err = $state('');
   let loading = $state(true);
 
   async function load() {
     loading = true;
-    err = '';
     try {
       uploads = await api.pendingUploads();
     } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      notifyFail(e);
     } finally {
       loading = false;
     }
@@ -28,7 +27,7 @@
       await api.approveUpload(u.id);
       await load();
     } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      notifyFail(e);
     }
   }
 
@@ -39,7 +38,7 @@
       await api.rejectUpload(u.id, note);
       await load();
     } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      notifyFail(e);
     }
   }
 
@@ -48,7 +47,6 @@
 </script>
 
 <div class="view">
-  {#if err}<div class="err mono">{err}</div>{/if}
 
   <div class="panel list">
     {#each uploads as u (u.id)}
@@ -80,10 +78,6 @@
     flex-direction: column;
     gap: var(--space-4);
   }
-  .err {
-    color: var(--danger);
-    font-size: 12px;
-  }
   .list {
     overflow: hidden;
   }
@@ -101,21 +95,21 @@
     min-width: 0;
   }
   .nm {
-    font-size: 14px;
+    font-size: var(--fs-lg);
     font-weight: 600;
   }
   .mm {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     margin-top: 2px;
   }
   .sha {
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     margin-top: 1px;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .origin {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     margin-top: 3px;
     color: var(--info);
   }
@@ -125,7 +119,7 @@
   .ok {
     flex-shrink: 0;
     padding: 5px 12px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--ok);
   }
   .ok:hover {
@@ -134,10 +128,10 @@
   .danger {
     flex-shrink: 0;
     padding: 5px 12px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .empty {
     padding: var(--space-4);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
 </style>

@@ -95,6 +95,8 @@ export const en = {
   'overview.col.release': 'Release',
   'overview.col.provenance': 'Provenance',
 
+  'common.requestFailed': 'The server refused that.',
+  'common.unexpected': 'That did not go through.',
   'common.close': 'Close',
   'common.delete': 'Delete',
 
@@ -194,8 +196,6 @@ export const en = {
   'pe.filename': 'filename',
   'pe.choose': 'Choose',
   'pe.reports': 'Reports',
-  'pe.requestFailed': 'The server refused that.',
-  'pe.unexpected': 'That did not go through.',
   'pe.dupAsset': '{dest} is already in this pack.',
   'pe.saveFailed': 'Not saved -- the config on screen differs from the one on the server.',
   'pe.saveRetry': 'Retry',
@@ -328,11 +328,11 @@ export const en = {
   'job.failed': 'failed',
   'job.interrupted': '(log stream interrupted)',
 
+  'prev.noResult': 'The preview finished without producing a manifest.',
   'prev.rebuild': 'Rebuild',
   'prev.title': 'Preview',
   'prev.subtitle': 'launcher-faithful render of the last saved config',
   'prev.starting': 'starting preview build...',
-  'prev.noResult': 'preview finished without a result',
   'prev.noChanges': 'No mod changes vs {v}.',
   'prev.vs': 'vs {v}',
   'prev.added': '+{n} added',

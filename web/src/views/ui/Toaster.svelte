@@ -46,7 +46,7 @@
     border-radius: var(--radius-sm);
     background: var(--panel-2);
     box-shadow: var(--shadow-pop);
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
   }
   .toast.error {
     border-left-color: var(--danger);
@@ -65,21 +65,21 @@
   }
   .detail {
     margin-top: 3px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--fg-dim);
     overflow-wrap: anywhere;
   }
   .act {
     flex-shrink: 0;
     padding: 4px 10px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .x {
     flex-shrink: 0;
     border: none;
     background: transparent;
     color: var(--fg-faint);
-    font-size: 16px;
+    font-size: var(--fs-lg);
     line-height: 1;
     padding: 2px 4px;
     cursor: pointer;

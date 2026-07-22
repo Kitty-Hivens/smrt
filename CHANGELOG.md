@@ -42,6 +42,18 @@ version section when a release is tagged.
 
 ### Fixed
 
+- Panel-wide design pass. The type scale had eight sizes inside a four-pixel
+  band, bottoming out at 9px on the public catalog; it is six steps now, and
+  nothing in the product is smaller than an 11px mono label. Every control
+  has a 28px minimum target, where the compact variants sat at 24-26px with
+  several of them packed side by side in a row. Thirty-seven inputs whose
+  only name was a placeholder -- which disappears exactly when you type --
+  carry an accessible name.
+- Failures no longer move the page anywhere, not just in the pack editor.
+  Fourteen views inserted an error banner at the top of their content; they
+  all report through the notice stack now. A dialog keeps its own inline
+  error: it is already an overlay, and the failure belongs to the thing in
+  front of you.
 - Palette defects the tokens themselves documented: faint text measured
   3.86:1 on the panel surface it actually sits on (the note claimed 4:1,
   which held only against pure black) and is now 4.51:1; the four soft state

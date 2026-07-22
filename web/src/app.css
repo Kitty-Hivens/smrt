@@ -74,6 +74,25 @@
   --info: #58a6f0;
   --info-soft: rgba(88, 166, 240, 0.235);
 
+  /* Type scale. The panel had eight distinct sizes inside a four-pixel band
+     (9 / 10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 13) -- steps no eye resolves, so
+     they encoded no hierarchy, only drift, and the floor sat at 9px on the one
+     screen strangers see. Six steps, each a real jump, plus the two display
+     sizes the stat tiles already used. Everything that was 9 or 10 is now 11:
+     the smallest type in the product is a mono label, not body copy. */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 19px;
+  --fs-2xl: 24px;
+  --fs-3xl: 30px;
+
+  /* Minimum interactive target. 28px rather than the bare 24px minimum: the
+     dense rows put several controls within a few pixels of each other, where
+     the floor should not also be the answer. */
+  --control-min: 28px;
+
   /* spacing scale */
   --space-1: 4px;
   --space-2: 8px;
@@ -118,7 +137,7 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 14px;
+  font-size: var(--fs-lg);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   /* Firefox scrollbars: the ::-webkit rules below don't apply there, so the
@@ -160,13 +179,18 @@ code,
 
 button {
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--fg);
   background: var(--panel-2);
   border: 1px solid var(--seam-bright);
   border-radius: var(--radius-sm);
   padding: 9px 16px;
+  /* Floor for every control, however tight its own padding: the compact
+     variants scattered through the panel sat at 24-26px, on or under the
+     minimum target size, and the mod row packs several of them side by side.
+     Local padding still decides the shape; this only stops it going under. */
+  min-height: var(--control-min);
   cursor: pointer;
   box-shadow: var(--shadow-1);
   transition:
@@ -210,7 +234,7 @@ input,
 textarea,
 select {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--fg);
   background: var(--panel-2);
   border: 1px solid var(--seam-bright);
@@ -334,7 +358,7 @@ input[type='number']::-webkit-inner-spin-button {
 .tag {
   display: inline-block;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--fg-dim);
   background: var(--panel-2);
   border-radius: var(--radius-sm);
@@ -351,13 +375,13 @@ input[type='number']::-webkit-inner-spin-button {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 th {
   text-align: left;
   font-family: var(--mono);
   font-weight: 600;
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   /* column headers are the operator's scan anchors: use the dim tier (7.5:1),

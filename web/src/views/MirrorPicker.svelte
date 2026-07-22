@@ -305,9 +305,9 @@
     {#if mode === 'mods'}
       {#if !selMod}
         <div class="filters">
-          <input class="grow" bind:value={q} oninput={onModFilter} placeholder={t('mirror.search')} />
-          <input class="sm" bind:value={loaderF} oninput={onModFilter} placeholder={t('mirror.loader')} />
-          <input class="sm" bind:value={mcF} oninput={onModFilter} placeholder={t('mirror.mc')} />
+          <input class="grow" bind:value={q} oninput={onModFilter} placeholder={t('mirror.search')} aria-label={t('mirror.search')} />
+          <input class="sm" bind:value={loaderF} oninput={onModFilter} placeholder={t('mirror.loader')} aria-label={t('mirror.loader')} />
+          <input class="sm" bind:value={mcF} oninput={onModFilter} placeholder={t('mirror.mc')} aria-label={t('mirror.mc')} />
         </div>
         {#if modsLoading}<div class="muted s">{t('common.loading')}</div>{/if}
         <div class="hits scroll">
@@ -429,7 +429,7 @@
       {/if}
     {:else}
       <div class="filters">
-        <input class="grow" bind:value={rawQ} placeholder={t('cachePick.search')} />
+        <input class="grow" bind:value={rawQ} placeholder={t('cachePick.search')} aria-label={t('cachePick.search')} />
       </div>
       {#if rawLoading}<div class="muted s">{t('common.loading')}</div>{/if}
       <div class="hits scroll">
@@ -488,7 +488,7 @@
   .seltitle {
     flex: 1;
     min-width: 0;
-    font-size: 13px;
+    font-size: var(--fs-md);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -506,11 +506,11 @@
   }
   .err {
     color: var(--danger);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     margin-bottom: var(--space-2);
   }
   .s {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: var(--space-2) 0;
   }
   .hits {
@@ -547,24 +547,24 @@
     min-width: 0;
   }
   .t {
-    font-size: 13px;
+    font-size: var(--fs-md);
     display: flex;
     align-items: center;
     gap: var(--space-2);
   }
   .d {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     margin-top: 2px;
   }
   .cnt {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     flex-shrink: 0;
   }
   .chip {
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     padding: 1px 6px;
     border: 1px solid var(--seam);
     border-radius: 999px;
@@ -580,7 +580,7 @@
   }
   button.sm {
     padding: 4px 10px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     flex-shrink: 0;
   }
   @media (max-width: 560px) {

@@ -223,10 +223,10 @@
     gap: var(--space-2) var(--space-3);
     flex-wrap: wrap;
     align-items: center;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .pill {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     padding: 1px 8px;
     border-radius: 999px;
     border: 1px solid var(--seam);
@@ -253,7 +253,7 @@
     margin-top: var(--space-3);
   }
   .rl-h {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin-bottom: 6px;
@@ -272,7 +272,7 @@
     flex-wrap: wrap;
     align-items: baseline;
     gap: var(--space-2) var(--space-3);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 3px 0;
     border-top: 1px solid var(--seam);
   }
@@ -284,19 +284,19 @@
   }
   .src {
     margin-left: auto;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--fg-dim);
     opacity: 0.7;
   }
   .rfoot {
     margin-top: var(--space-3);
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .add {
     background: transparent;
     border: 1px solid var(--seam);
     color: var(--fg-dim);
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     padding: 1px 8px;
     border-radius: 999px;
     cursor: pointer;

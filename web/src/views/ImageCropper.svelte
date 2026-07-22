@@ -203,14 +203,14 @@
     max-width: 92vw;
   }
   :global(.crop-h) {
-    font-size: 14px;
+    font-size: var(--fs-lg);
   }
   .hint {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     margin: 0;
   }
   .loaderr {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     margin: 0;
     color: var(--danger);
   }
@@ -243,7 +243,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--fg-dim);
   }
   .zoom input {

@@ -45,7 +45,7 @@
     background: var(--panel-2);
   }
   .ttl {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -56,7 +56,7 @@
   }
   .count {
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--fg-faint);
     text-transform: none;
     letter-spacing: 0;

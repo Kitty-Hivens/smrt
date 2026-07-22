@@ -164,13 +164,13 @@
     flex: 1;
   }
   .ttl {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }
   .sub {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -179,7 +179,7 @@
     border: none;
     background: transparent;
     color: var(--fg-faint);
-    font-size: 17px;
+    font-size: var(--fs-xl);
     line-height: 1;
     padding: 2px 4px;
     cursor: pointer;

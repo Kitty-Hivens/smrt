@@ -121,7 +121,7 @@
     {#if modMode === 'new'}
       <label class="fld">
         <span class="lbl">{t('id.modName')}</span>
-        <input bind:value={modName} placeholder="JourneyMap" />
+        <input bind:value={modName} placeholder="JourneyMap" aria-label="JourneyMap" />
       </label>
     {:else}
       <div class="fld">
@@ -140,7 +140,7 @@
     <div class="row2">
       <label class="fld">
         <span class="lbl">{t('id.version')}</span>
-        <input bind:value={version} placeholder="1.7.10-5.1.4" />
+        <input bind:value={version} placeholder="1.7.10-5.1.4" aria-label="1.7.10-5.1.4" />
       </label>
       <div class="fld">
         <span class="lbl">{t('id.channel')}</span>
@@ -151,19 +151,19 @@
     <div class="row2">
       <label class="fld">
         <span class="lbl">{t('id.loaders')}</span>
-        <input bind:value={loaders} placeholder="forge" />
+        <input bind:value={loaders} placeholder="forge" aria-label="forge" />
         <span class="hint faint">{t('id.loadersHint')}</span>
       </label>
       <label class="fld">
         <span class="lbl">{t('id.mc')}</span>
-        <input bind:value={mc} placeholder="1.7.10" />
+        <input bind:value={mc} placeholder="1.7.10" aria-label="1.7.10" />
         <span class="hint faint">{t('id.mcHint')}</span>
       </label>
     </div>
 
     <label class="fld">
       <span class="lbl">{t('id.filename')}</span>
-      <input bind:value={filename} placeholder="journeymap-1.7.10-5.1.4.jar" />
+      <input bind:value={filename} placeholder="journeymap-1.7.10-5.1.4.jar" aria-label="journeymap-1.7.10-5.1.4.jar" />
     </label>
 
     {#if err}<div class="err mono">{err}</div>{/if}
@@ -202,10 +202,10 @@
     gap: var(--space-3);
   }
   :global(.idp-h) {
-    font-size: 15px;
+    font-size: var(--fs-lg);
   }
   .sha {
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .fld {
     display: flex;
@@ -214,11 +214,11 @@
     flex: 1;
   }
   .lbl {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--fg-dim);
   }
   .hint {
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .row2 {
     display: flex;
@@ -226,7 +226,7 @@
   }
   .err {
     color: var(--danger);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .actions {
     display: flex;

@@ -39,12 +39,12 @@
     grid-column: 1 / -1;
   }
   .lbl {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     font-weight: 500;
     color: var(--fg);
   }
   .hint {
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     color: var(--fg-dim);
     line-height: 1.4;
   }

@@ -131,7 +131,7 @@
     <Dialog.Title class="vh">{t('mrp.title')}</Dialog.Title>
     {#if !sel}
       <div class="ph row">
-        <input bind:value={q} oninput={onInput} placeholder={t('mrp.search')} />
+        <input bind:value={q} oninput={onInput} placeholder={t('mrp.search')} aria-label={t('mrp.search')} />
         <button onclick={onClose}>{t('common.close')}</button>
       </div>
       {#if err}<div class="err mono">{err}</div>{/if}
@@ -215,7 +215,7 @@
   .seltitle {
     flex: 1;
     min-width: 0;
-    font-size: 13px;
+    font-size: var(--fs-md);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -231,7 +231,7 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--fg-dim);
   }
   .chk {
@@ -239,11 +239,11 @@
   }
   .err {
     color: var(--danger);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     margin-bottom: 8px;
   }
   .s {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 6px 0;
   }
   .hits {
@@ -280,16 +280,16 @@
     min-width: 0;
   }
   .t {
-    font-size: 13px;
+    font-size: var(--fs-md);
     display: flex;
     align-items: center;
     gap: 8px;
   }
   .vn {
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
   }
   .chip {
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     padding: 1px 6px;
     border: 1px solid var(--seam);
     border-radius: 999px;
@@ -310,7 +310,7 @@
     background: transparent;
   }
   .d {
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
