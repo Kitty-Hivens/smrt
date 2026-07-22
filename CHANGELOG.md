@@ -42,6 +42,12 @@ version section when a release is tagged.
 
 ### Fixed
 
+- The editor stops moving under the cursor. Reports and failures were
+  inserted at the top of the form, so asking for a resolve or hitting an
+  error pushed everything down by however tall the answer was. Reports now
+  open in a draggable dock that overlays the page and remembers where it was
+  parked; failures are notices in a fixed corner stack, with the rejected
+  save carrying its reason and a retry. Nothing in the flow reflows.
 - The top-bar refresh works on every view. It bumped a shared signal only one
   view listened to, so on the registry, graph, my-packs and public catalog it
   was a button that did nothing -- while the graph kept a second refresh of

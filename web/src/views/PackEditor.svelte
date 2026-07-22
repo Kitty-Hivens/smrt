@@ -5,6 +5,7 @@
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { toasts } from '../lib/toasts.svelte';
   import { isDebug } from '../lib/roles';
   import type {
     DeclaredAsset,
@@ -29,6 +30,7 @@
   import Section from './ui/Section.svelte';
   import Select from './ui/Select.svelte';
   import TabStrip from './ui/TabStrip.svelte';
+  import FloatDock from './ui/FloatDock.svelte';
 
   const MOD_SOURCE_OPTIONS = [
     { value: 'smrt_cache', label: 'cache' },
@@ -60,14 +62,14 @@
     });
     if (typed == null) return;
     if (typed.trim() !== expected) {
-      err = t('packs.deleteMismatch');
+      toasts.push({ kind: 'error', text: t('packs.deleteMismatch') });
       return;
     }
     try {
       await api.deletePack(packId);
       onClose();
     } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      fail(e);
     }
   }
 
@@ -114,12 +116,12 @@
               title: t('pe.uploadJar'),
             });
           } catch (y) {
-            err = y instanceof ApiError ? `${y.status} ${y.body}` : String(y);
+            fail(y);
           }
           return;
         }
       }
-      err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+      fail(x);
     }
   }
 
@@ -151,12 +153,22 @@
   // pack-card gallery as newline-separated text, mirrored into cfg.pack_meta on save
   let cardGalleryStr = $state('');
   let loading = $state(true);
-  let err = $state('');
+  // Failures are notices now, not banners wedged above the form: reporting a
+  // problem must not move the thing the operator was working on.
+  const fail = (e: unknown) =>
+    toasts.push({
+      kind: 'error',
+      text: e instanceof ApiError ? t('pe.requestFailed') : t('pe.unexpected'),
+      detail: e instanceof ApiError ? `${e.status} ${e.body}` : String(e),
+    });
 
   // autosave
   type SaveState = 'idle' | 'saving' | 'saved' | 'error';
   let saveState = $state<SaveState>('idle');
   let saveErr = $state('');
+  // one slot for the save state, reused: a rejection that persists is one
+  // notice, not one per attempt
+  let saveToast: number | null = null;
   // signature of the last-persisted state; autosave fires only when it differs,
   // which also keeps the initial load from triggering a spurious save
   let lastSig = '';
@@ -165,12 +177,10 @@
   // validate the saved config against an uploaded SC archive
   let validating = $state(false);
   let valReport = $state<ValidateReport | null>(null);
-  let valErr = $state('');
 
   // resolve the saved config against the registry dependency graph
   let resolving = $state(false);
   let resReport = $state<ResolveReport | null>(null);
-  let resErr = $state('');
 
   // published build versions, for "revert config to build" (config edits autosave
   // with no undo, so the last built state is the recovery point). The picker is an
@@ -181,7 +191,6 @@
 
   async function load() {
     loading = true;
-    err = '';
     try {
       const c = await api.packConfig(packId);
       if (!c.pack_meta) {
@@ -195,7 +204,7 @@
       if (e instanceof ApiError && e.status === 404) {
         cfg = null; // offer to create
       } else {
-        err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+        fail(e);
       }
     }
     // best-effort: an unbuilt pack has no versions to revert to
@@ -223,7 +232,7 @@
       lastSig = sig(); // matches new cfg -> autosave doesn't re-fire
       if (previewOpen) previewToken++;
     } catch (e) {
-      err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      fail(e);
     }
   }
 
@@ -321,10 +330,19 @@
       await api.savePackConfig(packId, payload);
       lastSig = s;
       saveState = 'saved';
+      toasts.dismiss(saveToast);
+      saveToast = null;
       if (previewOpen) previewToken++; // auto-refresh the preview
     } catch (e) {
       saveState = 'error';
       saveErr = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      saveToast = toasts.replace(saveToast, {
+        kind: 'error',
+        text: t('pe.saveFailed'),
+        detail: saveErr,
+        sticky: true,
+        action: { label: t('pe.saveRetry'), run: retrySave },
+      });
     }
   }
 
@@ -333,12 +351,12 @@
     const file = input.files?.[0];
     if (!file) return;
     validating = true;
-    valErr = '';
     valReport = null;
     try {
       valReport = await api.validatePack(packId, file);
+      reportTab = 'validate';
     } catch (x) {
-      valErr = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+      fail(x);
     } finally {
       validating = false;
       input.value = '';
@@ -350,21 +368,22 @@
   async function onResolve() {
     if (!cfg) return;
     resolving = true;
-    resErr = '';
     try {
       const s = sig();
       if (s !== lastSig) {
         clearTimeout(saveTimer);
         await doSave(s);
         if (saveState === 'error') {
-          resErr = saveErr;
+          // the save notice already carries the reason; a report over a config
+          // the server refused would describe a state that does not exist
           resReport = null;
           return;
         }
       }
       resReport = await api.resolvePack(packId);
+      reportTab = 'resolve';
     } catch (x) {
-      resErr = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+      fail(x);
       resReport = null;
     } finally {
       resolving = false;
@@ -376,7 +395,6 @@
     const file = input.files?.[0];
     if (!file) return;
     bootBusy = true;
-    err = '';
     bootJobId = null;
     try {
       const { job_id } = await api.bootstrapPack(
@@ -390,7 +408,7 @@
       );
       bootJobId = job_id;
     } catch (x) {
-      err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+      fail(x);
       bootBusy = false;
     } finally {
       input.value = '';
@@ -457,7 +475,6 @@
   async function onDropJars(files: File[]) {
     if (!cfg) return;
     dropBusy = true;
-    err = '';
     try {
       for (const file of files) {
         if (!file.name.endsWith('.jar')) continue;
@@ -465,11 +482,11 @@
         // same identity check as every other add path: dropping a jar the pack
         // already ships must not create a second row of it
         if (!appendMod({ filename: file.name, source: { type: 'smrt_cache', sha1 } })) {
-          err = t('pe.dupMod', { name: file.name });
+          toasts.push({ kind: 'error', text: t('pe.dupMod', { name: file.name }) });
         }
       }
     } catch (x) {
-      err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+      fail(x);
     } finally {
       dropBusy = false;
     }
@@ -562,7 +579,7 @@
     // the picker greys out what the pack already ships; this is the last word on
     // it, so a stale list can't land a second row of the same mod
     if (presentKeys(pick.row).includes(`m:${sel.project_id}`)) {
-      err = t('pe.dupMod', { name: sel.slug });
+      toasts.push({ kind: 'error', text: t('pe.dupMod', { name: sel.slug }) });
       pick = null;
       suggestQuery = '';
       return;
@@ -611,7 +628,7 @@
       required: true,
       source: { type: 'modrinth', project_id: sel.project_id, version_id: sel.version_id },
     })) {
-      err = t('pe.dupAsset', { dest });
+      toasts.push({ kind: 'error', text: t('pe.dupAsset', { dest }) });
     }
     assetPick = null;
   }
@@ -619,7 +636,6 @@
   async function onDropAssets(files: File[]) {
     if (!cfg) return;
     assetDropBusy = true;
-    err = '';
     try {
       for (const file of files) {
         const rel = `_nexira/assets/${file.name}`;
@@ -629,11 +645,11 @@
           required: true,
           source: { type: 'smrt_static', rel_path: rel },
         })) {
-          err = t('pe.dupAsset', { dest: file.name });
+          toasts.push({ kind: 'error', text: t('pe.dupAsset', { dest: file.name }) });
         }
       }
     } catch (x) {
-      err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
+      fail(x);
     } finally {
       assetDropBusy = false;
     }
@@ -644,6 +660,17 @@
     const names = cur && !KNOWN_LOADERS.includes(cur) ? [cur, ...KNOWN_LOADERS] : KNOWN_LOADERS;
     return names.map((l) => ({ value: l, label: l }));
   });
+
+  // Which report the dock is showing; null closes it. Both reports share one
+  // dock rather than each getting its own floating window to fight over.
+  type ReportTab = 'resolve' | 'validate';
+  let reportTab = $state<ReportTab | null>(null);
+  const reportTabs = $derived(
+    [
+      resReport ? { value: 'resolve', label: t('resolve.resolve') } : null,
+      valReport ? { value: 'validate', label: t('pe.validate') } : null,
+    ].filter((x): x is { value: string; label: string } => x !== null),
+  );
 
   const tabItems = $derived([
     { value: 'config', label: t('pe.tab.config') },
@@ -689,13 +716,7 @@
   <button onclick={closeGuarded}>{t('common.close')}</button>
 </div>
 
-{#if err}<div class="err mono">{err}</div>{/if}
-{#if saveState === 'error'}
-  <div class="err saveerr">
-    <span class="setext">{t('pe.saveFailed')}<span class="mono sedetail">{saveErr}</span></span>
-    <button class="sm" onclick={retrySave}>{t('pe.saveRetry')}</button>
-  </div>
-{/if}
+
 
 <div class="body" class:split={previewOpen}>
   <div class="editcol">
@@ -731,39 +752,6 @@
           {/if}
         </div>
       {:else}
-        {#if resErr}<div class="err mono">{resErr}</div>{/if}
-        {#if resReport}<ResolvePanel
-            report={resReport}
-            onSuggest={(sel) => {
-              suggestQuery = sel.replace(/^modrinth:/, '');
-              pick = { src: 'modrinth', row: null };
-            }}
-          />{/if}
-        {#if valErr}<div class="err mono">{valErr}</div>{/if}
-        {#if valReport}
-          <div class="panel valrep">
-            <div class="valhead">
-              <span style="color:var(--ok)">{t('pe.valMatched', { n: valReport.matched })}</span>
-              <span style={valReport.missing_in_config.length ? 'color:var(--danger)' : 'opacity:.62'}>
-                {t('pe.valMissing', { n: valReport.missing_in_config.length })}
-              </span>
-              <span class="faint">{t('pe.valExtra', { n: valReport.extra_in_config.length })}</span>
-              <span class="faint">{t('pe.valScMods', { n: valReport.sc_mod_count })}</span>
-            </div>
-            {#if valReport.missing_in_config.length}
-              <div class="vallist">
-                <div class="vl-h" style="color:var(--danger)">{t('pe.valMissingH')}</div>
-                {#each valReport.missing_in_config as m}<div class="mono vl-row">{m}</div>{/each}
-              </div>
-            {/if}
-            {#if valReport.extra_in_config.length}
-              <div class="vallist">
-                <div class="vl-h faint">{t('pe.valExtraH')}</div>
-                {#each valReport.extra_in_config as m}<div class="mono vl-row">{m}</div>{/each}
-              </div>
-            {/if}
-          </div>
-        {/if}
 
         <Section title={t('pe.basics')}>
           <div class="meta">
@@ -951,6 +939,65 @@
   {/if}
 </div>
 
+{#snippet validateReport()}
+  {#if valReport}
+  <div class="valrep">
+    <div class="valhead">
+      <span style="color:var(--ok)">{t('pe.valMatched', { n: valReport.matched })}</span>
+      <span style={valReport.missing_in_config.length ? 'color:var(--danger)' : 'opacity:.62'}>
+        {t('pe.valMissing', { n: valReport.missing_in_config.length })}
+      </span>
+      <span class="faint">{t('pe.valExtra', { n: valReport.extra_in_config.length })}</span>
+      <span class="faint">{t('pe.valScMods', { n: valReport.sc_mod_count })}</span>
+    </div>
+    {#if valReport.missing_in_config.length}
+      <div class="vallist">
+        <div class="vl-h" style="color:var(--danger)">{t('pe.valMissingH')}</div>
+        {#each valReport.missing_in_config as m}<div class="mono vl-row">{m}</div>{/each}
+      </div>
+    {/if}
+    {#if valReport.extra_in_config.length}
+      <div class="vallist">
+        <div class="vl-h faint">{t('pe.valExtraH')}</div>
+        {#each valReport.extra_in_config as m}<div class="mono vl-row">{m}</div>{/each}
+      </div>
+    {/if}
+  </div>
+  {/if}
+{/snippet}
+
+{#if reportTab && cfg}
+  <FloatDock
+    id="pack-report"
+    title={t('pe.reports')}
+    subtitle={packId}
+    width={520}
+    onClose={() => (reportTab = null)}
+  >
+    {#snippet header()}
+      {#if reportTabs.length > 1}
+        <TabStrip
+          value={reportTab ?? "resolve"}
+          tabs={reportTabs}
+          ariaLabel={t('pe.reports')}
+          onChange={(v) => (reportTab = v as ReportTab)}
+        />
+      {/if}
+    {/snippet}
+    {#if reportTab === 'resolve' && resReport}
+      <ResolvePanel
+        report={resReport}
+        onSuggest={(sel) => {
+          suggestQuery = sel.replace(/^modrinth:/, '');
+          pick = { src: 'modrinth', row: null };
+        }}
+      />
+    {:else if reportTab === 'validate'}
+      {@render validateReport()}
+    {/if}
+  </FloatDock>
+{/if}
+
 {#if pick?.src === 'cache' && cfg}
   <MirrorPicker
     mc={cfg.minecraft_version}
@@ -1015,29 +1062,6 @@
   }
   .savestate.err {
     color: var(--danger);
-  }
-  .saveerr {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
-  .setext {
-    flex: 1;
-    min-width: 0;
-  }
-  .sedetail {
-    margin-left: var(--space-2);
-    opacity: 0.8;
-    font-size: 11px;
-  }
-  .err {
-    color: var(--danger);
-    background: var(--danger-soft);
-    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
-    border-radius: var(--radius-sm);
-    padding: var(--space-2) var(--space-3);
-    font-size: 12px;
-    margin-bottom: var(--space-3);
   }
   .empty {
     padding: var(--space-6);
@@ -1181,8 +1205,7 @@
     background: var(--panel-3);
   }
   .valrep {
-    padding: var(--space-3);
-    margin-bottom: var(--space-4);
+    font-size: 12px;
   }
   .valhead {
     display: flex;

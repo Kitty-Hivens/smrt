@@ -11,6 +11,7 @@
   import ModPage from './views/ModPage.svelte';
   import Profile from './views/Profile.svelte';
   import MyPacks from './views/MyPacks.svelte';
+  import Toaster from './views/ui/Toaster.svelte';
   import DialogHost from './views/DialogHost.svelte';
 
   type Me = { uid: number; login: string; role: string; accepted_terms: boolean };
@@ -74,6 +75,7 @@
 {/if}
 
 <DialogHost />
+<Toaster />
 
 <style>
   .boot {
