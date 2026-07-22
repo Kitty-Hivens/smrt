@@ -176,7 +176,7 @@
      unsorted dims it to a neutral hint */
   .dt-caret {
     flex-shrink: 0;
-    transition: transform 0.12s ease;
+    transition: transform var(--dur-state) var(--ease-out);
   }
   .dt-caret.none {
     opacity: 0.28;

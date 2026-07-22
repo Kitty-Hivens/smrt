@@ -88,6 +88,19 @@
   --fs-2xl: 24px;
   --fs-3xl: 30px;
 
+  /* Motion. The panel is flat and mechanical -- borders instead of elevation,
+     contrast instead of colour -- so its movement is short and linear-out, with
+     no overshoot: anything that springs reads as a different product. Three
+     durations cover everything. State is a control answering a press, enter is
+     something arriving in place, layer is a panel or sheet moving as a whole.
+     Every consumer reads these, so the reduced-motion rule below disarms the
+     entire product by rewriting four values. */
+  --dur-state: 90ms;
+  --dur-enter: 150ms;
+  --dur-layer: 240ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+
   /* Minimum interactive target. 28px rather than the bare 24px minimum: the
      dense rows put several controls within a few pixels of each other, where
      the floor should not also be the answer. */
@@ -121,6 +134,17 @@
 
   --mono: 'JetBrains Mono', 'SF Mono', ui-monospace, 'Cascadia Code', monospace;
   --sans: 'Inter', ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* One switch for the whole product: durations go to zero, so every transition
+   and animation below still runs its logic and simply arrives immediately. No
+   consumer needs its own media query. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-state: 0ms;
+    --dur-enter: 0ms;
+    --dur-layer: 0ms;
+  }
 }
 
 * {
@@ -194,12 +218,17 @@ button {
   cursor: pointer;
   box-shadow: var(--shadow-1);
   transition:
-    border-color 0.13s ease,
-    background 0.13s ease,
-    color 0.13s ease;
+    border-color var(--dur-state) var(--ease-out),
+    background var(--dur-state) var(--ease-out),
+    color var(--dur-state) var(--ease-out);
 }
 button:hover {
   background: var(--panel-3);
+}
+/* A press should land, not just recolour: one pixel down, gone in 90ms. This is
+   the only movement most controls in the panel will ever make. */
+button:active:not(:disabled) {
+  transform: translateY(1px);
 }
 button:focus-visible {
   outline: none;
@@ -269,8 +298,8 @@ input[type='checkbox'] {
   position: relative;
   vertical-align: middle;
   transition:
-    border-color 0.12s ease,
-    background 0.12s ease;
+    border-color var(--dur-state) var(--ease-out),
+    background var(--dur-state) var(--ease-out);
 }
 input[type='checkbox']:hover {
   border-color: var(--fg);
@@ -432,4 +461,32 @@ tbody tr:hover td {
 .scroll::-webkit-scrollbar-thumb:hover {
   background: var(--fg-faint);
   background-clip: content-box;
+}
+
+/* Sequenced list entry. A row sets --stagger (see lib/motion.svelte.ts) and the
+   list reveals in the order it is read rather than appearing as one block. The
+   travel is 4px: enough to register as arrival, too little to be a slide. */
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+.row-in {
+  /* backwards, not both: a retained transform would outrank the inline one
+     Svelte's flip writes, and re-ordering the list would stop moving */
+  animation: row-in var(--dur-enter) var(--ease-out) backwards;
+  animation-delay: var(--stagger, 0ms);
+}
+
+/* The shell's activity wire: a hairline that travels while requests are in
+   flight. The mirror's whole job is fetching things from elsewhere, so "work is
+   happening" deserves one permanent, unobtrusive place to live. */
+@keyframes wire-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(400%);
+  }
 }

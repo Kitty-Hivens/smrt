@@ -643,7 +643,7 @@
     border-top: 4px solid transparent;
     border-bottom: 4px solid transparent;
     border-left: 5px solid currentColor;
-    transition: transform 0.12s ease;
+    transition: transform var(--dur-state) var(--ease-out);
   }
   .sechead.open .caret {
     transform: rotate(90deg);

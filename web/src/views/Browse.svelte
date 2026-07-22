@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { countUp } from '../lib/motion.svelte';
   import { notifyFail } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
@@ -193,12 +194,12 @@
         <div class="readout">
           <div class="stat">
             <div class="k">{t('overview.packs')}</div>
-            <div class="v">{allPackIds.length}</div>
+            <div class="v" use:countUp={allPackIds.length}></div>
             <div class="s">{t('overview.packsSub', { built: builtCount, unbuilt: unbuiltCount })}</div>
           </div>
           <div class="stat">
             <div class="k">{t('mm.overviewMods')}</div>
-            <div class="v">{mods.length}</div>
+            <div class="v" use:countUp={mods.length}></div>
             <div class="s">
               {unassigned.length
                 ? t('mm.overviewModsSub', { n: unassigned.length })
@@ -212,7 +213,7 @@
           </div>
           <div class="stat">
             <div class="k">{#if removed.length}<span class="d"></span>{/if}{t('overview.takedown')}</div>
-            <div class="v">{removed.length}</div>
+            <div class="v" use:countUp={removed.length}></div>
             <div class="s">blocked sha1</div>
           </div>
         </div>

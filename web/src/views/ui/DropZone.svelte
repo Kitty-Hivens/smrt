@@ -82,9 +82,9 @@
     cursor: pointer;
     text-align: center;
     transition:
-      border-color 0.12s ease,
-      background 0.12s ease,
-      color 0.12s ease;
+      border-color var(--dur-state) var(--ease-out),
+      background var(--dur-state) var(--ease-out),
+      color var(--dur-state) var(--ease-out);
   }
   .dz:hover {
     border-color: var(--seam-bright);

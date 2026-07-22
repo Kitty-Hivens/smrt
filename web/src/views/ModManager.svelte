@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
+  import { stagger } from '../lib/motion.svelte';
   import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
@@ -351,8 +352,8 @@
   <input class="search" bind:value={q} oninput={onSearch} placeholder={t('mm.search')} aria-label={t('mm.search')} />
 
   <div class="panel modlist">
-    {#each mods as m (m.mod_id)}
-      <div class="mod" class:open={openId === m.mod_id}>
+    {#each mods as m, i (m.mod_id)}
+      <div class="mod row-in" class:open={openId === m.mod_id} use:stagger={i}>
         <div
           class="modrow"
           role="button"
@@ -608,7 +609,7 @@
     color: var(--fg-faint);
     font-size: var(--fs-xs);
     flex: none;
-    transition: transform 0.15s ease;
+    transition: transform var(--dur-state) var(--ease-out);
   }
   .mod.open .chev {
     transform: rotate(90deg);

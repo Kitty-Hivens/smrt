@@ -225,7 +225,7 @@
     color: var(--fg-faint);
     font-size: var(--fs-xs);
     flex: none;
-    transition: transform 0.15s ease;
+    transition: transform var(--dur-state) var(--ease-out);
   }
   .pack.open .chev {
     transform: rotate(90deg);

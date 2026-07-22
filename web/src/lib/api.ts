@@ -35,6 +35,7 @@ import type {
   VersionRow,
   Visibility,
 } from './types';
+import { activity } from './motion.svelte';
 
 // The authored identity an operator sets for one cached jar: which mod, which
 // release (version_number + channel), and the file's loader/mc facets. Exactly
@@ -71,12 +72,17 @@ async function toError(r: Response): Promise<ApiError> {
 }
 
 async function getJson<T>(path: string): Promise<T> {
-  const r = await fetch(path, {
-    credentials: 'include',
-    headers: { Accept: 'application/json' },
-  });
-  if (!r.ok) throw await toError(r);
-  return (await r.json()) as T;
+  activity.begin();
+  try {
+    const r = await fetch(path, {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+    });
+    if (!r.ok) throw await toError(r);
+    return (await r.json()) as T;
+  } finally {
+    activity.end();
+  }
 }
 
 async function send(method: string, path: string, jsonBody?: unknown): Promise<void> {
@@ -85,8 +91,13 @@ async function send(method: string, path: string, jsonBody?: unknown): Promise<v
     init.headers = { 'Content-Type': 'application/json' };
     init.body = JSON.stringify(jsonBody);
   }
-  const r = await fetch(path, init);
-  if (!r.ok) throw await toError(r);
+  activity.begin();
+  try {
+    const r = await fetch(path, init);
+    if (!r.ok) throw await toError(r);
+  } finally {
+    activity.end();
+  }
 }
 
 async function sendRaw(

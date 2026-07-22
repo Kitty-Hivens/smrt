@@ -527,7 +527,7 @@
     opacity: 0.12;
   }
   .flowwrap :global(.svelte-flow__node) {
-    transition: opacity 0.18s ease;
+    transition: opacity var(--dur-state) var(--ease-out);
   }
   @media (prefers-reduced-motion: reduce) {
     .flowwrap :global(.svelte-flow__node) {

@@ -40,6 +40,17 @@ version section when a release is tagged.
   values (operator uid, public base URL) moved to the environment; the
   SmartyCraft/Nexira setup is the reference deployment, not the definition.
 
+### Added
+
+- A motion system, where the panel had fifteen hand-picked CSS durations and
+  nothing else: three duration tokens and two easings, short and linear-out to
+  match a flat interface, with one `prefers-reduced-motion` rule that disarms
+  the whole product by zeroing them. Requests in flight show as a hairline
+  wire under the top bar -- one place for "work is happening" instead of a
+  spinner per view; long lists reveal in sequence rather than as a block; the
+  dock arrives as a panel being placed; controls take a press; the overview
+  counts its numbers up once.
+
 ### Fixed
 
 - Panel-wide design pass. The type scale had eight sizes inside a four-pixel

@@ -105,8 +105,10 @@
 
 <svelte:window onkeydown={onKey} />
 
+<!-- enters as one object: a short rise and fade, no scale bounce. The dock is a
+     panel being placed, not a notification popping -->
 <section
-  class="dock"
+  class="dock enter"
   class:dragging
   bind:this={panel}
   style="left:{pos.x}px; top:{pos.y}px; width:{width}px"
@@ -129,6 +131,15 @@
 </section>
 
 <style>
+  @keyframes dock-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+  }
+  .dock.enter {
+    animation: dock-in var(--dur-layer) var(--ease-out) backwards;
+  }
   .dock {
     position: fixed;
     z-index: 55;

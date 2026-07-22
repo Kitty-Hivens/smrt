@@ -130,7 +130,7 @@
   :global(.sel-chev) {
     flex-shrink: 0;
     color: var(--fg-dim);
-    transition: transform 0.13s ease;
+    transition: transform var(--dur-state) var(--ease-out);
   }
   :global(.sel-trg[data-state='open'] .sel-chev) {
     transform: rotate(180deg);

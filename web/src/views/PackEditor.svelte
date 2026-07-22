@@ -1,10 +1,10 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { flip } from 'svelte/animate';
-  import { fade } from 'svelte/transition';
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { stagger } from '../lib/motion.svelte';
   import { notifyFail, toasts } from '../lib/toasts.svelte';
   import { isDebug } from '../lib/roles';
   import type {
@@ -808,7 +808,7 @@
 
           <div class="mods">
             {#each cfg.mods as m, i (m)}
-              <div class="modrow" animate:flip={{ duration: 200 }} in:fade={{ duration: 180 }}>
+              <div class="modrow row-in" use:stagger={i} animate:flip={{ duration: 200 }}>
                 <ModIcon name={m.filename} iconUrl={m.display?.icon_url} source={m.source} size={24} mono />
                 <input class="fn mono" bind:value={m.filename} placeholder={t('pe.filename')} aria-label={t('pe.filename')} />
                 <span class="srcsel">
@@ -1193,8 +1193,8 @@
     padding: 4px 10px;
     cursor: pointer;
     transition:
-      border-color 0.13s ease,
-      background 0.13s ease;
+      border-color var(--dur-state) var(--ease-out),
+      background var(--dur-state) var(--ease-out);
   }
   .valbtn:hover {
     background: var(--panel-3);

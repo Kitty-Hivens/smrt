@@ -4,6 +4,7 @@
   import type { Health } from '../lib/types';
   import { route, visibleSections, type Section } from '../lib/route.svelte';
   import { reload } from '../lib/reload.svelte';
+  import { activity } from '../lib/motion.svelte';
   import { t, i18n, LOCALES } from '../lib/i18n.svelte';
   import Avatar from './Avatar.svelte';
 
@@ -111,6 +112,9 @@
 
   <div class="main">
     <header class="topbar">
+      <!-- work in flight, shown once for the whole app rather than as a spinner
+           per view: the mirror spends most of its time waiting on somewhere else -->
+      <div class="wire" class:on={activity.busy} aria-hidden="true"><span></span></div>
       <button
         class="burger"
         aria-label={t('shell.menu')}
@@ -283,7 +287,36 @@
     min-width: 0;
     overflow: hidden;
   }
+  .wire {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 1px;
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity var(--dur-enter) var(--ease-out);
+  }
+  .wire.on {
+    opacity: 1;
+  }
+  .wire span {
+    display: block;
+    width: 25%;
+    height: 100%;
+    background: var(--fg);
+    animation: wire-sweep 1.1s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* no travelling hairline: the wire sits lit while work is in flight */
+    .wire span {
+      width: 100%;
+      animation: none;
+      opacity: 0.5;
+    }
+  }
   .topbar {
+    position: relative;
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -493,7 +526,7 @@
       background: var(--panel);
       overflow-y: auto;
       transform: translateX(-100%);
-      transition: transform 0.22s ease;
+      transition: transform var(--dur-state) var(--ease-out);
     }
     .rail.open {
       transform: translateX(0);
@@ -511,7 +544,7 @@
       opacity: 0;
       visibility: hidden;
       transition:
-        opacity 0.2s ease,
+        opacity var(--dur-state) var(--ease-out),
         visibility 0.2s ease;
     }
     .scrim.show {

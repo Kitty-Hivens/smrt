@@ -207,7 +207,7 @@
     border-left: 4px solid transparent;
     border-right: 4px solid transparent;
     border-top: 5px solid currentColor;
-    transition: transform 0.12s ease;
+    transition: transform var(--dur-state) var(--ease-out);
   }
   .exp.open .caret {
     transform: rotate(180deg);
