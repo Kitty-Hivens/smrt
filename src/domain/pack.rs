@@ -259,7 +259,11 @@ impl PackConfig {
     /// Identity deliberately ignores the pinned version: the same project at two
     /// versions is still the same mod, and changing versions is a re-pin of the
     /// row rather than a second row.
-    pub fn duplicate_mod(&self) -> Option<String> {
+    ///
+    /// Assets are held to the same rule on their `dest`: two rows writing one
+    /// path install one of the two, chosen by whichever the launcher happens to
+    /// fetch last.
+    pub fn duplicate_declaration(&self) -> Option<String> {
         let mut identities: HashSet<String> = HashSet::new();
         let mut filenames: HashSet<&str> = HashSet::new();
         for m in &self.mods {
@@ -278,6 +282,12 @@ impl PackConfig {
             }
             if !filenames.insert(m.filename.as_str()) {
                 return Some(format!("filename {:?} is declared twice", m.filename));
+            }
+        }
+        let mut dests: HashSet<&str> = HashSet::new();
+        for a in &self.assets {
+            if !dests.insert(a.dest.as_str()) {
+                return Some(format!("asset dest {:?} is declared twice", a.dest));
             }
         }
         None
@@ -476,25 +486,42 @@ mod tests {
     // of the identity: the same project pinned twice is the same mod twice, which
     // is exactly the case a version-keyed check used to wave through.
     #[test]
-    fn duplicate_mod_catches_a_project_pinned_twice_and_a_reused_filename() {
+    fn duplicate_declaration_catches_a_project_pinned_twice_and_a_reused_filename() {
         let clean = config_with(vec![
             mr("jei.jar", "PROJ_JEI", "v1"),
             mr("c.jar", "PROJ_C", "v1"),
         ]);
-        assert!(clean.duplicate_mod().is_none());
+        assert!(clean.duplicate_declaration().is_none());
 
         let two_versions = config_with(vec![
             mr("jei.jar", "PROJ_JEI", "v1"),
             mr("jei-old.jar", "PROJ_JEI", "v0"),
         ]);
-        let msg = two_versions.duplicate_mod().expect("same project twice");
+        let msg = two_versions
+            .duplicate_declaration()
+            .expect("same project twice");
         assert!(msg.contains("PROJ_JEI"), "got {msg}");
 
         let same_name = config_with(vec![
             mr("jei.jar", "PROJ_JEI", "v1"),
             mr("jei.jar", "PROJ_C", "v1"),
         ]);
-        let msg = same_name.duplicate_mod().expect("same filename twice");
+        let msg = same_name
+            .duplicate_declaration()
+            .expect("same filename twice");
         assert!(msg.contains("jei.jar"), "got {msg}");
+
+        let mut same_dest = config_with(vec![]);
+        let asset = |dest: &str| DeclaredAsset {
+            dest: dest.into(),
+            required: true,
+            source: SourceDecl::SmrtStatic {
+                rel_path: format!("_nexira/{dest}"),
+            },
+            display: None,
+        };
+        same_dest.assets = vec![asset("resourcepacks/x.zip"), asset("resourcepacks/x.zip")];
+        let msg = same_dest.duplicate_declaration().expect("same dest twice");
+        assert!(msg.contains("resourcepacks/x.zip"), "got {msg}");
     }
 }

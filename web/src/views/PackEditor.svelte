@@ -256,6 +256,26 @@
     return cfg ? JSON.stringify([$state.snapshot(cfg), tagsStr, cardGalleryStr]) : '';
   }
 
+  // True while the editor holds edits the server has not accepted. Drives the
+  // banner, the beforeunload guard and the close confirmation -- all three read
+  // one fact rather than each deciding for itself.
+  const unsaved = $derived(saveState === 'error');
+
+  // A tab close / reload with a rejected save pending would drop the edits
+  // silently; the browser's own confirmation is the only thing that can stop it.
+  $effect(() => {
+    if (!unsaved) return;
+    const guard = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', guard);
+    return () => window.removeEventListener('beforeunload', guard);
+  });
+
+  // Closing the editor with an unsaved rejection is the other way to lose them.
+  async function closeGuarded() {
+    if (unsaved && !(await dialogs.confirm(t('pe.unsavedLeave'), { danger: true }))) return;
+    onClose();
+  }
+
   // debounced autosave: deep-reads cfg + tags + gallery, persists once they settle
   $effect(() => {
     if (!cfg) return;
@@ -269,6 +289,14 @@
   // a cleared text input holds "" -- normalize to null so an empty card field is
   // omitted from the published summary rather than serialized as ""
   const blankToNull = (v: string | null | undefined) => (v && v.trim() ? v.trim() : null);
+
+  // Retry the last failed save. The error is a banner rather than a tooltip: a
+  // rejected save means the config on screen is NOT the config on disk, which is
+  // the one state in this editor worth interrupting for.
+  async function retrySave() {
+    if (!cfg) return;
+    await doSave(sig());
+  }
 
   async function doSave(s: string) {
     if (!cfg) return;
@@ -384,8 +412,18 @@
     return { type, rel_path: '' };
   }
 
+  // Switching a row's source type used to blank the reference outright, so one
+  // stray click on the dropdown lost a project id with no undo and an autosave
+  // 700ms behind it. Each row remembers what it had per type, so switching back
+  // restores it.
+  const priorSource = new Map<number, Partial<Record<SourceDecl['type'], SourceDecl>>>();
+
   function changeSourceType(i: number, type: SourceDecl['type']) {
-    cfg!.mods[i].source = blankSource(type);
+    const row = cfg!.mods[i];
+    const kept = priorSource.get(i) ?? {};
+    kept[row.source.type] = $state.snapshot(row.source) as SourceDecl;
+    priorSource.set(i, kept);
+    row.source = kept[type] ?? blankSource(type);
   }
 
   function removeMod(i: number) {
@@ -424,15 +462,11 @@
       for (const file of files) {
         if (!file.name.endsWith('.jar')) continue;
         const sha1 = await api.uploadCacheJar(file);
-        cfg.mods = [
-          ...cfg.mods,
-          {
-            filename: file.name,
-            default_enabled: true,
-            source: { type: 'smrt_cache', sha1 },
-            pulled: false,
-          },
-        ];
+        // same identity check as every other add path: dropping a jar the pack
+        // already ships must not create a second row of it
+        if (!appendMod({ filename: file.name, source: { type: 'smrt_cache', sha1 } })) {
+          err = t('pe.dupMod', { name: file.name });
+        }
       }
     } catch (x) {
       err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
@@ -520,10 +554,7 @@
   // pull an asset from a build (Builds tab) into this pack, deduped by dest; the
   // asset already carries its resolved source, so it is appended as-is
   function onMirrorAddAsset(a: DeclaredAsset) {
-    if (!cfg) return;
-    const assets = cfg.assets ?? [];
-    if (assets.some((x) => x.dest === a.dest)) return;
-    cfg.assets = [...assets, a];
+    appendAsset(a);
   }
 
   function onModrinthPick(sel: { project_id: string; slug: string; version_id: string }) {
@@ -555,11 +586,18 @@
     suggestQuery = '';
   }
 
+  // one row per dest: two assets writing the same file is a pack that installs
+  // one of them at random, so every add path funnels through here
+  function appendAsset(a: DeclaredAsset): boolean {
+    if (!cfg) return false;
+    const assets = cfg.assets ?? [];
+    if (a.dest && assets.some((x) => x.dest === a.dest)) return false;
+    cfg.assets = [...assets, a];
+    return true;
+  }
+
   function addAsset() {
-    cfg!.assets = [
-      ...(cfg!.assets ?? []),
-      { dest: '', required: true, source: { type: 'smrt_static', rel_path: '' } },
-    ];
+    appendAsset({ dest: '', required: true, source: { type: 'smrt_static', rel_path: '' } });
   }
   function removeAsset(i: number) {
     cfg!.assets = (cfg!.assets ?? []).filter((_, j) => j !== i);
@@ -567,14 +605,14 @@
 
   function onAssetModrinthPick(sel: { project_id: string; slug: string; version_id: string }) {
     if (!cfg || !assetPick) return;
-    cfg.assets = [
-      ...(cfg.assets ?? []),
-      {
-        dest: `${assetPick.folder}/${sel.slug}.zip`,
-        required: true,
-        source: { type: 'modrinth', project_id: sel.project_id, version_id: sel.version_id },
-      },
-    ];
+    const dest = `${assetPick.folder}/${sel.slug}.zip`;
+    if (!appendAsset({
+      dest,
+      required: true,
+      source: { type: 'modrinth', project_id: sel.project_id, version_id: sel.version_id },
+    })) {
+      err = t('pe.dupAsset', { dest });
+    }
     assetPick = null;
   }
 
@@ -586,10 +624,13 @@
       for (const file of files) {
         const rel = `_nexira/assets/${file.name}`;
         await api.uploadStatic(packId, rel, file);
-        cfg.assets = [
-          ...(cfg.assets ?? []),
-          { dest: file.name, required: true, source: { type: 'smrt_static', rel_path: rel } },
-        ];
+        if (!appendAsset({
+          dest: file.name,
+          required: true,
+          source: { type: 'smrt_static', rel_path: rel },
+        })) {
+          err = t('pe.dupAsset', { dest: file.name });
+        }
       }
     } catch (x) {
       err = x instanceof ApiError ? `${x.status} ${x.body}` : String(x);
@@ -645,10 +686,16 @@
       {previewOpen ? t('pe.hidePreview') : t('pe.preview')}
     </button>
   {/if}
-  <button onclick={onClose}>{t('common.close')}</button>
+  <button onclick={closeGuarded}>{t('common.close')}</button>
 </div>
 
 {#if err}<div class="err mono">{err}</div>{/if}
+{#if saveState === 'error'}
+  <div class="err saveerr">
+    <span class="setext">{t('pe.saveFailed')}<span class="mono sedetail">{saveErr}</span></span>
+    <button class="sm" onclick={retrySave}>{t('pe.saveRetry')}</button>
+  </div>
+{/if}
 
 <div class="body" class:split={previewOpen}>
   <div class="editcol">
@@ -726,7 +773,21 @@
               <Select full bind:value={cfg.loader.name} options={loaderOptions} ariaLabel={t('pe.loaderName')} />
             </Field>
             <Field label={t('pe.loaderVersion')}><input bind:value={cfg.loader.version} /></Field>
-            <Field label={t('pe.java')}><input type="number" bind:value={cfg.java_major} /></Field>
+            <Field label={t('pe.java')}>
+              <input
+                type="number"
+                min="8"
+                value={cfg.java_major}
+                oninput={(e) => {
+                  // an emptied number input binds as null, and java_major is a
+                  // required integer -- every later save would 422 with the
+                  // failure only visible in a tooltip. Hold the last good value
+                  // until a number is typed.
+                  const n = (e.currentTarget as HTMLInputElement).valueAsNumber;
+                  if (Number.isFinite(n) && n > 0) cfg!.java_major = Math.trunc(n);
+                }}
+              />
+            </Field>
             <label class="chk"><input type="checkbox" bind:checked={cfg.featured} /> {t('pe.featured')}</label>
             <Field label={t('pe.tagline')} wide><input bind:value={cfg.tagline} /></Field>
             <Field label={t('pe.tags')} hint={t('pe.tagsHint')} wide><input bind:value={tagsStr} /></Field>
@@ -954,6 +1015,20 @@
   }
   .savestate.err {
     color: var(--danger);
+  }
+  .saveerr {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .setext {
+    flex: 1;
+    min-width: 0;
+  }
+  .sedetail {
+    margin-left: var(--space-2);
+    opacity: 0.8;
+    font-size: 11px;
   }
   .err {
     color: var(--danger);

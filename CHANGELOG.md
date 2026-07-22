@@ -42,6 +42,17 @@ version section when a release is tagged.
 
 ### Fixed
 
+- The pack editor no longer loses edits quietly. A rejected autosave was a
+  grey word in the header with the reason only in a tooltip, and it never
+  retried, so a failed save plus a closed tab meant the work was gone. It is
+  now a banner with the server's reason, a retry, and a confirmation before
+  leaving. Emptying the Java field no longer sends a null into a required
+  field, and switching a mod's source type keeps the reference it had, so a
+  stray click on the dropdown is recoverable.
+- Uniqueness holds on every add path, not just the pickers: dropped jars go
+  through the same identity check, and assets are unique by `dest` in the
+  editor and on save -- two rows writing one path installed whichever the
+  launcher fetched last.
 - A connector's `loader:<name>` capability is now shipped as data and emitted
   by the harvest, so a Fabric mod carried by Sinytra Connector reads as
   carried instead of "will not load". The resolver understood bridges
