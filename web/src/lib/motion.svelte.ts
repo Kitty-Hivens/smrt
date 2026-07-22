@@ -6,20 +6,32 @@
 // different product. Durations and easings live in app.css as tokens; these are
 // the behaviours that need JavaScript.
 
-/// Requests currently in flight, for the shell's activity rail. A counter
+/// Requests currently in flight, for the shell's activity wire. A counter
 /// rather than a boolean: overlapping requests must not have the first one to
 /// finish declare the app idle.
-let inflight = $state(0);
+///
+/// The count itself is a plain variable and only `busy` is reactive, which is
+/// not a detail. Every request passes through here, including requests started
+/// inside an `$effect`; if the counter were `$state`, incrementing it would
+/// both read and write reactive state inside that effect, so the effect would
+/// depend on its own side effect and re-run forever. That is not theoretical --
+/// the shell's one-shot health fetch turned into an unbounded request loop the
+/// moment this was reactive. Writing `busy` without reading it creates no such
+/// dependency.
+let inflight = 0;
+let busy = $state(false);
 
 export const activity = {
   get busy(): boolean {
-    return inflight > 0;
+    return busy;
   },
   begin() {
     inflight++;
+    busy = true;
   },
   end() {
     inflight = Math.max(0, inflight - 1);
+    busy = inflight > 0;
   },
 };
 

@@ -5,7 +5,7 @@
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
   import { stagger } from '../lib/motion.svelte';
-  import { notifyFail, toasts } from '../lib/toasts.svelte';
+  import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
   import { isDebug } from '../lib/roles';
   import type {
     DeclaredAsset,
@@ -330,7 +330,7 @@
       if (previewOpen) previewToken++; // auto-refresh the preview
     } catch (e) {
       saveState = 'error';
-      saveErr = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+      saveErr = detailOf(e);
       saveToast = toasts.replace(saveToast, {
         kind: 'error',
         text: t('pe.saveFailed'),

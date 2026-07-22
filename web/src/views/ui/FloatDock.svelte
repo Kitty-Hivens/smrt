@@ -46,11 +46,13 @@
     }
   }
 
-  // Default berth: top-right, clear of the shell's top bar. Right-aligned
-  // because the editor's own controls sit left, so the dock lands where the
-  // form is not.
+  // Default berth: right-hand side, below the header band. Right-aligned
+  // because a form's labels run down the left; low enough that it does not
+  // cover the view's own controls, which is where 88px put it -- a dock that
+  // opens on top of the buttons that opened it has to be dragged before it can
+  // be read.
   function initial(): { x: number; y: number } {
-    return stored() ?? { x: Math.max(MARGIN, window.innerWidth - width - 24), y: 88 };
+    return stored() ?? { x: Math.max(MARGIN, window.innerWidth - width - 24), y: 168 };
   }
 
   let pos = $state(initial());

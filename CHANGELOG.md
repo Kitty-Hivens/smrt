@@ -59,6 +59,16 @@ version section when a release is tagged.
 
 ### Fixed
 
+- The activity counter no longer turns a one-shot fetch into a request loop.
+  Counting in-flight requests through reactive state meant any request started
+  inside an effect made that effect depend on its own side effect: the shell's
+  single health fetch became an unbounded loop that starved every other
+  request on the page, so views rendered empty. Only the derived flag is
+  reactive now.
+- A failure notice shows the server's sentence, not its envelope: four lines
+  of JSON where the actual problem was one line inside it.
+- The report dock opens below the view's header instead of on top of the
+  controls that opened it.
 - Panel-wide design pass. The type scale had eight sizes inside a four-pixel
   band, bottoming out at 9px on the public catalog; it is six steps now, and
   nothing in the product is smaller than an 11px mono label. Every control

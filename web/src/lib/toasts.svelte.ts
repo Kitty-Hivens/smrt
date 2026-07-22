@@ -64,19 +64,33 @@ export const toasts = {
   },
 };
 
-/// The one way a view reports a failed request. Keeps the machine detail (the
-/// status and body the server sent) next to a plain sentence, instead of either
-/// dumping a raw string into the layout or hiding the reason in a tooltip.
+/// The one way a view reports a failed request. Keeps the machine detail next
+/// to a plain sentence, instead of either dumping a raw string into the layout
+/// or hiding the reason in a tooltip.
 export function notifyFail(e: unknown, text?: string): number {
   return toasts.push({
     kind: 'error',
     text: text ?? (e instanceof ApiError ? t('common.requestFailed') : t('common.unexpected')),
-    detail: e instanceof ApiError ? `${e.status} ${e.body}` : String(e),
+    detail: detailOf(e),
   });
 }
 
 /// The machine detail alone, for the few places that render a failure inside
 /// the row that produced it (a per-row diff) rather than as a page notice.
+///
+/// The mirror answers a failure with an envelope -- schema version, error code,
+/// message -- and printing that verbatim put four lines of JSON in front of a
+/// person whose actual problem was one sentence inside it. The sentence is what
+/// is shown; the envelope is only unwrapped, never invented, so an error the
+/// server did not phrase still arrives verbatim.
 export function detailOf(e: unknown): string {
-  return e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
+  if (!(e instanceof ApiError)) return String(e);
+  try {
+    const parsed = JSON.parse(e.body);
+    const message = parsed?.error?.message;
+    if (typeof message === 'string' && message) return `${e.status} ${message}`;
+  } catch {
+    // not the envelope -- an nginx page, a proxy error, an empty body
+  }
+  return `${e.status} ${e.body}`;
 }
