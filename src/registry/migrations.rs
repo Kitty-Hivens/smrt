@@ -70,6 +70,10 @@ const MIGRATIONS: &[(u32, Migration)] = &[
         Migration::Sql(include_str!("schema/0015_jar_class_source.sql")),
     ),
     (16, Migration::Code(widen_release_channel_vocab)),
+    (
+        17,
+        Migration::Sql(include_str!("schema/0017_loader_bridge.sql")),
+    ),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its

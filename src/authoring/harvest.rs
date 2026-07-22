@@ -172,6 +172,10 @@ pub struct HarvestReport {
     /// Identity splits folded this harvest by matching a Modrinth mod's slug to
     /// another mod's forge modid (the two-jar re-upload case no artifact bridges).
     pub identities_reconciled: i64,
+    /// `loader:<name>` capabilities emitted this harvest for known bridge mods,
+    /// so a foreign-loader artifact a connector carries reads as carried rather
+    /// than as dead weight.
+    pub loader_bridges: i64,
 }
 
 /// Confidence rank for modern-manifest declared deps: above the shared
@@ -549,6 +553,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
     let mut match_policies_derived = 0i64;
     let mut non_mod_jars = 0i64;
     let mut modrinth_deps_written = 0i64;
+    let mut bridges_written = 0i64;
     let mut declared_deps_written = 0i64;
     // (from_mod_id, jar) for jars carrying references, resolved to edges in a
     // second pass once every jar's packages are in the index.
@@ -710,6 +715,26 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         // modid guessed from the stem; unresolved it lands in the
         // `external:<file_name>` namespace so the resolver reports it as an
         // out-of-ecosystem dependency instead of a resolver bug.
+        // A bridge carries another loader's artifacts at runtime; the resolver
+        // reads that as the `loader:<name>` capability, and the shipped bridge
+        // table is where the fact comes from. Emitted per artifact, like every
+        // other harvested edge, so it dies with the jar rather than lingering.
+        if let Some(pid) = jar.project_id.as_deref()
+            && let Some(carried) = queries::bridged_loader_for_project(conn, pid)?
+            && upsert::upsert_relation(
+                conn,
+                mod_id,
+                Some(mod_version_id),
+                &format!("loader:{carried}"),
+                None,
+                RelKind::Provides,
+                Source::Harvested,
+                now,
+            )?
+        {
+            bridges_written += 1;
+        }
+
         if let Some(pid) = jar.project_id.as_deref() {
             for dep in &jar.modrinth_deps {
                 let Some(kind) = modrinth_rel_kind(&dep.dep_type) else {
@@ -1037,6 +1062,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         modrinth_modids_learned: scan.modrinth_modids_learned,
         modrinth_selfhost_links,
         identities_reconciled,
+        loader_bridges: bridges_written,
     })
 }
 
@@ -2093,6 +2119,53 @@ mod tests {
             })
             .collect();
         s
+    }
+
+    // The bridge fact the resolver needs but nobody ever wrote: harvesting the
+    // connector emits `provides loader:fabric` off the shipped bridge table, so a
+    // fabric jar in a neoforge pack reads as carried instead of dead (#50).
+    #[test]
+    fn write_scan_emits_the_loader_capability_of_a_known_bridge() {
+        let r = Registry::open_in_memory().unwrap();
+        let scan = ScanData {
+            // u58R1TMW is the seeded Sinytra Connector project
+            jars: vec![mseed("sha_conn", "connector", "u58R1TMW", &[])],
+            packs: vec![],
+            modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
+            modrinth_leg_ok: true,
+        };
+        let rep = r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+        assert_eq!(
+            rep.loader_bridges, 1,
+            "the connector declares what it carries"
+        );
+
+        let edges = r
+            .with_conn(|c| {
+                let id = queries::mod_id_for_alias(c, "modrinth", "u58R1TMW")?.unwrap();
+                queries::relations_from(c, id)
+            })
+            .unwrap();
+        let provides: Vec<&str> = edges
+            .iter()
+            .filter(|e| e.kind == RelKind::Provides)
+            .map(|e| e.target.as_str())
+            .collect();
+        assert_eq!(provides, vec!["loader:fabric"]);
+
+        // a mod the table does not name gets no capability invented for it
+        let plain = ScanData {
+            jars: vec![mseed("sha_plain", "plain", "SOMEPROJ", &[])],
+            packs: vec![],
+            modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
+            modrinth_leg_ok: true,
+        };
+        let rep = r.with_txn(|c| write_scan(c, &plain, "T1")).unwrap();
+        assert_eq!(rep.loader_bridges, 0);
     }
 
     /// A non-Modrinth jar seed carrying modern declared deps (modid, kind, range).

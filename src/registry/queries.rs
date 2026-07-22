@@ -254,6 +254,20 @@ pub fn loader_chain(conn: &Connection, loader: &str) -> Result<HashSet<String>> 
         .collect::<rusqlite::Result<HashSet<_>>>()?)
 }
 
+/// The loader a bridge mod carries, by Modrinth project id -- `None` for a
+/// project the shipped bridge table does not name. The table is data (see the
+/// 0017 seed), so a self-host adds a niche connector with one INSERT and the
+/// next harvest emits its capability.
+pub fn bridged_loader_for_project(conn: &Connection, project_id: &str) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT loader_id FROM loader_bridge WHERE project_id = ?1",
+            params![project_id],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
 /// The loaders one artifact suits. `any` marks a loader-agnostic jar; the harvest
 /// guarantees at least one row, so an empty result means the artifact was never
 /// read rather than that it suits nothing.

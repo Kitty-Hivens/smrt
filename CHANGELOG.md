@@ -42,6 +42,12 @@ version section when a release is tagged.
 
 ### Fixed
 
+- A connector's `loader:<name>` capability is now shipped as data and emitted
+  by the harvest, so a Fabric mod carried by Sinytra Connector reads as
+  carried instead of "will not load". The resolver understood bridges
+  already; nothing ever produced the fact, so on any fresh mirror every
+  bridged mod was a false alarm. Add a niche connector with one row in
+  `loader_bridge` -- no code change.
 - Dependency auto-fill no longer waits for a build: a Modrinth pin the
   harvest has not read yet contributes its dependencies straight from the
   version it declares, so a mod just added to a config -- or re-pinned to a
