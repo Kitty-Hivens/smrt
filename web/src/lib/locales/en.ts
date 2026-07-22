@@ -378,6 +378,7 @@ export const en = {
   'mrp.mcLocked': 'MC {mc}',
   'mrp.loadingVersions': 'loading versions...',
   'mrp.noVersions': 'No matching versions.',
+  'mrp.noFile': 'no file',
   'mirror.title': 'Add from mirror',
   'mirror.tab.mods': 'Mods',
   'mirror.tab.builds': 'Builds',

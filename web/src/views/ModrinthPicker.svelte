@@ -24,6 +24,11 @@
     onClose: () => void;
   } = $props();
 
+  // Upstream sometimes publishes a version whose jar never landed: the metadata
+  // is listed with an empty file array. Such a pin cannot be built, so it is
+  // shown (so the operator sees why the newest entry is unavailable) but dead.
+  const hasFile = (v: ModrinthVersion) => (v.files?.length ?? 0) > 0;
+
   // svelte-ignore state_referenced_locally -- a mount-time prefill by design
   let q = $state(initialQuery ?? '');
   let hits = $state<ModrinthHit[]>([]);
@@ -97,7 +102,7 @@
   ]);
 
   function choose(v: ModrinthVersion) {
-    if (!sel) return;
+    if (!sel || !hasFile(v)) return;
     onPick({ project_id: sel.project_id, slug: sel.slug, version_id: v.id, title: sel.title });
   }
 
@@ -159,11 +164,12 @@
       {#if loadingVers}<div class="muted s">{t('mrp.loadingVersions')}</div>{/if}
       <div class="hits scroll">
         {#each shownVersions as v (v.id)}
-          <button class="vrow" onclick={() => choose(v)}>
+          <button class="vrow" disabled={!hasFile(v)} onclick={() => choose(v)}>
             <div class="info">
               <div class="t">
                 <span class="vn mono">{v.version_number}</span>
                 {#if v.version_type && v.version_type !== 'release'}<span class="chip">{v.version_type}</span>{/if}
+                {#if !hasFile(v)}<span class="chip">{t('mrp.noFile')}</span>{/if}
               </div>
               <div class="d muted mono">
                 {v.loaders.join(', ')}{#if v.game_versions.length} · {v.game_versions.join(', ')}{/if}
@@ -282,6 +288,13 @@
     color: var(--warn);
     text-transform: uppercase;
     letter-spacing: 0.04em;
+  }
+  .vrow:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .vrow:disabled:hover {
+    background: transparent;
   }
   .d {
     font-size: 11.5px;

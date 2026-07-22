@@ -377,6 +377,7 @@ export const ru: Dict = {
   'mrp.mcLocked': 'MC {mc}',
   'mrp.loadingVersions': 'загрузка версий...',
   'mrp.noVersions': 'Нет подходящих версий.',
+  'mrp.noFile': 'без файла',
   'mirror.title': 'Добавить из зеркала',
   'mirror.tab.mods': 'Моды',
   'mirror.tab.builds': 'Сборки',

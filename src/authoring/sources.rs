@@ -66,7 +66,10 @@ pub(super) async fn resolve_mod(
                 .await
                 .with_context(|| format!("resolving Modrinth mod {}", decl.filename))?;
             let f = v.primary_file().ok_or_else(|| {
-                anyhow!("Modrinth version {project_id}/{version_id} has no files")
+                anyhow!(
+                    "Modrinth version {project_id}/{version_id} ships no file -- \
+                     upstream published the version without a jar; pin another one"
+                )
             })?;
             (
                 f.hashes.sha1.clone(),
@@ -140,7 +143,10 @@ pub(super) async fn resolve_asset(
                 .await
                 .with_context(|| format!("resolving Modrinth asset {}", decl.dest))?;
             let f = v.primary_file().ok_or_else(|| {
-                anyhow!("Modrinth version {project_id}/{version_id} has no files")
+                anyhow!(
+                    "Modrinth version {project_id}/{version_id} ships no file -- \
+                     upstream published the version without a jar; pin another one"
+                )
             })?;
             (
                 f.hashes.sha1.clone(),

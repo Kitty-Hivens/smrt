@@ -6,7 +6,7 @@
 //! required-ness (a dependency of a present mod is locked required; a top-level
 //! mod stays optional unless its own classification requires it).
 
-use super::modrinth::Modrinth;
+use super::modrinth::{Modrinth, Version as MrVersion};
 use super::resolve;
 use crate::domain::{DeclaredMod, Display, PackConfig, Requirement, SourceDecl};
 use crate::registry::{Registry, queries, semver};
@@ -192,34 +192,43 @@ async fn resolve_target(
     };
     if let Some(project) = project {
         let loader = cfg.loader.name.to_ascii_lowercase();
-        let versions = modrinth
+        let listing = modrinth
             .project_versions(&project, Some(&cfg.minecraft_version))
             .await?;
-        // Modrinth returns versions newest-first, so the first that suits the
-        // loader is the latest compatible build.
-        if let Some(v) = versions
-            .into_iter()
-            .find(|v| v.loaders.iter().any(|l| l.eq_ignore_ascii_case(&loader)))
-        {
-            let filename = v
-                .primary_file()
-                .map(|f| f.filename.clone())
-                .unwrap_or_else(|| format!("{project}.jar"));
-            return Ok(Some(DeclaredMod {
-                filename,
-                default_enabled: true,
-                source: SourceDecl::Modrinth {
-                    project_id: project,
-                    version_id: v.id,
-                },
-                display: None,
-                slug: None,
-                pulled: true,
-            }));
+        // Modrinth returns versions newest-first, so the first usable one is the
+        // latest compatible build.
+        if let Some(v) = listing.into_iter().find(|v| usable(v, &loader)) {
+            return Ok(Some(pulled_from_version(&project, &v)));
         }
     }
     // Modrinth cannot provide it: fall back to the mirror's own cache.
     resolve_from_cache(target, cfg, registry, cached)
+}
+
+/// Whether a Modrinth version can actually be declared: it runs on the pack's
+/// loader, and upstream published a file for it. A version with an empty `files`
+/// array is a broken publish (the metadata landed, the jar did not) -- pinning it
+/// would only fail at build time, so it is never chosen.
+fn usable(v: &MrVersion, loader: &str) -> bool {
+    v.loaders.iter().any(|l| l.eq_ignore_ascii_case(loader)) && v.primary_file().is_some()
+}
+
+/// A usable Modrinth version as a pulled declaration.
+fn pulled_from_version(project: &str, v: &MrVersion) -> DeclaredMod {
+    DeclaredMod {
+        filename: v
+            .primary_file()
+            .map(|f| f.filename.clone())
+            .unwrap_or_else(|| format!("{project}.jar")),
+        default_enabled: true,
+        source: SourceDecl::Modrinth {
+            project_id: project.to_string(),
+            version_id: v.id.clone(),
+        },
+        display: None,
+        slug: None,
+        pulled: true,
+    }
 }
 
 /// The cache leg of the chain: the selector's mod, its cached artifacts,
@@ -721,6 +730,35 @@ mod tests {
             .with_conn(|conn| resolve::dependency_fill_plan(conn, &c))
             .unwrap();
         assert_eq!(plan.suggested, vec!["modr".to_string()]);
+    }
+
+    fn version_json(project: &str, id: &str, filename: &str, deps: &str) -> String {
+        format!(
+            r#"{{"id":"{id}","project_id":"{project}","name":"n","version_number":"1.0",
+               "version_type":"release","game_versions":["1.21.1"],"loaders":["neoforge"],
+               "files":[{{"hashes":{{"sha1":"{}"}},"url":"http://x/{filename}",
+                 "filename":"{filename}","primary":true,"size":10}}],
+               "dependencies":[{deps}]}}"#,
+            "a".repeat(40)
+        )
+    }
+
+    // Upstream sometimes publishes a version whose jar never landed (metadata
+    // listed, `files` empty). Pinning one only fails at build time, so it is not
+    // a candidate however new it is.
+    #[test]
+    fn a_version_without_a_file_is_never_usable() {
+        let with_file: MrVersion =
+            serde_json::from_str(&version_json("P", "V", "m.jar", "")).unwrap();
+        assert!(usable(&with_file, "neoforge"));
+        assert!(!usable(&with_file, "fabric"), "wrong loader");
+
+        let mut fileless = with_file.clone();
+        fileless.files.clear();
+        assert!(
+            !usable(&fileless, "neoforge"),
+            "a version upstream published without a jar is not a candidate"
+        );
     }
 
     #[test]

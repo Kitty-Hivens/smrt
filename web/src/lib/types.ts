@@ -92,6 +92,9 @@ export interface ModrinthVersion {
   version_type?: string;
   game_versions: string[];
   loaders: string[];
+  // Upstream publishes a version whose jar never landed as an empty array; such
+  // a pin resolves to nothing at build time, so the picker will not offer it.
+  files: { filename: string; size: number }[];
 }
 
 // GET /v1/jobs/:id -- `result` is present only for a finished dry-run.

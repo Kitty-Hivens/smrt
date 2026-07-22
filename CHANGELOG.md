@@ -42,6 +42,9 @@ version section when a release is tagged.
 
 ### Fixed
 
+- A Modrinth version upstream published without a jar is no longer
+  selectable: the picker greys it out, auto-fill skips it, and the build
+  error says what happened.
 - Derived state no longer depends on upstream weather: pulled dependencies
   are sticky across saves and outages, one unresolvable target does not
   abort the fill pass, a degraded Modrinth leg does not wipe harvested
