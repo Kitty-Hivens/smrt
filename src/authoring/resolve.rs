@@ -345,6 +345,11 @@ pub struct DepFillPlan {
 pub struct MissingTarget {
     pub selector: String,
     pub version_range: Option<String>,
+    /// The exact Modrinth version the requirer names, when it names one. A
+    /// pinned dependency is honoured as pinned rather than resolved to the
+    /// newest compatible build. Registry edges carry a range, not a pin, so this
+    /// is set only by the wire-dependency pass.
+    pub pinned_version: Option<String>,
 }
 
 /// Classify each declared jar mod of the pack through the decision layer,
@@ -474,6 +479,7 @@ pub fn dependency_fill_plan(conn: &Connection, cfg: &PackConfig) -> Result<DepFi
             .map(|(selector, version_range)| MissingTarget {
                 selector,
                 version_range,
+                pinned_version: None,
             })
             .collect(),
         requires,

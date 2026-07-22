@@ -121,6 +121,34 @@ impl Modrinth {
         Ok(p.icon_url.filter(|s| !s.is_empty()))
     }
 
+    /// Batch version lookup by version id, chunked like the sha1 lookup. Ids with
+    /// no match are simply absent from the returned map. Lets a pass that needs
+    /// the dependencies of many pinned versions cost one request rather than one
+    /// per pin.
+    pub async fn versions_by_ids(&self, ids: &[String]) -> Result<HashMap<String, Version>> {
+        let mut out = HashMap::new();
+        for chunk in ids.chunks(BATCH_SIZE) {
+            let encoded = serde_json::to_string(chunk).context("encode version ids")?;
+            let resp = send_with_backoff(
+                self.http
+                    .get(format!("{}/v2/versions", self.base))
+                    .query(&[("ids", encoded.as_str())]),
+            )
+            .await
+            .context("versions get")?;
+            let status = resp.status();
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(anyhow!("modrinth versions HTTP {status}: {body}"));
+            }
+            let list: Vec<Version> = resp.json().await.context("decode versions")?;
+            for v in list {
+                out.insert(v.id.clone(), v);
+            }
+        }
+        Ok(out)
+    }
+
     pub async fn project_version(&self, project_id: &str, version_id: &str) -> Result<Version> {
         let resp = send_with_backoff(self.http.get(format!(
             "{}/v2/project/{project_id}/version/{version_id}",

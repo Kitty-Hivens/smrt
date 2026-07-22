@@ -42,6 +42,12 @@ version section when a release is tagged.
 
 ### Fixed
 
+- Dependency auto-fill no longer waits for a build: a Modrinth pin the
+  harvest has not read yet contributes its dependencies straight from the
+  version it declares, so a mod just added to a config -- or re-pinned to a
+  newer build -- pulls its libraries immediately instead of after the pack
+  has been built and harvested once. A dependency that names an exact
+  version is pulled at that version.
 - A Modrinth version upstream published without a jar is no longer
   selectable: the picker greys it out, auto-fill skips it, and the build
   error says what happened.

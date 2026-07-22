@@ -8,6 +8,7 @@
 
 use super::modrinth::{Modrinth, Version as MrVersion};
 use super::resolve;
+use super::sources::ModrinthCache;
 use crate::domain::{DeclaredMod, Display, PackConfig, Requirement, SourceDecl};
 use crate::registry::{Registry, queries, semver};
 use anyhow::Result;
@@ -30,11 +31,18 @@ pub async fn fill_dependencies(
     modrinth: &Modrinth,
     cached: &HashSet<String>,
 ) -> Result<usize> {
+    // Read once, reused by every pass: the wire pass below walks the same pins
+    // each time round, and a pass that adds nothing must not cost a round trip.
+    // The separate version cache serves the pinned-dependency leg of the resolve.
+    let mut read: HashMap<String, MrVersion> = HashMap::new();
+    let versions = ModrinthCache::default();
     let mut added_total = 0;
     for _ in 0..MAX_PASSES {
         let plan = {
             let cfg = &*cfg;
-            registry.with_conn(|c| resolve::dependency_fill_plan(c, cfg))?
+            let mut plan = registry.with_conn(|c| resolve::dependency_fill_plan(c, cfg))?;
+            merge_wire_deps(&mut plan, cfg, registry, modrinth, &mut read).await;
+            plan
         };
         let mut added = false;
         for target in &plan.missing {
@@ -43,18 +51,19 @@ pub async fn fill_dependencies(
             // other targets still fill, and this one stays in the resolve
             // report's missing list instead of silently taking the rest
             // down with it.
-            let decl = match resolve_target(target, cfg, registry, modrinth, cached).await {
-                Ok(Some(d)) => d,
-                Ok(None) => continue,
-                Err(e) => {
-                    tracing::warn!(
-                        target = %target.selector,
-                        error = %e,
-                        "dependency target unresolved this pass; skipped"
-                    );
-                    continue;
-                }
-            };
+            let decl =
+                match resolve_target(target, cfg, registry, modrinth, cached, &versions).await {
+                    Ok(Some(d)) => d,
+                    Ok(None) => continue,
+                    Err(e) => {
+                        tracing::warn!(
+                            target = %target.selector,
+                            error = %e,
+                            "dependency target unresolved this pass; skipped"
+                        );
+                        continue;
+                    }
+                };
             if !already_present(cfg, &decl) {
                 cfg.mods.push(decl);
                 added = true;
@@ -68,11 +77,145 @@ pub async fn fill_dependencies(
     // record the final graph so the build derives required-ness from it
     let plan = {
         let cfg = &*cfg;
-        registry.with_conn(|c| resolve::dependency_fill_plan(c, cfg))?
+        let mut plan = registry.with_conn(|c| resolve::dependency_fill_plan(c, cfg))?;
+        merge_wire_deps(&mut plan, cfg, registry, modrinth, &mut read).await;
+        plan
     };
     apply_requires(cfg, &plan.requires);
     prune_orphaned_pulled(cfg);
     Ok(added_total)
+}
+
+/// One hard dependency read straight off a Modrinth version, before the mirror
+/// has any registry knowledge of the pin that declares it.
+struct WireDep {
+    /// The declaring mod's filename -- the `from` side of the requires edge.
+    requirer: String,
+    project_id: String,
+    /// The exact version the dependency names, when it names one.
+    version_id: Option<String>,
+}
+
+/// Fold Modrinth's own dependency declarations into a registry fill plan.
+///
+/// The registry learns a Modrinth version only once the harvest has read it, and
+/// the harvest reads the cache and published manifests -- so a mod just picked in
+/// the panel, or an existing mod re-pinned to a newer build, contributes no edges
+/// there at all, and its libraries would silently go unpulled until the pack had
+/// been built and harvested once. The dependencies are right there in the version
+/// JSON the resolver already fetches, so they are read from the wire for exactly
+/// the pins the registry cannot speak for. A pin the harvest has read is left to
+/// the registry, which holds the same facts at artifact granularity plus
+/// everything the bytecode pass added.
+///
+/// A target the pack already ships becomes a requires edge (so the build locks
+/// it); anything else becomes an auto-pull candidate. Per-pin isolation: an
+/// unreachable upstream drops that pin's contribution and nothing else.
+async fn merge_wire_deps(
+    plan: &mut resolve::DepFillPlan,
+    cfg: &PackConfig,
+    registry: &Registry,
+    modrinth: &Modrinth,
+    read: &mut HashMap<String, MrVersion>,
+) {
+    let deps = wire_deps(cfg, registry, modrinth, read).await;
+    let known: HashSet<&str> = plan.missing.iter().map(|t| t.selector.as_str()).collect();
+    let mut extra: Vec<resolve::MissingTarget> = Vec::new();
+    for d in &deps {
+        match cfg.mods.iter().find(|m| {
+            matches!(&m.source, SourceDecl::Modrinth { project_id, .. } if *project_id == d.project_id)
+        }) {
+            Some(present) => plan
+                .requires
+                .push((d.requirer.clone(), present.filename.clone())),
+            None => {
+                let selector = format!("modrinth:{}", d.project_id);
+                if known.contains(selector.as_str())
+                    || extra.iter().any(|t| t.selector == selector)
+                {
+                    continue;
+                }
+                extra.push(resolve::MissingTarget {
+                    selector,
+                    version_range: None,
+                    pinned_version: d.version_id.clone(),
+                });
+            }
+        }
+    }
+    plan.missing.extend(extra);
+}
+
+/// Read the required dependencies of every Modrinth pin the registry has not
+/// harvested. One batched lookup per pass over the pins not read yet, so a pack
+/// whose mods are all known costs no request at all and a fresh one costs a
+/// single call rather than a round trip per mod. A failed lookup is non-fatal:
+/// nothing is pulled from it and the resolve report still flags what is missing.
+async fn wire_deps(
+    cfg: &PackConfig,
+    registry: &Registry,
+    modrinth: &Modrinth,
+    read: &mut HashMap<String, MrVersion>,
+) -> Vec<WireDep> {
+    let pins: Vec<(String, String, String)> = cfg
+        .mods
+        .iter()
+        .filter_map(|m| match &m.source {
+            SourceDecl::Modrinth {
+                project_id,
+                version_id,
+            } => Some((m.filename.clone(), project_id.clone(), version_id.clone())),
+            _ => None,
+        })
+        .filter(|(_, _, version_id)| {
+            let vid = version_id.clone();
+            let harvested = registry
+                .with_conn(move |c| {
+                    Ok(queries::mod_version_id_for_modrinth_version_id(c, &vid)?.is_some())
+                })
+                .unwrap_or(false);
+            // a pin the harvest has read is the registry's to speak for
+            !harvested
+        })
+        .collect();
+    let unread: Vec<String> = pins
+        .iter()
+        .map(|(_, _, version_id)| version_id.clone())
+        .filter(|v| !read.contains_key(v))
+        .collect();
+    if !unread.is_empty() {
+        match modrinth.versions_by_ids(&unread).await {
+            Ok(found) => read.extend(found),
+            Err(e) => tracing::warn!(
+                pins = unread.len(),
+                error = %e,
+                "could not read pinned versions from Modrinth this pass; their dependencies are not pulled"
+            ),
+        }
+    }
+    let mut out = Vec::new();
+    for (requirer, project_id, version_id) in pins {
+        let Some(v) = read.get(&version_id) else {
+            continue;
+        };
+        for dep in &v.dependencies {
+            if dep.dependency_type != "required" {
+                continue;
+            }
+            let Some(target) = dep.project_id.as_deref().filter(|p| !p.is_empty()) else {
+                continue; // an external dependency names a file, not a project
+            };
+            if target == project_id {
+                continue; // a project never depends on itself
+            }
+            out.push(WireDep {
+                requirer: requirer.clone(),
+                project_id: target.to_string(),
+                version_id: dep.version_id.clone(),
+            });
+        }
+    }
+    out
 }
 
 /// Sticky-dependency merge, run by the save path BEFORE the fill: every pulled
@@ -171,6 +314,7 @@ async fn resolve_target(
     registry: &Registry,
     modrinth: &Modrinth,
     cached: &HashSet<String>,
+    versions: &ModrinthCache,
 ) -> Result<Option<DeclaredMod>> {
     let bare = target
         .selector
@@ -192,6 +336,29 @@ async fn resolve_target(
     };
     if let Some(project) = project {
         let loader = cfg.loader.name.to_ascii_lowercase();
+        // A dependency that names an exact version is honoured as pinned -- the
+        // requirer asked for that build, not for whatever is newest. A pin that
+        // does not suit the pack's loader, or that upstream published without a
+        // jar, falls through to the newest usable build rather than declaring
+        // something the mirror cannot fetch.
+        if let Some(version_id) = &target.pinned_version {
+            match versions.get_or_fetch(modrinth, &project, version_id).await {
+                Ok(v) if usable(&v, &loader) => {
+                    return Ok(Some(pulled_from_version(&project, &v)));
+                }
+                Ok(_) => tracing::warn!(
+                    project = %project,
+                    version = %version_id,
+                    "pinned dependency version is unusable; resolving the newest compatible build"
+                ),
+                Err(e) => tracing::warn!(
+                    project = %project,
+                    version = %version_id,
+                    error = %e,
+                    "pinned dependency version unreadable; resolving the newest compatible build"
+                ),
+            }
+        }
         let listing = modrinth
             .project_versions(&project, Some(&cfg.minecraft_version))
             .await?;
@@ -295,9 +462,14 @@ fn resolve_from_cache(
 }
 
 /// A pulled dependency is already in the pack when its source identity is
-/// declared -- the Modrinth project id or the cache sha1, not the filename, so
-/// a dep is not re-added under a different display name.
+/// declared -- the Modrinth project id or the cache sha1, so a dep is not
+/// re-added under a different display name -- or when its filename is taken,
+/// since two rows writing one `mods/<filename>` is never a pack the build may
+/// ship.
 fn already_present(cfg: &PackConfig, decl: &DeclaredMod) -> bool {
+    if cfg.mods.iter().any(|m| m.filename == decl.filename) {
+        return true;
+    }
     match &decl.source {
         SourceDecl::Modrinth { project_id, .. } => cfg.mods.iter().any(
             |m| matches!(&m.source, SourceDecl::Modrinth { project_id: p, .. } if p == project_id),
@@ -732,6 +904,49 @@ mod tests {
         assert_eq!(plan.suggested, vec!["modr".to_string()]);
     }
 
+    /// A canned Modrinth: answers each GET whose path matches a route with that
+    /// route's JSON body, 404 otherwise. Enough for the version endpoints the
+    /// wire pass and the pinned-dependency leg use, without a mock-server
+    /// dependency. Returns the base URL; the task ends with the test.
+    async fn stub_modrinth(routes: Vec<(String, String)>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let routes = routes.clone();
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf = vec![0u8; 4096];
+                    let Ok(n) = sock.read(&mut buf).await else {
+                        return;
+                    };
+                    let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let path = req
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap_or_default()
+                        .to_string();
+                    let body = routes
+                        .iter()
+                        .find(|(p, _)| path.starts_with(p.as_str()))
+                        .map(|(_, b)| b.clone());
+                    let resp = match body {
+                        Some(b) => format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{b}",
+                            b.len()
+                        ),
+                        None => "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_string(),
+                    };
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+        base
+    }
+
     fn version_json(project: &str, id: &str, filename: &str, deps: &str) -> String {
         format!(
             r#"{{"id":"{id}","project_id":"{project}","name":"n","version_number":"1.0",
@@ -741,6 +956,74 @@ mod tests {
                "dependencies":[{deps}]}}"#,
             "a".repeat(40)
         )
+    }
+
+    // The gap this closes: a mod just picked from Modrinth is unknown to the
+    // registry (the harvest reads the cache and published manifests, neither of
+    // which has seen it), so its libraries used to go unpulled until the pack had
+    // been built once. Modrinth states the dependency on the version itself, and
+    // the fill now reads it there.
+    #[tokio::test]
+    async fn an_unharvested_pin_pulls_its_dependency_from_the_wire() {
+        let r = Registry::open_in_memory().unwrap();
+        let pin = version_json(
+            "PROJ_A",
+            "VER_A",
+            "a.jar",
+            r#"{"project_id":"PROJ_LIB","version_id":"VER_LIB","dependency_type":"required"},
+               {"project_id":"PROJ_OPT","dependency_type":"optional"}"#,
+        );
+        let lib = version_json("PROJ_LIB", "VER_LIB", "lib-1.0.jar", "");
+        let base = stub_modrinth(vec![
+            // the batched pin lookup the wire pass makes
+            ("/v2/versions".to_string(), format!("[{pin},{lib}]")),
+            // the pinned dependency, resolved at the exact version it names
+            (
+                "/v2/project/PROJ_LIB/version/VER_LIB".to_string(),
+                lib.clone(),
+            ),
+        ])
+        .await;
+        let modrinth = Modrinth::with_base(&base).unwrap();
+
+        let mut c = cfg(vec![DeclaredMod {
+            filename: "a.jar".into(),
+            default_enabled: true,
+            source: SourceDecl::Modrinth {
+                project_id: "PROJ_A".into(),
+                version_id: "VER_A".into(),
+            },
+            display: None,
+            slug: None,
+            pulled: false,
+        }]);
+
+        let added = fill_dependencies(&mut c, &r, &modrinth, &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(
+            added, 1,
+            "the required dependency is pulled; the optional is not"
+        );
+        let lib = c
+            .mods
+            .iter()
+            .find(|m| m.filename == "lib-1.0.jar")
+            .expect("dependency added under its real filename");
+        assert!(lib.pulled);
+        assert!(
+            matches!(&lib.source, SourceDecl::Modrinth { project_id, version_id }
+                if project_id == "PROJ_LIB" && version_id == "VER_LIB"),
+            "the exact version the requirer pinned is honoured"
+        );
+        // the requires edge is recorded, so the build locks the pulled library
+        let reqs = &c.mods[0].display.as_ref().unwrap().requires;
+        assert_eq!(reqs[0].filename, "lib-1.0.jar");
+
+        let again = fill_dependencies(&mut c, &r, &modrinth, &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(again, 0, "idempotent");
     }
 
     // Upstream sometimes publishes a version whose jar never landed (metadata
