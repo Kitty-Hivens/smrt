@@ -59,6 +59,13 @@ version section when a release is tagged.
 
 ### Fixed
 
+- The curator slug is offered where it does something. It is load-bearing for
+  a self-hosted mod, whose filename changes under it and which has no project
+  id -- so a Modrinth row now states what actually keys it instead of showing
+  an empty field that changes nothing, and the source column fits the word
+  `modrinth` rather than spending the same width on an ellipsis. The three
+  identities a mod has (file, registry, across-builds) are written down in
+  `docs/concepts.md`.
 - The activity counter no longer turns a one-shot fetch into a request loop.
   Counting in-flight requests through reactive state meant any request started
   inside an effect made that effect depend on its own side effect: the shell's

@@ -75,6 +75,45 @@ target MC, and the loader distinction forge vs neoforge); Modrinth re-uploads
 are linked by sha1 lookup, slug==modid folds, and a one-time modid read of the
 re-uploaded jar.
 
+## Three identities, and which one you are looking at
+
+"How is a mod identified" has three answers, because three different consumers
+ask three different questions. Confusing them is the fastest way to lose an
+afternoon.
+
+**The file** is identified by `sha1`. That is what the mirror stores, what a
+pack declares for a self-hosted jar, and what the resolver places on the graph
+(`artifact_by_sha1`). Dependency edges are scoped to the artifact, so shipping
+an old build does not borrow a newer build's dependencies.
+
+**The mod, inside the registry**, is identified by `mod_alias` -- and only two
+alias kinds exist in practice: `modid` (read out of the jar's own metadata) and
+`modrinth` (the project id). A dependency selector resolves through exactly
+these: `modrinth:<project_id>` matches the project alias exactly, and a bare
+`jei` matches the modid alias case-insensitively, because jars name each other
+in display case. The `slug` column on the `mods` row is a display name for the
+panel. **It is not part of dependency resolution** -- nothing looks a mod up by
+it.
+
+**The mod, across two builds of a pack**, is identified by
+`ModEntry::identity`: the Modrinth project id if the entry has one, else the
+curator `slug`, else the filename. This is the only place `slug` is
+load-bearing. It answers "is the thing in build 12 the same thing as in build
+11", which decides what the update dialog calls added / removed / updated, and
+which keys a user's on/off choice for an optional mod so it survives a version
+bump.
+
+So the curator `slug` earns its place in exactly one case: a **self-hosted
+(`smrt_cache`) mod**, whose filename carries a version and therefore changes
+under it, and which has no project id to fall back on. A Modrinth-sourced mod
+already has a stable key; setting a slug on one changes nothing.
+
+| Question | Key | Where |
+| --- | --- | --- |
+| Which bytes? | `sha1` | cache, `mod_version`, manifest entry |
+| Which mod, for dependencies? | `modid` / `modrinth` alias | `mod_alias`, selectors |
+| Same mod as last build? | project id, else slug, else filename | `ModEntry::identity` |
+
 ## Side, match policy, presence
 
 Three orthogonal axes decide how an entry behaves in an install:

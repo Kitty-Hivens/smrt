@@ -833,7 +833,14 @@
                   {/if}
                 </div>
                 <label class="ck" title={t('pe.defHint')}><input type="checkbox" bind:checked={m.default_enabled} /> {t('pe.def')}</label>
-                <input class="slug mono" bind:value={m.slug} placeholder={t('pe.slug')} aria-label={t('pe.slug')} title={t('pe.slugHint')} />
+                {#if m.source.type === 'smrt_cache'}
+                  <input class="slug mono" bind:value={m.slug} placeholder={t('pe.slug')} aria-label={t('pe.slug')} title={t('pe.slugHint')} />
+                {:else}
+                  <!-- A Modrinth mod is already keyed across builds by its project
+                       id, so a slug on it changes nothing; the column says what the
+                       key actually is instead of offering a field that does nothing. -->
+                  <span class="slug keyed faint mono" title={t('pe.keyedByProjectHint')}>{t('pe.keyedByProject')}</span>
+                {/if}
                 <button class="danger sm del" onclick={() => removeMod(i)} aria-label={t('common.delete')}>x</button>
               </div>
             {/each}
@@ -1116,7 +1123,7 @@
   }
   .modrow {
     display: grid;
-    grid-template-columns: 24px minmax(120px, 1.4fr) 96px minmax(120px, 1.2fr) auto minmax(90px, 1fr) 30px;
+    grid-template-columns: 24px minmax(120px, 1.4fr) 116px minmax(120px, 1.2fr) auto minmax(90px, 1fr) 30px;
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-2);
@@ -1133,6 +1140,14 @@
   .modrow .slug {
     min-width: 0;
     opacity: 0.85;
+  }
+  /* the non-editable half of that column: a statement, not a disabled input */
+  .modrow .keyed {
+    font-size: var(--fs-xs);
+    align-self: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   /* the source-type Select wrapper occupies the grid's 3rd column; the trigger
      (full) fills it, and min-width:0 lets it shrink in the narrow flex reflow */

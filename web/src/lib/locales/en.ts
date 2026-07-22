@@ -206,6 +206,8 @@ export const en = {
   'pe.req': 'req',
   'pe.def': 'def',
   'pe.defHint': 'Default on/off for an optional mod; ignored when required',
+  'pe.keyedByProject': 'keyed by project',
+  'pe.keyedByProjectHint': 'A Modrinth mod keeps its identity across builds through its project id, so it needs no curator slug.',
   'pe.slug': 'slug',
   'pe.slugHint':
     'Stable id for optional mods: keeps the on/off choice across updates when the filename changes. Set it for optional cache mods; Modrinth mods already have one.',
