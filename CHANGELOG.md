@@ -51,6 +51,11 @@ version section when a release is tagged.
 - A Modrinth version upstream published without a jar is no longer
   selectable: the picker greys it out, auto-fill skips it, and the build
   error says what happened.
+- One row per mod: configs declaring the same artifact twice, or two rows
+  writing the same `mods/<filename>`, are refused on save, and the pickers
+  no longer offer what the pack already ships. Artifact identity ignores the
+  pinned version, so a second version of a mod already in the pack counts as
+  a duplicate rather than a new entry.
 - Derived state no longer depends on upstream weather: pulled dependencies
   are sticky across saves and outages, one unresolvable target does not
   abort the fill pass, a degraded Modrinth leg does not wipe harvested

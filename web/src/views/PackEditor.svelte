@@ -441,12 +441,22 @@
     }
   }
 
-  // a stable identity for a declared source, so the same artifact isn't added
-  // twice (cache by sha1, Modrinth by project+version, static by path)
+  // a stable identity for a declared source, so the same mod isn't added twice
+  // (cache by sha1, Modrinth by project, static by path). The pinned version is
+  // deliberately not part of it: the same project at another version is still the
+  // same mod, and changing versions is a re-pin of the row, not a second row.
   function sourceKey(s: SourceDecl): string {
     if (s.type === 'smrt_cache') return `c:${s.sha1}`;
-    if (s.type === 'modrinth') return `m:${s.project_id}:${s.version_id}`;
+    if (s.type === 'modrinth') return `m:${s.project_id}`;
     return `s:${s.rel_path}`;
+  }
+
+  // What the pickers must not offer again. When re-pointing a row, that row's own
+  // identity is excluded -- re-pinning it to another version of the same mod is
+  // the normal way to update.
+  function presentKeys(exceptRow: number | null): string[] {
+    if (!cfg) return [];
+    return cfg.mods.filter((_, i) => i !== exceptRow).map((m) => sourceKey(m.source));
   }
 
   // a pick from the mirror carries the resolved source (cache when the mirror
@@ -518,6 +528,14 @@
 
   function onModrinthPick(sel: { project_id: string; slug: string; version_id: string }) {
     if (!cfg || !pick) return;
+    // the picker greys out what the pack already ships; this is the last word on
+    // it, so a stale list can't land a second row of the same mod
+    if (presentKeys(pick.row).includes(`m:${sel.project_id}`)) {
+      err = t('pe.dupMod', { name: sel.slug });
+      pick = null;
+      suggestQuery = '';
+      return;
+    }
     if (pick.row === null) {
       cfg.mods = [
         ...cfg.mods,
@@ -877,6 +895,7 @@
     mc={cfg.minecraft_version}
     loader={cfg.loader.name}
     allowMany={pick.row === null}
+    present={presentKeys(pick.row)}
     onClose={() => (pick = null)}
     onPick={onMirrorPick}
     onAddOne={onMirrorAddOne}
@@ -889,6 +908,7 @@
     mc={cfg.minecraft_version}
     loader={cfg.loader.name}
     initialQuery={suggestQuery}
+    present={presentKeys(pick.row)}
     onClose={() => {
       pick = null;
       suggestQuery = '';

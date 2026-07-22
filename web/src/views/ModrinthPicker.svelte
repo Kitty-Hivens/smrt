@@ -10,6 +10,7 @@
     loader,
     projectType = 'mod',
     initialQuery,
+    present = [],
     onPick,
     onClose,
   }: {
@@ -20,10 +21,16 @@
     projectType?: string;
     // pre-filled search (a resolve-report suggestion); searched immediately
     initialQuery?: string;
+    // source keys the pack already declares -- those hits are shown, but not
+    // offered again: a pack ships one build of a mod, and adding a second row is
+    // never what the operator meant. Re-pinning a row excludes that row's own key.
+    present?: string[];
     onPick: (sel: { project_id: string; slug: string; version_id: string; title: string }) => void;
     onClose: () => void;
   } = $props();
 
+  const presentSet = $derived(new Set(present));
+  const inPack = (projectId: string) => presentSet.has(`m:${projectId}`);
   // Upstream sometimes publishes a version whose jar never landed: the metadata
   // is listed with an empty file array. Such a pin cannot be built, so it is
   // shown (so the operator sees why the newest entry is unavailable) but dead.
@@ -131,11 +138,12 @@
       {#if busy}<div class="muted s">{t('mrp.searching')}</div>{/if}
       <div class="hits scroll">
         {#each hits as h}
-          <button class="hit" onclick={() => openVersions(h)}>
+          <button class="hit" disabled={inPack(h.project_id)} onclick={() => openVersions(h)}>
             {#if h.icon_url}<img src={h.icon_url} alt="" />{:else}<div class="ic"></div>{/if}
             <div class="info">
               <div class="t">
                 {h.title} <span class="faint mono">{h.slug}</span>
+                {#if inPack(h.project_id)}<span class="chip muted">{t('mrp.inPack')}</span>{/if}
                 {#if h.author}<span class="faint">· {t('mrp.by', { author: h.author })}</span>{/if}
               </div>
               <div class="d muted">{h.description}</div>
@@ -289,10 +297,15 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
+  .chip.muted {
+    color: var(--fg-dim);
+  }
+  .hit:disabled,
   .vrow:disabled {
     opacity: 0.5;
     cursor: default;
   }
+  .hit:disabled:hover,
   .vrow:disabled:hover {
     background: transparent;
   }

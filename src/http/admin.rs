@@ -750,6 +750,12 @@ async fn put_pack_config(
     if !super::auth::may_author(&identity, &pack_id) {
         return Err(ApiError::Forbidden);
     }
+    // One row per mod: the same artifact twice, or two rows writing the same
+    // mods/<filename>, is an authoring mistake no build can act on. Checked on
+    // the incoming body, before anything server-side touches it.
+    if let Some(dup) = cfg.duplicate_mod() {
+        return Err(ApiError::BadRequest(dup));
+    }
     // owner / tier / visibility / fork_of are server-controlled and never trusted
     // from the client. On an edit, carry them from the stored config so a member
     // can't reassign ownership, self-promote to official, or publish. On create,

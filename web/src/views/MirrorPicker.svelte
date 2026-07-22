@@ -26,6 +26,7 @@
     mc,
     loader,
     allowMany = false,
+    present = [],
     onPick,
     onAddOne,
     onAddMany,
@@ -37,6 +38,9 @@
     // builds can re-add their whole mod set at once; only offered when adding a
     // new row (not when re-pointing an existing one)
     allowMany?: boolean;
+    // source keys the pack already declares; those artifacts are shown but not
+    // offered again (a pack ships one build of a mod)
+    present?: string[];
     onPick: (sel: Sel) => void;
     // cherry-pick one mod from a build without closing the picker
     onAddOne?: (sel: Sel) => void;
@@ -63,6 +67,17 @@
   }
   const srcTag = (a: Artifact) =>
     a.cached ? 'cache' : a.modrinth_project_id && a.modrinth_version_id ? 'modrinth' : '';
+  const presentSet = $derived(new Set(present));
+  // the same identity the editor keys rows by: a cached jar by sha1, a Modrinth
+  // artifact by project (not by pinned version -- another build of a mod already
+  // in the pack is still that mod)
+  function inPack(a: Artifact): boolean {
+    const source = sourceFor(a);
+    if (!source) return false;
+    if (source.type === 'smrt_cache') return presentSet.has(`c:${source.sha1}`);
+    if (source.type === 'modrinth') return presentSet.has(`m:${source.project_id}`);
+    return false;
+  }
 
   type Mode = 'mods' | 'builds' | 'raw';
   let mode = $state<Mode>('mods');
@@ -190,7 +205,7 @@
     const items = buildModRows
       .map((m) => {
         const source = sourceFor(m);
-        return source ? selOf(m, source) : null;
+        return source && !inPack(m) ? selOf(m, source) : null;
       })
       .filter((x): x is Sel => x !== null);
     onAddMany(items);
@@ -321,11 +336,12 @@
         {#if versLoading}<div class="muted s">{t('common.loading')}</div>{/if}
         <div class="hits scroll">
           {#each modVersions as v (v.sha1)}
-            <button class="vrow" disabled={!sourceFor(v)} onclick={() => pickVersion(v)}>
+            <button class="vrow" disabled={!sourceFor(v) || inPack(v)} onclick={() => pickVersion(v)}>
               <div class="info">
                 <div class="t">
                   <span class="mono">{v.version}</span>
                   {#if srcTag(v)}<span class="chip">{srcTag(v)}</span>{:else}<span class="chip warn">{t('mirror.unavailable')}</span>{/if}
+                  {#if inPack(v)}<span class="chip">{t('mirror.inPack')}</span>{/if}
                 </div>
                 <div class="d muted mono">
                   {v.targets.join(', ')}{#if v.mc_versions.length} · {v.mc_versions.join(', ')}{/if} · {fmtBytes(v.size_bytes)}
@@ -374,12 +390,13 @@
                   {m.name} <span class="faint mono">{m.version}</span>
                   {#if !m.required}<span class="chip">{t('mr.optional')}</span>{/if}
                   {#if srcTag(m)}<span class="chip">{srcTag(m)}</span>{:else}<span class="chip warn">{t('mirror.unavailable')}</span>{/if}
+                  {#if inPack(m)}<span class="chip">{t('mirror.inPack')}</span>{/if}
                 </div>
                 <div class="d muted mono">
                   {m.filename}{#if m.targets.length} · {m.targets.join(', ')}{/if}
                 </div>
               </div>
-              <button class="sm" disabled={addedShas.has(m.sha1) || !sourceFor(m)} onclick={() => addBuildMod(m)}>
+              <button class="sm" disabled={addedShas.has(m.sha1) || !sourceFor(m) || inPack(m)} onclick={() => addBuildMod(m)}>
                 {addedShas.has(m.sha1) ? t('mirror.added') : t('mirror.add')}
               </button>
             </div>
@@ -417,10 +434,15 @@
       {#if rawLoading}<div class="muted s">{t('common.loading')}</div>{/if}
       <div class="hits scroll">
         {#each rawShown as e (e.sha1)}
-          <button class="hit" onclick={() => onPick({ filename: rawName(e) || `${e.sha1.slice(0, 12)}.jar`, source: { type: 'smrt_cache', sha1: e.sha1 } })}>
+          <button
+            class="hit"
+            disabled={presentSet.has(`c:${e.sha1}`)}
+            onclick={() => onPick({ filename: rawName(e) || `${e.sha1.slice(0, 12)}.jar`, source: { type: 'smrt_cache', sha1: e.sha1 } })}
+          >
             <div class="info">
               <div class="t">
                 {rawName(e) || t('cachePick.noName')}
+                {#if presentSet.has(`c:${e.sha1}`)}<span class="chip">{t('mirror.inPack')}</span>{/if}
                 {#if e.uses.length === 0}<span class="chip warn">{t('cachePick.orphan')}</span>{/if}
               </div>
               <div class="d muted mono">{e.sha1.slice(0, 16)} · {fmtBytes(e.size_bytes)}</div>
@@ -510,6 +532,15 @@
   .hit:hover,
   .vrow:not(.static):hover {
     background: var(--panel-2);
+  }
+  .hit:disabled,
+  .vrow:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .hit:disabled:hover,
+  .vrow:disabled:hover {
+    background: transparent;
   }
   .info {
     flex: 1;

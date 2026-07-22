@@ -6,6 +6,7 @@
 use super::manifest::{AuthSpec, Display, LoaderSpec};
 use super::version::VersionChannel;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use ts_rs::TS;
 use utoipa::ToSchema;
 
@@ -245,6 +246,44 @@ pub struct PackConfig {
     pub fork_of: Option<String>,
 }
 
+impl PackConfig {
+    /// The first duplicate declaration in `mods`, described for an error
+    /// message, or `None` when every row is distinct.
+    ///
+    /// Two things must be unique. The artifact identity -- a Modrinth project, a
+    /// cache sha1, a static path -- because a pack ships one build of a mod, and
+    /// two builds of the same mod in one instance is a crash, not a choice. And
+    /// the filename, because the launcher writes `mods/<filename>` and a second
+    /// row of the same name silently overwrites the first.
+    ///
+    /// Identity deliberately ignores the pinned version: the same project at two
+    /// versions is still the same mod, and changing versions is a re-pin of the
+    /// row rather than a second row.
+    pub fn duplicate_mod(&self) -> Option<String> {
+        let mut identities: HashSet<String> = HashSet::new();
+        let mut filenames: HashSet<&str> = HashSet::new();
+        for m in &self.mods {
+            let identity = match &m.source {
+                SourceDecl::Modrinth { project_id, .. } => {
+                    format!("modrinth project {project_id}")
+                }
+                SourceDecl::SmrtCache { sha1 } => format!("cache jar {sha1}"),
+                SourceDecl::SmrtStatic { rel_path } => format!("static file {rel_path}"),
+            };
+            if !identities.insert(identity.clone()) {
+                return Some(format!(
+                    "{identity} is declared twice (second row: {:?})",
+                    m.filename
+                ));
+            }
+            if !filenames.insert(m.filename.as_str()) {
+                return Some(format!("filename {:?} is declared twice", m.filename));
+            }
+        }
+        None
+    }
+}
+
 /// Pack-card metadata (icon / banner / gallery / long description) merged into
 /// the emitted `summary.json` at build time. Every field optional; absent fields
 /// stay out of summary.json (per the `skip_serializing_if` on PackSummary).
@@ -392,5 +431,70 @@ mod tests {
         assert_eq!(s.tier, PackTier::Official);
         assert_eq!(s.visibility, Visibility::Published);
         assert!(s.fork_of.is_none());
+    }
+
+    fn config_with(mods: Vec<DeclaredMod>) -> PackConfig {
+        PackConfig {
+            pack_id: "t".into(),
+            display_name: "t".into(),
+            tagline: String::new(),
+            minecraft_version: "1.21.1".into(),
+            loader: LoaderSpec {
+                name: "neoforge".into(),
+                version: String::new(),
+            },
+            java_major: 21,
+            version: None,
+            tags: vec![],
+            featured: false,
+            mods,
+            assets: vec![],
+            auth: None,
+            pack_meta: PackMeta::default(),
+            owner: default_owner(),
+            tier: default_tier(),
+            visibility: default_visibility(),
+            fork_of: None,
+        }
+    }
+
+    fn mr(filename: &str, project_id: &str, version_id: &str) -> DeclaredMod {
+        DeclaredMod {
+            filename: filename.into(),
+            default_enabled: true,
+            source: SourceDecl::Modrinth {
+                project_id: project_id.into(),
+                version_id: version_id.into(),
+            },
+            display: None,
+            slug: None,
+            pulled: false,
+        }
+    }
+
+    // One row per mod, and one row per installed filename. The version is not part
+    // of the identity: the same project pinned twice is the same mod twice, which
+    // is exactly the case a version-keyed check used to wave through.
+    #[test]
+    fn duplicate_mod_catches_a_project_pinned_twice_and_a_reused_filename() {
+        let clean = config_with(vec![
+            mr("jei.jar", "PROJ_JEI", "v1"),
+            mr("c.jar", "PROJ_C", "v1"),
+        ]);
+        assert!(clean.duplicate_mod().is_none());
+
+        let two_versions = config_with(vec![
+            mr("jei.jar", "PROJ_JEI", "v1"),
+            mr("jei-old.jar", "PROJ_JEI", "v0"),
+        ]);
+        let msg = two_versions.duplicate_mod().expect("same project twice");
+        assert!(msg.contains("PROJ_JEI"), "got {msg}");
+
+        let same_name = config_with(vec![
+            mr("jei.jar", "PROJ_JEI", "v1"),
+            mr("jei.jar", "PROJ_C", "v1"),
+        ]);
+        let msg = same_name.duplicate_mod().expect("same filename twice");
+        assert!(msg.contains("jei.jar"), "got {msg}");
     }
 }
