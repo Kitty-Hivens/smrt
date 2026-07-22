@@ -469,7 +469,7 @@
     width: 6px;
     height: 6px;
     border-radius: 999px;
-    background: var(--red);
+    background: var(--danger);
   }
   .stat .v {
     font-family: var(--mono);

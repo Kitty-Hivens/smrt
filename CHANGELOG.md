@@ -42,6 +42,13 @@ version section when a release is tagged.
 
 ### Fixed
 
+- Palette defects the tokens themselves documented: faint text measured
+  3.86:1 on the panel surface it actually sits on (the note claimed 4:1,
+  which held only against pure black) and is now 4.51:1; the four soft state
+  tints shared one 0.14 alpha and landed at 1.13-1.21:1 -- invisible as fills,
+  which is why state read off borders alone -- and now carry per-hue alphas
+  solved to equal perceived weight; the retired-for-contrast `--accent-dim`
+  and the single-use second red are gone.
 - The editor stops moving under the cursor. Reports and failures were
   inserted at the top of the form, so asking for a resolve or hitting an
   error pushed everything down by however tall the answer was. Reports now

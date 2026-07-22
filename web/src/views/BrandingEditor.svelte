@@ -217,7 +217,7 @@
   .mode.active {
     background: var(--accent-soft);
     color: var(--accent-strong);
-    border-color: var(--accent-dim);
+    border-color: var(--seam-bright);
   }
   .formats {
     font-size: 11px;

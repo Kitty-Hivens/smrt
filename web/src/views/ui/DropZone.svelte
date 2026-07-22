@@ -87,7 +87,7 @@
       color 0.12s ease;
   }
   .dz:hover {
-    border-color: var(--accent-dim);
+    border-color: var(--seam-bright);
     color: var(--fg);
   }
   .dz:focus-visible {

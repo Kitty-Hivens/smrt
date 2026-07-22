@@ -34,36 +34,45 @@
   /* text */
   --fg: #ffffff;
   --fg-dim: #9a9a9e;
-  /* lifted off #58585c: that failed WCAG on the black field (2.97:1). This
-     clears ~4:1 while still reading as the low-emphasis "faint" tier. */
-  --fg-faint: #6e6e73;
+  /* Lifted twice. First off #58585c (2.97:1 on black), then off #6e6e73: that
+     cleared 4:1 against pure black but the surface faint text actually sits on
+     is --panel, where it measured 3.86:1 -- under the line for body sizes. This
+     is 4.51:1 on --panel and still reads as the low-emphasis tier. */
+  --fg-faint: #79797e;
 
   /* no colour accent -- "accent" is contrast. Emphasis text/links are white,
-     highlighted backgrounds are a faint white tint. */
+     highlighted backgrounds are a faint white tint. There is no --accent-dim:
+     it held #58585c, the value this file had already retired from text for
+     failing contrast, sitting under a name that invites text use. Borders that
+     wanted it use --seam-bright, which is what they meant. */
   --accent: #ffffff;
   --accent-strong: #ffffff;
-  --accent-dim: #58585c;
   --accent-soft: rgba(255, 255, 255, 0.08);
 
   /* the inverted solid: primary-action fill + its text */
   --solid: #ffffff;
   --on-solid: #000000;
 
-  /* red is reserved for hard alerts only (takedown / removed markers); the
-     active nav marker uses white and danger buttons use --danger, so a red bar
-     never doubles as "you are here" */
-  --red: #ff3b30;
+  /* Extended semantic palette on the dark field -- colour carries state
+     (ok/built green, warn/repack amber, danger red, info/verified blue). The
+     rule the file kept before still holds: colour never doubles as "you are
+     here", which stays white. There is no separate hard-alert red: it was one
+     value used on one 6px dot while every takedown control already spoke
+     --danger, so two reds meant one thing.
 
-  /* extended semantic palette on the dark field -- colour carries state
-     (ok/built green, warn/repack amber, danger red, info/verified blue) */
+     The soft tints are per-hue alphas, not one number applied four times. At a
+     flat 0.14 each tint landed at 1.13-1.21:1 against the black field -- a wash
+     no one could see, which is why state had to be carried by the border alone.
+     Each alpha below is solved so its tint sits at 1.38:1, so the four read at
+     equal weight rather than at equal opacity. */
   --ok: #4ecb8b;
-  --ok-soft: rgba(78, 203, 139, 0.14);
+  --ok-soft: rgba(78, 203, 139, 0.21);
   --warn: #ebb552;
-  --warn-soft: rgba(235, 181, 82, 0.14);
+  --warn-soft: rgba(235, 181, 82, 0.199);
   --danger: #f0576a;
-  --danger-soft: rgba(240, 87, 106, 0.14);
+  --danger-soft: rgba(240, 87, 106, 0.275);
   --info: #58a6f0;
-  --info-soft: rgba(88, 166, 240, 0.14);
+  --info-soft: rgba(88, 166, 240, 0.235);
 
   /* spacing scale */
   --space-1: 4px;
