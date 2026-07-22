@@ -121,7 +121,7 @@
     <span class="sp"></span>
     {#if manifest}<span class="ver mono">{manifest.pack_version}</span>{/if}
     <button class="refresh" onclick={runPreview} disabled={running}>
-      {running ? t('bld.building') : t('shell.refresh')}
+      {running ? t('bld.building') : t('prev.rebuild')}
     </button>
   </div>
 

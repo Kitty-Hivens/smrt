@@ -42,6 +42,11 @@ version section when a release is tagged.
 
 ### Fixed
 
+- The top-bar refresh works on every view. It bumped a shared signal only one
+  view listened to, so on the registry, graph, my-packs and public catalog it
+  was a button that did nothing -- while the graph kept a second refresh of
+  its own beside it. Every view now listens, the duplicate is gone, and the
+  button is offered to any signed-in user rather than operators alone.
 - The pack editor no longer loses edits quietly. A rejected autosave was a
   grey word in the header with the reason only in a tooltip, and it never
   retried, so a failed save plus a closed tab meant the work was gone. It is

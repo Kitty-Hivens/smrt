@@ -2,6 +2,7 @@
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { reload } from '../lib/reload.svelte';
   import { terms } from '../lib/terms.svelte';
   import type { PackSummary, UploadRow } from '../lib/types';
   import PackEditor from './PackEditor.svelte';
@@ -71,6 +72,11 @@
     }
   }
 
+
+  // the shell's top-bar refresh bumps reload.count; reload when it does
+  $effect(() => {
+    if (reload.count > 0) load();
+  });
 </script>
 
 {#if packEdit !== null}

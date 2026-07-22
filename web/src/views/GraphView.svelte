@@ -5,6 +5,7 @@
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { reload } from '../lib/reload.svelte';
   import { isDebug } from '../lib/roles';
   import type { GraphData, GraphSlice } from '../lib/types';
 
@@ -137,6 +138,11 @@
       }
     }
   }
+
+  // the shell's top-bar refresh bumps reload.count; reload when it does
+  $effect(() => {
+    if (reload.count > 0) load();
+  });
 </script>
 
 <div class="view">
@@ -148,7 +154,6 @@
       <span class="lg" style="--c:var(--ok)">{t('graph.provides')}</span>
       <span class="lg" style="--c:var(--fg-dim)">{t('graph.optional')}</span>
     </div>
-    <button class="sm" onclick={load} disabled={loading}>{t('graph.refresh')}</button>
   </div>
   {#if err}<div class="err mono">{err}</div>{/if}
 

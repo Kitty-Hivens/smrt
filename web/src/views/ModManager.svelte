@@ -3,6 +3,7 @@
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { reload } from '../lib/reload.svelte';
   import { isDebug, isOperator } from '../lib/roles';
   import type {
     JarDiff,
@@ -312,6 +313,11 @@
     if (vs.length <= 4) return { span: false, items: vs, count: vs.length };
     return { span: true, items: [vs[0], vs[vs.length - 1]], count: vs.length };
   }
+
+  // the shell's top-bar refresh bumps reload.count; reload when it does
+  $effect(() => {
+    if (reload.count > 0) load();
+  });
 </script>
 
 <div class="view">

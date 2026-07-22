@@ -3,6 +3,7 @@
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { reload } from '../lib/reload.svelte';
   import { terms } from '../lib/terms.svelte';
   import { renderMarkdown } from '../lib/markdown';
   import ModIcon from './ModIcon.svelte';
@@ -94,6 +95,11 @@
       err = e instanceof ApiError ? `${e.status} ${e.body}` : String(e);
     }
   }
+
+  // the shell's top-bar refresh bumps reload.count; reload when it does
+  $effect(() => {
+    if (reload.count > 0) load();
+  });
 </script>
 
 <div class="view">

@@ -324,6 +324,7 @@ export const ru: Dict = {
   'job.failed': 'ошибка',
   'job.interrupted': '(поток лога прерван)',
 
+  'prev.rebuild': 'Пересобрать',
   'prev.title': 'Превью',
   'prev.subtitle': 'рендер как в лаунчере: последний сохранённый конфиг',
   'prev.starting': 'запуск сборки превью...',

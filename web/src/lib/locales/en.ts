@@ -325,6 +325,7 @@ export const en = {
   'job.failed': 'failed',
   'job.interrupted': '(log stream interrupted)',
 
+  'prev.rebuild': 'Rebuild',
   'prev.title': 'Preview',
   'prev.subtitle': 'launcher-faithful render of the last saved config',
   'prev.starting': 'starting preview build...',

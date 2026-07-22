@@ -3,7 +3,6 @@
   import { api } from '../lib/api';
   import type { Health } from '../lib/types';
   import { route, visibleSections, type Section } from '../lib/route.svelte';
-  import { isOperator } from '../lib/roles';
   import { reload } from '../lib/reload.svelte';
   import { t, i18n, LOCALES } from '../lib/i18n.svelte';
   import Avatar from './Avatar.svelte';
@@ -21,7 +20,6 @@
     children: Snippet;
   } = $props();
 
-  const isAdmin = $derived(isOperator(me?.role));
 
   // Off-canvas rail on phones: the topbar burger toggles it; selecting a
   // section, pressing Esc, or tapping the scrim closes it.
@@ -125,7 +123,7 @@
       <div class="crumb"><span class="faint">smrt /</span> {t(navKey[route.section])}</div>
       <div class="spacer"></div>
       <div class="tools">
-        {#if isAdmin}
+        {#if me}
           <button
             class="refresh"
             class:busy={reload.busy}
