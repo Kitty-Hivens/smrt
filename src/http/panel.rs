@@ -5,7 +5,7 @@
 
 use axum::Router;
 use axum::extract::Path;
-use axum::http::{StatusCode, header};
+use axum::http::{StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use rust_embed::RustEmbed;
@@ -18,6 +18,20 @@ pub fn router() -> Router {
     Router::new()
         .route("/", get(index))
         .route("/assets/*path", get(asset))
+        // The panel owns its URLs: a section is a path, and a mod page is a
+        // shareable link. Any path the API does not claim serves the app shell,
+        // which then reads the URL -- so a reload, a bookmark or the mouse's
+        // back button land where they should instead of on a 404.
+        .fallback(get(spa))
+}
+
+/// Serve the panel for an unclaimed path, but never for the API surface: a bad
+/// `/v1` path must stay a 404 a client can parse, not a page of HTML.
+async fn spa(uri: Uri) -> Response {
+    if uri.path().starts_with("/v1") {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
+    serve("index.html")
 }
 
 async fn index() -> Response {

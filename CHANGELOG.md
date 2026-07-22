@@ -42,6 +42,12 @@ version section when a release is tagged.
 
 ### Added
 
+- The panel's state lives in the URL. Sections are paths, a mod page is a
+  shareable link, and the server serves the app shell for any path it does
+  not claim -- so back and forward (and the mouse buttons wired to them) work,
+  a reload keeps the mod page you had open, and a link to what you are
+  looking at can be sent to someone. Navigation was a variable and a
+  localStorage key before, which the browser knew nothing about.
 - A motion system, where the panel had fifteen hand-picked CSS durations and
   nothing else: three duration tokens and two easings, short and linear-out to
   match a flat interface, with one `prefers-reduced-motion` rule that disarms

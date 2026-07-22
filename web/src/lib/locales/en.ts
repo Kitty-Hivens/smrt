@@ -13,6 +13,7 @@ export const en = {
 
   'shell.signOut': 'Sign out',
   'shell.signIn': 'Sign in',
+  'shell.modPage': 'mod',
   'shell.refresh': 'Refresh',
   'shell.health': 'v{version} / schema {schema}',
   'shell.locale': 'Language',

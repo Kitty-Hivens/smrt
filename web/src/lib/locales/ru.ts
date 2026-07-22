@@ -12,6 +12,7 @@ export const ru: Dict = {
 
   'shell.signOut': 'Выйти',
   'shell.signIn': 'Войти',
+  'shell.modPage': 'мод',
   'shell.refresh': 'Обновить',
   'shell.health': 'v{version} / схема {schema}',
   'shell.locale': 'Язык',

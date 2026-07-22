@@ -46,7 +46,7 @@
   // Keep the active section within what this role may see: a stored operator
   // section from a prior admin session shouldn't strand a guest on a blank tab.
   $effect(() => {
-    if (!visibleSections(me).includes(route.section)) route.go('browse');
+    if (!visibleSections(me).includes(route.section)) route.go('browse', true);
   });
 
   const navKey: Record<Section, Parameters<typeof t>[0]> = {
@@ -124,7 +124,16 @@
       >
         <span class="bl" aria-hidden="true"></span>
       </button>
-      <div class="crumb"><span class="faint">smrt /</span> {t(navKey[route.section])}</div>
+      <div class="crumb">
+        <span class="faint">smrt /</span>
+        {#if route.mod}
+          <button class="crumblink" onclick={() => route.closeMod()}>{t(navKey[route.section])}</button>
+          <span class="faint">/</span>
+          {t('shell.modPage')}
+        {:else}
+          {t(navKey[route.section])}
+        {/if}
+      </div>
       <div class="spacer"></div>
       <div class="tools">
         {#if me}
@@ -363,6 +372,20 @@
     display: flex;
     align-items: center;
     gap: var(--space-3);
+  }
+  /* a crumb segment you can walk back to reads as a control, not as text */
+  .crumblink {
+    border: none;
+    background: transparent;
+    padding: 0;
+    min-height: 0;
+    font: inherit;
+    color: var(--fg-dim);
+    cursor: pointer;
+  }
+  .crumblink:hover {
+    color: var(--fg);
+    background: transparent;
   }
   .crumb {
     font-family: var(--mono);
