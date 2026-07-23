@@ -15,11 +15,7 @@ use axum::{Extension, Json, Router};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 
-// Mod jars and curated assets routinely run 5-50 MB. Axum's 2 MiB default
-// trips every realistic upload; the nginx layer is already gated at 100 MB
-// and the admin token is the actual authorization boundary, so a generous
-// per-request cap here just avoids breaking legitimate uploads.
-const ADMIN_BODY_LIMIT: usize = 256 * 1024 * 1024;
+use super::MAX_UPLOAD_BODY;
 
 pub fn router(state: AppState) -> Router {
     operator_router(state.clone()).merge(authoring_router(state))
@@ -51,7 +47,7 @@ fn operator_router(state: AppState) -> Router {
         .route("/v1/uploads/:id/approve", post(approve_upload))
         .route("/v1/uploads/:id/reject", post(reject_upload))
         .route("/v1/audit", get(get_audit_log))
-        .layer(DefaultBodyLimit::max(ADMIN_BODY_LIMIT))
+        .layer(DefaultBodyLimit::max(MAX_UPLOAD_BODY))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
         .with_state(state)
 }
@@ -90,7 +86,7 @@ fn authoring_router(state: AppState) -> Router {
         .route("/v1/modrinth/search", get(modrinth_search))
         .route("/v1/modrinth/versions", get(modrinth_versions))
         .route("/v1/modrinth/icon", get(modrinth_icon))
-        .layer(DefaultBodyLimit::max(ADMIN_BODY_LIMIT))
+        .layer(DefaultBodyLimit::max(MAX_UPLOAD_BODY))
         .layer(from_fn_with_state(
             state.clone(),
             super::auth::require_session,

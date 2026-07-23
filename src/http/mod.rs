@@ -19,6 +19,18 @@ use crate::accounts::Identity;
 use crate::state::AppState;
 use axum::Router;
 
+/// Ceiling on a single request body, shared by every write path that takes a
+/// whole file (cache jars, pack static assets, member uploads, the bootstrap
+/// archive). One home rather than a copy per router.
+///
+/// It is a memory ceiling, not just a size gate: these handlers extract `Bytes`,
+/// so axum buffers the entire body in RAM before the handler runs, and the
+/// bootstrap path copies it once more. A request near this limit holds that much
+/// (bootstrap: twice that) for its lifetime. Sized for a whole SC pack archive
+/// uploaded in one shot; nginx in front is raised to match (see the deploy
+/// config), since the smaller of the two wins.
+pub(crate) const MAX_UPLOAD_BODY: usize = 8 * 1024 * 1024 * 1024;
+
 /// Best-effort audit write shared by the admin and registry write paths: record
 /// who did what. A failure is logged, never raised -- the audited action already
 /// happened, so a lost trail entry must not turn a successful operation into an

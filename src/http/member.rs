@@ -17,7 +17,7 @@ use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use serde::Deserialize;
 
-const UPLOAD_BODY_LIMIT: usize = 256 * 1024 * 1024;
+use super::MAX_UPLOAD_BODY;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -27,7 +27,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/me/uploads", get(my_uploads))
         .route("/v1/me/forks", post(fork_pack))
         .route("/v1/me/accept-terms", post(accept_terms))
-        .layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT))
+        .layer(DefaultBodyLimit::max(MAX_UPLOAD_BODY))
         .layer(from_fn_with_state(
             state.clone(),
             super::auth::require_session,
