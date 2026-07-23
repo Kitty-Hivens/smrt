@@ -268,6 +268,18 @@ pub fn bridged_loader_for_project(conn: &Connection, project_id: &str) -> Result
         .optional()?)
 }
 
+/// Mod capabilities the loader ships natively -- dependency selectors a pack's
+/// mod may require that the loader itself answers, so removing the redundant
+/// Forge mod does not leave the dependency unsatisfied (see the 0018 seed). The
+/// exact loader, not its chain: a fork bundles these, its parent does not.
+pub fn loader_provided_capabilities(conn: &Connection, loader: &str) -> Result<HashSet<String>> {
+    let mut stmt =
+        conn.prepare("SELECT capability FROM loader_provides WHERE loader_id = lower(?1)")?;
+    Ok(stmt
+        .query_map(params![loader], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?)
+}
+
 /// The loaders one artifact suits. `any` marks a loader-agnostic jar; the harvest
 /// guarantees at least one row, so an empty result means the artifact was never
 /// read rather than that it suits nothing.

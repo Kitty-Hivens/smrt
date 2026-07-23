@@ -117,6 +117,14 @@ version section when a release is tagged.
   through the same identity check, and assets are unique by `dest` in the
   editor and on save -- two rows writing one path installed whichever the
   launcher fetched last.
+- A loader that ships a Forge mod's capability natively is understood as
+  answering that dependency. Cleanroom loads mixins itself, so MixinBooter
+  (the Forge backport) is redundant on a Cleanroom pack -- but removing it
+  used to leave Entity Culling and Relictium with an unsatisfied mixinbooter
+  dependency the resolver flagged as missing. A `loader_provides` seed, keyed
+  to the exact loader, now records what the loader covers; the dependency
+  resolves clean and auto-fill does not pull the mod back. One row per
+  capability, no code change to add another.
 - A connector's `loader:<name>` capability is now shipped as data and emitted
   by the harvest, so a Fabric mod carried by Sinytra Connector reads as
   carried instead of "will not load". The resolver understood bridges

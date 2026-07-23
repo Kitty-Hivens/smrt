@@ -74,6 +74,10 @@ const MIGRATIONS: &[(u32, Migration)] = &[
         17,
         Migration::Sql(include_str!("schema/0017_loader_bridge.sql")),
     ),
+    (
+        18,
+        Migration::Sql(include_str!("schema/0018_loader_provides.sql")),
+    ),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its

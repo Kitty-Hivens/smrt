@@ -416,6 +416,7 @@ pub fn dependency_fill_plan(conn: &Connection, cfg: &PackConfig) -> Result<DepFi
     for (i, p) in placed.present.iter().enumerate() {
         by_mod_id.entry(p.mod_id).or_insert(i);
     }
+    let loader_provided = queries::loader_provided_capabilities(conn, &cfg.loader.name)?;
     // target-mod classifications, resolved lazily once per mod id
     let mut target_class: HashMap<i64, Classification> = HashMap::new();
     let mut missing: BTreeMap<String, Option<String>> = BTreeMap::new();
@@ -442,6 +443,12 @@ pub fn dependency_fill_plan(conn: &Connection, cfg: &PackConfig) -> Result<DepFi
                 continue;
             }
             if is_loader_dep(&e.target) {
+                continue;
+            }
+            // a capability the loader ships natively is answered by the loader:
+            // do not record it as an auto-pull candidate (it would pull back a mod
+            // the fork makes redundant)
+            if loader_provided.contains(e.target.split('@').next().unwrap_or(&e.target)) {
                 continue;
             }
             let target_mod = queries::mod_id_for_selector(conn, &e.target)?;
@@ -721,7 +728,15 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
     }
 
     // A required target a present mod `provides` as a capability is satisfied.
-    missing.retain(|target, _| !provides.contains_key(target));
+    // So is one the loader ships natively -- a modern fork bundling what is a
+    // separate mod on Forge (Cleanroom loads mixins, so a MixinBooter dependency
+    // is met with no MixinBooter jar in the pack). The `@version` suffix a
+    // selector may carry is not part of the capability key.
+    let loader_provided = queries::loader_provided_capabilities(conn, &cfg.loader.name)?;
+    let bare = |t: &str| t.split('@').next().unwrap_or(t).to_string();
+    missing.retain(|target, _| {
+        !provides.contains_key(target) && !loader_provided.contains(&bare(target))
+    });
 
     // Loader eligibility (#50). A pack natively runs its own loader and whatever
     // that loader inherits from; anything else needs a bridge. A bridge is a
@@ -1250,6 +1265,60 @@ mod tests {
         assert_eq!(bad.missing.len(), 1);
         assert_eq!(bad.missing[0].target, "appliedenergistics2");
         assert_eq!(bad.missing[0].needed_by, vec!["ae2stuff.jar"]);
+    }
+
+    // A capability the loader ships natively answers a dependency with no jar for
+    // it in the pack: Cleanroom loads mixins, so a MixinBooter dependency is met
+    // with MixinBooter removed -- neither reported missing nor auto-pulled. The
+    // same dependency on a plain Forge pack, where nothing provides it, is missing.
+    #[test]
+    fn a_loader_provided_capability_satisfies_a_dependency() {
+        use crate::registry::model::Source;
+        let r = Registry::open_in_memory().unwrap();
+        let culling = add_mod(&r, "entityculling", "1.0", &"a".repeat(40));
+        // depends on MixinBooter by its Modrinth project, as the real edge does
+        relate(
+            &r,
+            culling,
+            "modrinth:G1ckZuWK",
+            None,
+            RelKind::Requires,
+            Source::Modrinth,
+        );
+        let pack = || {
+            config(vec![declared(
+                "entityculling.jar",
+                true,
+                cache(&"a".repeat(40)),
+            )])
+        };
+
+        // Forge: nothing provides it -> missing
+        let mut forge = pack();
+        forge.loader.name = "forge".into();
+        let rep = r.with_conn(|c| resolve_pack(c, &forge)).unwrap();
+        assert_eq!(rep.missing.len(), 1, "Forge does not bundle mixins");
+        assert_eq!(rep.missing[0].target, "modrinth:G1ckZuWK");
+
+        // Cleanroom: the loader answers it -> clean, and the fill plan does not
+        // list it as an auto-pull candidate either
+        let mut cleanroom = pack();
+        cleanroom.loader.name = "cleanroom".into();
+        let rep = r.with_conn(|c| resolve_pack(c, &cleanroom)).unwrap();
+        assert!(
+            rep.missing.is_empty(),
+            "Cleanroom loads mixins natively: {:?}",
+            rep.missing
+        );
+        let plan = r
+            .with_conn(|c| dependency_fill_plan(c, &cleanroom))
+            .unwrap();
+        assert!(
+            plan.missing
+                .iter()
+                .all(|t| t.selector != "modrinth:G1ckZuWK"),
+            "a loader-provided capability is not auto-pulled"
+        );
     }
 
     #[test]
