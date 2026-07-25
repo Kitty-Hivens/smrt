@@ -382,19 +382,26 @@ pub fn classify_pack(
     Ok(out)
 }
 
-/// The side-based downgrade of an inferred hard edge (the client-mod guard,
-/// extended to server-side targets). A bytecode-inferred "requires" pointing at
-/// a client-side mod is almost certainly a class-granularity artifact -- a real
-/// unconditional server-side dependency on a client mod would crash a dedicated
-/// server -- so it is treated as soft before it can lock, pull, or report the
-/// target missing. Same reasoning for a server-side target: a client pack never
-/// force-pulls a server-side mod. Only inferred edges downgrade; a declared
-/// edge to a client mod is a data error the resolve report surfaces instead.
+/// The side-based downgrade of an inferred hard edge. A bytecode-inferred
+/// "requires" is class-granularity evidence: it cannot tell a hard dependency
+/// from an `@Optional.Interface` integration that references a foreign mod's API
+/// type in ordinary tile/item code. So an inferred edge to a *classified* target
+/// is treated as soft before it can lock, pull, or report the target missing --
+/// a real hard dependency arrives on a declared tier (mcmod.info `requiredMods`,
+/// a loader manifest, or Modrinth), which is never downgraded.
+///
+/// Client and server targets were the original guard (a real cross-side hard dep
+/// would crash a dedicated server / never belongs in a client pack). `Both`
+/// joins them: an inferred edge onto a both-side content mod -- Mekanism,
+/// Draconic Evolution -- is the same false positive (a mod implementing their
+/// energy API), and force-pulling a large content mod off a bytecode reference
+/// dirties every self-hosted pack. Only inferred edges downgrade; a declared
+/// edge to a client mod stays a data error the resolve report surfaces instead.
 fn inferred_edge_downgraded(edge_source: Source, target_class: Option<&Classification>) -> bool {
     edge_source == Source::Inferred
         && matches!(
             target_class.and_then(|c| c.side),
-            Some(SideClass::Client) | Some(SideClass::Server)
+            Some(SideClass::Client) | Some(SideClass::Server) | Some(SideClass::Both)
         )
 }
 
@@ -1571,6 +1578,39 @@ mod tests {
         );
         let rep = r.with_conn(|c| resolve_pack(c, &alone)).unwrap();
         assert!(rep.missing.is_empty(), "not reported missing either");
+    }
+
+    // A bytecode-inferred edge onto a both-side content mod (a mod that merely
+    // implements Mekanism's energy API) is the class-granularity false positive
+    // that dirtied every self-hosted pack: it must not pull the content mod.
+    #[test]
+    fn inferred_hard_edge_into_a_both_content_mod_is_soft() {
+        use crate::registry::model::Source;
+        let r = Registry::open_in_memory().unwrap();
+        let ec = add_mod(&r, "energycontrol", "1.0", "sha_ec");
+        add_mod(&r, "mekanism", "1.0", "sha_mek");
+        r.with_conn_mut(|c| {
+            crate::registry::upsert::set_jar_class(c, "sha_mek", "mod", Some("both"), None, None)?;
+            Ok(())
+        })
+        .unwrap();
+        relate(
+            &r,
+            ec,
+            "mekanism",
+            None,
+            RelKind::Requires,
+            Source::Inferred,
+        );
+
+        // mekanism absent: not missing, not pulled
+        let alone = config(vec![declared("EnergyControl.jar", true, cache("sha_ec"))]);
+        let plan = r.with_conn(|c| dependency_fill_plan(c, &alone)).unwrap();
+        assert!(
+            plan.missing.is_empty(),
+            "an inferred edge onto a both-side content mod never pulls it: {:?}",
+            plan.missing
+        );
     }
 
     #[test]
