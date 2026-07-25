@@ -1078,6 +1078,25 @@ mod tests {
         );
     }
 
+    // lwjgl3ify is a Forge patcher: a Forge jar (UniMixins, Angelica, any 1.7.10
+    // mod) on an lwjgl3ify pack runs natively and must not read as mismatched.
+    #[test]
+    fn lwjgl3ify_runs_forge_artifacts_natively() {
+        let r = Registry::open_in_memory().unwrap();
+        add_mod_for(&r, "um", "sha_unimixins", &["forge"]);
+        let mut cfg = config(vec![declared(
+            "unimixins.jar",
+            true,
+            cache("sha_unimixins"),
+        )]);
+        cfg.loader.name = "lwjgl3ify".into();
+        let rep = r.with_conn(|c| resolve_pack(c, &cfg)).unwrap();
+        assert!(
+            rep.loader_mismatch.is_empty(),
+            "lwjgl3ify inherits forge; a forge mod is native, not a mismatch"
+        );
+    }
+
     // A connector present in the pack carries the mod: not a finding, just a fact
     // worth listing -- pull the connector and every one of them goes at once.
     #[test]
