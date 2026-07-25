@@ -59,6 +59,15 @@ pub struct Classification {
     /// bytecode markers are `high`; the blanket client-surface heuristic is
     /// `low`. `None` when there is no side.
     pub side_confidence: Option<String>,
+    /// The mod declared itself optional on BOTH sides (Modrinth
+    /// `client_side = optional` and `server_side = optional`) -- required
+    /// nowhere by its own word. The dual of `must_match` (required on both),
+    /// which a plain `Both` verdict otherwise collapses together with the
+    /// one-side-required cases. A hard dependency edge never force-installs such
+    /// a mod: like a confidently-client target it co-toggles through the
+    /// requires tree instead of locking (a JEI addon needing JEI does not make
+    /// JEI mandatory for everyone).
+    pub optional_both: bool,
 }
 
 impl Classification {
@@ -120,7 +129,13 @@ pub fn classify_artifact(
             .optional()?,
         None => None,
     };
-    let modrinth = env.and_then(|(c, s)| side_from_modrinth_env(&c?, &s?));
+    let modrinth = env
+        .as_ref()
+        .and_then(|(c, s)| side_from_modrinth_env(c.as_deref()?, s.as_deref()?));
+    // Optional on both sides -> required nowhere by the mod's own declaration.
+    let optional_both = env
+        .as_ref()
+        .is_some_and(|(c, s)| c.as_deref() == Some("optional") && s.as_deref() == Some("optional"));
 
     let out = if matches!(kind.as_deref(), Some("coremod") | Some("library")) {
         Classification {
@@ -131,6 +146,7 @@ pub fn classify_artifact(
             bytecode_side,
             bytecode_policy,
             side_confidence: None,
+            optional_both: false,
         }
     } else if let Some((side, policy)) = modrinth {
         Classification {
@@ -141,6 +157,7 @@ pub fn classify_artifact(
             bytecode_side,
             bytecode_policy,
             side_confidence: Some("high".to_string()),
+            optional_both,
         }
     } else if bytecode_side.is_some() || bytecode_policy.is_some() {
         Classification {
@@ -151,6 +168,7 @@ pub fn classify_artifact(
             bytecode_side,
             bytecode_policy,
             side_confidence: bytecode_confidence,
+            optional_both: false,
         }
     } else {
         Classification {
@@ -161,6 +179,7 @@ pub fn classify_artifact(
             bytecode_side,
             bytecode_policy,
             side_confidence: None,
+            optional_both: false,
         }
     };
     tracing::debug!(

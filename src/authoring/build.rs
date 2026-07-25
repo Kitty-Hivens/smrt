@@ -153,6 +153,11 @@ fn derive_required(
     // shape -- so those targets do lock, with a warning below.
     let lockable = |i: usize| -> bool {
         match classifications.get(&mods[i].filename) {
+            // A mod optional on both sides is required nowhere by its own
+            // declaration; a hard edge co-toggles it through the requires tree
+            // rather than force-installing it (a JEI addon does not make JEI
+            // mandatory). Same treatment as a confidently-client target.
+            Some(c) if c.optional_both => false,
             Some(c) => c.side != Some(SideClass::Client) || c.client_verdict_is_soft(),
             None => true,
         }
@@ -462,6 +467,17 @@ mod tests {
             bytecode_side: side,
             bytecode_policy: policy,
             side_confidence: side.map(|_| "high".to_string()),
+            optional_both: false,
+        }
+    }
+
+    /// A mod Modrinth declares optional on both sides (client + server) -- e.g.
+    /// JEI. `Both` + tolerant, but required nowhere by its own word.
+    fn cls_optional_both() -> Classification {
+        Classification {
+            provenance: Provenance::ModrinthEnv,
+            optional_both: true,
+            ..cls(Some(SideClass::Both), Some(MatchPolicy::Tolerant))
         }
     }
 
@@ -535,6 +551,30 @@ mod tests {
             "graph-locked without a classification still reads required"
         );
         assert_eq!(presence("addon.jar"), None, "unclassified stays absent");
+    }
+
+    // A both-optional mod (JEI: client + server both optional) hard-required by
+    // a default-enabled addon is NOT force-installed. Locking it would push a
+    // recipe viewer onto every client just because a client addon depends on
+    // it; the addon co-toggles JEI through the requires tree instead.
+    #[test]
+    fn both_optional_dependency_is_not_locked_required() {
+        let mut mods = vec![
+            entry("create-jei-compat.jar", true, &["JEI.jar"]),
+            entry("JEI.jar", true, &[]),
+        ];
+        let cl = HashMap::from([("JEI.jar".to_string(), cls_optional_both())]);
+        derive_required(&mut mods, &cl).unwrap();
+        let jei = mods.iter().find(|m| m.filename == "JEI.jar").unwrap();
+        assert!(
+            !jei.required,
+            "a both-optional mod is required nowhere by its own declaration"
+        );
+        assert_eq!(
+            jei.display.as_ref().and_then(|d| d.presence),
+            Some(PresenceClass::OptionalBoth),
+        );
+        assert!(required_set(&mods).is_empty());
     }
 
     // An opted-out must_match mod stays out: the curator removed it from the
