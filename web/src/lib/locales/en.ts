@@ -424,6 +424,7 @@ export const en = {
   'graph.conflicts': 'conflicts',
   'graph.provides': 'provides',
   'graph.optional': 'optional',
+  'graph.optionalWord': 'optional',
   'graph.refresh': 'Refresh',
   'graph.empty': 'No relations yet. The graph fills as the registry derives deps.',
   'graph.debugHint': 'Debug: drag between nodes to author an edge; select an authored edge and press Delete to remove it.',

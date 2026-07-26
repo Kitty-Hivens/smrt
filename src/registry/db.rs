@@ -7,6 +7,7 @@ use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
 
+use super::model::ModrinthProjectName;
 use super::{authored, migrations, queries, upsert};
 
 pub struct Registry {
@@ -95,6 +96,28 @@ impl Registry {
     pub fn rename_mod(&self, mod_id: i64, name: Option<&str>, slug: Option<&str>) -> Result<()> {
         let now = upsert::now_rfc3339();
         self.with_txn(|c| authored::rename_mod(c, mod_id, name, slug, &now))
+    }
+
+    /// Fill the Modrinth-name display cache (idempotent upsert). Pure display
+    /// data behind the graph's external `modrinth:<id>` leaves -- moves no
+    /// compatibility fact, safe to drop and refill.
+    pub fn cache_modrinth_names(&self, entries: &[ModrinthProjectName]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let now = upsert::now_rfc3339();
+        self.with_txn(|c| {
+            for e in entries {
+                c.execute(
+                    "INSERT INTO modrinth_project_name (project_id, title, slug, fetched_at)
+                     VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT(project_id) DO UPDATE SET
+                         title = excluded.title, slug = excluded.slug, fetched_at = excluded.fetched_at",
+                    params![e.id, e.title, e.slug, now],
+                )?;
+            }
+            Ok(())
+        })
     }
 
     /// Merge the `from` mod identity into `into` (authored). Repoints all of

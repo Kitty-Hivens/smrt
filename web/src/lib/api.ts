@@ -12,6 +12,7 @@ import type {
   CacheUsageListing,
   GraphData,
   GraphSlice,
+  ModrinthProjectName,
   Health,
   JarDiff,
   JobResult,
@@ -384,6 +385,11 @@ export const api = {
   },
   // the (mc, loader) worlds the registry holds, busiest first
   graphSlices: () => getJson<GraphSlice[]>('/v1/registry/graph/slices'),
+  // resolve external `modrinth:<id>` graph leaves to real names (cache-first)
+  modrinthNames: (ids: string[]) =>
+    getJson<ModrinthProjectName[]>(
+      `/v1/registry/modrinth-names?ids=${encodeURIComponent(ids.join(','))}`,
+    ),
   // author or remove one graph edge (node editor); debug-gated
   authorRelation: (body: {
     from_mod_id: number;

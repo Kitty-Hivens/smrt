@@ -14,7 +14,7 @@ use crate::authoring::{JarDiff, diff_jars, reconstruct_config};
 use crate::domain::DeclaredAsset;
 use crate::registry::model::{
     BuildModRow, BuildSummary, EligibleArtifact, GraphData, GraphSlice, ModSummary, ModUse,
-    OrphanJar, RegistryStats, RelKind, ReleaseRow, UnassignedJar, VersionRow,
+    ModrinthProjectName, OrphanJar, RegistryStats, RelKind, ReleaseRow, UnassignedJar, VersionRow,
 };
 use crate::registry::{authored, queries};
 use crate::state::AppState;
@@ -44,6 +44,7 @@ fn member_routes(state: AppState) -> Router {
         .route("/v1/registry/mod-releases/:mod_id", get(get_releases_by_id))
         .route("/v1/registry/graph", get(get_graph))
         .route("/v1/registry/graph/slices", get(get_graph_slices))
+        .route("/v1/registry/modrinth-names", get(get_modrinth_names))
         .layer(from_fn_with_state(
             state.clone(),
             super::auth::require_session,
@@ -218,6 +219,75 @@ async fn get_graph_slices(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<GraphSlice>>, ApiError> {
     Ok(Json(run_query(&state, queries::graph_slices).await?))
+}
+
+#[derive(Deserialize)]
+struct NamesQuery {
+    /// comma-separated Modrinth project ids
+    ids: Option<String>,
+}
+
+/// Resolve Modrinth project ids to display names for the graph's external
+/// `modrinth:<id>` leaves. Cache-first: cached rows return at once, and the ids
+/// still missing are fetched from Modrinth in one batch, stored, and merged.
+/// Best-effort -- if Modrinth is unreachable the resolved names are returned and
+/// the rest stay as their ids on the client. Member-gated, so the id list is not
+/// an open Modrinth proxy; capped regardless.
+async fn get_modrinth_names(
+    State(state): State<AppState>,
+    Query(q): Query<NamesQuery>,
+) -> Result<Json<Vec<ModrinthProjectName>>, ApiError> {
+    let mut ids: Vec<String> = q
+        .ids
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids.truncate(256);
+    if ids.is_empty() {
+        return Ok(Json(vec![]));
+    }
+
+    let want = ids.clone();
+    let mut resolved = run_query(&state, move |c| queries::cached_modrinth_names(c, &want)).await?;
+
+    let missing: Vec<String> = ids
+        .iter()
+        .filter(|id| !resolved.contains_key(*id))
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        match state.modrinth.projects_by_ids(&missing).await {
+            Ok(projects) => {
+                let fresh: Vec<ModrinthProjectName> = projects
+                    .into_values()
+                    .map(|p| ModrinthProjectName {
+                        id: p.id,
+                        title: p.title,
+                        slug: Some(p.slug),
+                    })
+                    .collect();
+                let store = fresh.clone();
+                run_write(&state, move |reg| reg.cache_modrinth_names(&store)).await?;
+                for n in fresh {
+                    resolved.insert(n.id.clone(), n);
+                }
+            }
+            // names are cosmetic; a Modrinth outage must not fail the graph
+            Err(e) => tracing::warn!("modrinth name resolve failed: {e:#}"),
+        }
+    }
+
+    let names = ids
+        .into_iter()
+        .filter_map(|id| resolved.remove(&id))
+        .collect();
+    Ok(Json(names))
 }
 
 #[derive(Deserialize)]

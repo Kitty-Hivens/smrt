@@ -335,6 +335,36 @@ pub fn mod_id_for_selector(conn: &Connection, selector: &str) -> Result<Option<i
     }
 }
 
+/// Cached human names for Modrinth project ids -- the display cache behind the
+/// graph's external `modrinth:<id>` leaves. Ids with no cached row are simply
+/// absent from the map; the caller fetches and stores those, then re-reads.
+pub fn cached_modrinth_names(
+    conn: &Connection,
+    ids: &[String],
+) -> Result<HashMap<String, ModrinthProjectName>> {
+    let mut out = HashMap::new();
+    if ids.is_empty() {
+        return Ok(out);
+    }
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let sql = format!(
+        "SELECT project_id, title, slug FROM modrinth_project_name WHERE project_id IN ({placeholders})"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(ids), |r| {
+        Ok(ModrinthProjectName {
+            id: r.get(0)?,
+            title: r.get(1)?,
+            slug: r.get(2)?,
+        })
+    })?;
+    for row in rows {
+        let n = row?;
+        out.insert(n.id.clone(), n);
+    }
+    Ok(out)
+}
+
 /// The harvested artifact with this sha1: `(mod_version id, mod id, version)`.
 /// The resolver uses it to place a self-hosted mod on the graph, read the version
 /// it would ship for the version-window check, and scope the mod's relations to

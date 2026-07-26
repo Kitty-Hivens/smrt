@@ -304,6 +304,20 @@ pub struct GraphData {
     pub edges: Vec<GraphEdge>,
 }
 
+/// A resolved display name for a Modrinth project the registry references but does
+/// not host. The graph turns an external `modrinth:<id>` leaf into one of these so
+/// it reads as "The Aether", not the opaque id. `id` is the project id (also the
+/// map key on the client); `slug` is present when Modrinth returned one.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct ModrinthProjectName {
+    pub id: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub slug: Option<String>,
+}
+
 /// One (Minecraft version, loader) world the registry actually holds, and how many
 /// artifacts sit in it. The panel offers these as the graph's slice choices and
 /// opens on the busiest, rather than inventing a combination nothing matches (#49).

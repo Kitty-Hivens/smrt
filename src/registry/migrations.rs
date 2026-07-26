@@ -82,6 +82,10 @@ const MIGRATIONS: &[(u32, Migration)] = &[
         19,
         Migration::Sql(include_str!("schema/0019_lwjgl3ify_loader.sql")),
     ),
+    (
+        20,
+        Migration::Sql(include_str!("schema/0020_modrinth_project_name.sql")),
+    ),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its

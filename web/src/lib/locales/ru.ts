@@ -423,6 +423,7 @@ export const ru: Dict = {
   'graph.conflicts': 'конфликт',
   'graph.provides': 'даёт',
   'graph.optional': 'опционально',
+  'graph.optionalWord': 'опциональных',
   'graph.refresh': 'Обновить',
   'graph.empty': 'Связей пока нет. Граф наполняется по мере деривации зависимостей.',
   'graph.debugHint': 'Debug: протяни между узлами, чтобы создать связь; выдели authored-связь и нажми Delete, чтобы удалить.',

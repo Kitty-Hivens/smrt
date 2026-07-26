@@ -25,6 +25,7 @@
   import TendrilLayer from './TendrilLayer.svelte';
   import { t } from '../lib/i18n.svelte';
   import { hover, drag } from '../lib/graphhover.svelte';
+  import { api } from '../lib/api';
   import type { GraphData } from '../lib/types';
 
   // Draws a relation graph and lets you walk it. Owns the focus, the layout and
@@ -65,6 +66,30 @@
   // an explicit opt-in to render the whole web anyway, however unreadable
   let showAll = $state(false);
   let query = $state('');
+  // owners whose collapsed fan of external optional deps is expanded to leaves
+  let expanded = $state(new Set<number>());
+  // modrinth project id -> resolved title, and which ids we have already asked
+  // for (so an id Modrinth had no answer for is not re-fetched every rebuild)
+  let mrNames = new Map<string, string>();
+  let namesRequested = new Set<string>();
+
+  const aggNodeId = (owner: number) => `agg:${owner}`;
+  const pidOf = (target: string) => target.slice('modrinth:'.length);
+
+  // Resolve the given modrinth project ids to names, then redraw so the leaves
+  // read as titles instead of ids. Cosmetic: a failure leaves the ids in place.
+  async function ensureNames(pids: Iterable<string>) {
+    const missing = [...pids].filter((p) => !namesRequested.has(p));
+    if (missing.length === 0) return;
+    missing.forEach((p) => namesRequested.add(p));
+    try {
+      const rows = await api.modrinthNames(missing);
+      for (const r of rows) mrNames.set(r.id, r.title);
+      rebuild();
+    } catch {
+      /* names are cosmetic -- leave the ids as they are */
+    }
+  }
 
   // Above this many mods the unfocused view is a hairball, so it is not drawn
   // until the operator either focuses something or explicitly asks for it.
@@ -128,7 +153,10 @@
     return new Set(); // big and unfocused: draw nothing, prompt for a focus instead
   }
 
-  function build(g: GraphData, keep: Set<number> | null): { ns: Node[]; es: Edge[] } {
+  function build(
+    g: GraphData,
+    keep: Set<number> | null,
+  ): { ns: Node[]; es: Edge[]; needNames: Set<string> } {
     modidById = new Map();
     const ns: Node[] = [];
     const seen = new Set<string>();
@@ -151,6 +179,23 @@
         deletable: false,
       });
     }
+    // External optional deps on mods the mirror does not host (a `modrinth:<id>`
+    // that did not resolve) per in-scope owner. A single one is just shown; a fan
+    // of them -- JEBr alone brings ~70 -- is folded into one badge, since none of
+    // them is a relation between mods this registry actually holds.
+    const extOpt = new Map<number, string[]>();
+    for (const e of g.edges) {
+      if (e.to_mod_id != null) continue;
+      if (e.kind !== 'optional_dep' || !e.target.startsWith('modrinth:')) continue;
+      if (!inScope(e.from_mod_id)) continue;
+      if (keep !== null && e.from_mod_id !== focusId) continue;
+      let list = extOpt.get(e.from_mod_id);
+      if (!list) extOpt.set(e.from_mod_id, (list = []));
+      list.push(e.target);
+    }
+    const needNames = new Set<string>();
+    const aggSeen = new Set<number>();
+
     const es: Edge[] = [];
     g.edges.forEach((e, i) => {
       if (!inScope(e.from_mod_id)) return;
@@ -170,13 +215,64 @@
         // around a single leaf -- the focus would limit the mods and then undo
         // itself.
         if (keep !== null && e.from_mod_id !== focusId) return;
+
+        // A fan (>=2) of external optional deps folds into one "+N optional"
+        // badge on the owner, expanded to its named leaves on click. Hidden by
+        // default because these point at mods the registry does not even hold.
+        const fan =
+          e.kind === 'optional_dep' && e.target.startsWith('modrinth:')
+            ? (extOpt.get(e.from_mod_id)?.length ?? 0)
+            : 0;
+        if (fan >= 2) {
+          if (!aggSeen.has(e.from_mod_id)) {
+            aggSeen.add(e.from_mod_id);
+            const open = expanded.has(e.from_mod_id);
+            const aid = aggNodeId(e.from_mod_id);
+            ns.push({
+              id: aid,
+              position: { x: 0, y: 0 },
+              data: {
+                label: `${open ? '-' : '+'}${fan} ${t('graph.optionalWord')}`,
+                base: 'gv-agg',
+                owner: e.from_mod_id,
+              },
+              class: 'gv-agg',
+              connectable: false,
+              deletable: false,
+            });
+            es.push({
+              id: `agg-${e.from_mod_id}`,
+              source,
+              target: aid,
+              type: 'tendril',
+              selectable: false,
+              deletable: false,
+              data: {
+                kind: 'optional_dep',
+                target: aid,
+                from: e.from_mod_id,
+                color: 'var(--fg-dim)',
+                phase: i * 13,
+              },
+            });
+          }
+          if (!expanded.has(e.from_mod_id)) return; // collapsed: fold this leaf away
+          // expanded: fall through and draw the leaf itself too
+        }
+
         target = `x:${e.target}`;
         if (!seen.has(target)) {
           seen.add(target);
+          let label = e.target;
+          if (e.target.startsWith('modrinth:')) {
+            const pid = pidOf(e.target);
+            needNames.add(pid);
+            label = mrNames.get(pid) ?? e.target;
+          }
           ns.push({
             id: target,
             position: { x: 0, y: 0 },
-            data: { label: e.target, base: 'gv-ext' },
+            data: { label, base: 'gv-ext' },
             class: 'gv-ext',
             connectable: false,
             deletable: false,
@@ -211,7 +307,7 @@
         },
       });
     });
-    return { ns, es };
+    return { ns, es, needNames };
   }
 
   // left-to-right layered layout; dagre tolerates the cycles conflicts introduce
@@ -244,11 +340,13 @@
       edges = [];
       return;
     }
-    const { ns, es } = build(g, visibleSet(g));
+    const { ns, es, needNames } = build(g, visibleSet(g));
     layout(ns, es);
     nodes = ns;
     edges = es;
     fitToken++;
+    // resolve any freshly-drawn modrinth: leaves to names, then redraw
+    void ensureNames(needNames);
   }
 
   // a fresh graph (a new slice, a reloaded pack) resets the focus: the old centre
@@ -258,6 +356,7 @@
     if (raw === lastRaw) return;
     lastRaw = raw;
     if (focusId != null && !raw?.nodes.some((n) => n.mod_id === focusId)) focusId = null;
+    expanded = new Set(); // a new slice's owners are different mods
     rebuild();
   });
 
@@ -307,8 +406,22 @@
   // mod's page is one explicit button away in the focus bar. External/unresolved
   // leaves carry no mod id and are not focusable.
   function onnodeclick({ node }: { node: Node }) {
+    // the "+N optional" badge toggles its owner's folded external optional deps
+    if (node.id.startsWith('agg:')) {
+      const owner = (node.data as { owner?: number }).owner;
+      if (owner != null) toggleExpand(owner);
+      return;
+    }
     const modId = idToMod(node.id);
     if (Number.isFinite(modId)) setFocus(modId);
+  }
+
+  function toggleExpand(owner: number) {
+    const next = new Set(expanded);
+    if (next.has(owner)) next.delete(owner);
+    else next.add(owner);
+    expanded = next;
+    rebuild();
   }
 
   // Hovering a mod lights its own path and lets everything else recede. The edges
@@ -520,6 +633,19 @@
     border-style: dashed;
     color: var(--fg-dim);
     background: transparent;
+  }
+  /* the "+N optional" badge that stands in for a folded fan of external optional
+     deps -- a control, so it reads as pressable and counts line up */
+  .flowwrap :global(.svelte-flow__node.gv-agg) {
+    border-style: dashed;
+    color: var(--fg-dim);
+    background: var(--panel-2);
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+  }
+  .flowwrap :global(.svelte-flow__node.gv-agg:hover) {
+    color: var(--fg);
+    border-color: var(--seam-bright);
   }
   /* not on the hovered mod's path: recede, so what is left standing is exactly
      what that mod touches */
