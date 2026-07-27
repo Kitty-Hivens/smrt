@@ -181,7 +181,7 @@ jobs:
         # Also kept as a downloadable artifact so the operator can
         # grab a matching smrt-pack for a local machine without
         # building from source.
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: smrt-pack-${{ github.sha }}
           path: target/release/smrt-pack
