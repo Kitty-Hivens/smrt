@@ -440,10 +440,19 @@ fn resolve_from_cache(
             {
                 continue;
             }
-            let filename = v
-                .filename
-                .clone()
-                .unwrap_or_else(|| format!("{}.jar", v.sha1));
+            // Prefer the registry's stored filename. Absent (a cache jar ingested
+            // without a harvest), name it after the requested modid rather than an
+            // opaque `<sha1>.jar`: the selector on the cache leg is a bare modid
+            // (a `modrinth:`/`external:` selector resolves on the Modrinth leg and
+            // never reaches here), and a human name is what the panel and the
+            // launcher's mods/<filename> both want. Sha1 stays the last resort.
+            let filename = v.filename.clone().unwrap_or_else(|| {
+                if selector.contains(':') {
+                    format!("{}.jar", v.sha1)
+                } else {
+                    format!("{selector}.jar")
+                }
+            });
             let decl = DeclaredMod {
                 filename,
                 default_enabled: true,
@@ -643,6 +652,49 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(again, 0, "idempotent: nothing re-added");
+    }
+
+    // A cache jar whose registry row carries no filename (ingested without a
+    // harvest) is named after the requested modid, not an opaque `<sha1>.jar` --
+    // the hash-name UX wart depfill used to produce.
+    #[tokio::test]
+    async fn cache_fallback_without_a_stored_filename_names_by_modid() {
+        let r = Registry::open_in_memory().unwrap();
+        let a = add_artifact(&r, "moda", "1.0", "sha_a", "a.jar");
+        r.with_conn_mut(|c| {
+            let id = upsert::upsert_mod_by_alias(c, &[("modid", "modb")], NOW)?;
+            // None filename: the gap that used to fall back to the sha1
+            upsert::upsert_mod_version(c, id, "1.0", &["forge"], "sha_b", 10, None, None, NOW)?;
+            upsert::upsert_relation(
+                c,
+                a,
+                None,
+                "modb",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let mut c = cfg(vec![cache_mod("a.jar", "sha_a")]);
+        c.loader.name = "forge".into();
+        let modrinth = Modrinth::new().unwrap();
+        let cached: HashSet<String> = ["sha_a", "sha_b"].iter().map(|s| s.to_string()).collect();
+
+        fill_dependencies(&mut c, &r, &modrinth, &cached)
+            .await
+            .unwrap();
+        assert!(
+            c.mods.iter().any(|m| m.filename == "modb.jar"),
+            "named after the requested modid: {:?}",
+            c.mods.iter().map(|m| &m.filename).collect::<Vec<_>>()
+        );
+        assert!(
+            !c.mods.iter().any(|m| m.filename == "sha_b.jar"),
+            "the opaque sha1 name is the last resort, not this case"
+        );
     }
 
     // The sticky-dependency contract: a pulled entry survives a save body that

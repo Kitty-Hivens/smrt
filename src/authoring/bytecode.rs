@@ -89,6 +89,10 @@ pub struct JarSignals {
     pub meta_identity: bool,
     /// `mods.toml` `displayTest` tolerates an absent/mismatched server.
     pub display_test_tolerant: bool,
+    /// JVM runtime languages the jar makes available on the classpath: a
+    /// `ContainedDeps` scala-library / kotlin-stdlib entry in the manifest, or
+    /// the runtime classes bundled loose in the jar. The provider signal.
+    pub provided_runtimes: BTreeSet<String>,
 }
 
 /// Diagnostic counters behind a classification -- logged via `tracing` and
@@ -124,6 +128,16 @@ pub struct JarBytecode {
     pub hard_refs: BTreeSet<String>,
     /// Referenced prefixes referenced only from conditional (integration) classes.
     pub optional_refs: BTreeSet<String>,
+    /// JVM runtime languages this jar needs on the classpath (`scala` / `kotlin`)
+    /// but does not itself provide. `STOP_PREFIXES` keeps these out of the
+    /// package-edge analysis -- they are not a mod -- so they are tracked here
+    /// separately: a modern-fork loader (Cleanroom) ships no Scala/Kotlin, so a
+    /// jar referencing one crashes at classload unless a provider is present.
+    pub needs_runtime: BTreeSet<String>,
+    /// JVM runtime languages this jar puts on the classpath for others: a
+    /// `ContainedDeps` scala-library / kotlin-stdlib, or the runtime classes
+    /// bundled loose. The provider side (Scalar for Scala 2.11).
+    pub provides_runtime: BTreeSet<String>,
     /// Derived side, or `None` when the signals do not decide it.
     pub side: Option<SideClass>,
     /// How solid the side verdict is; `None` when there is no side.
@@ -252,6 +266,13 @@ fn scan_signals(jar_bytes: &[u8]) -> JarSignals {
         if is_mixin_config_name(&name) {
             signals.mixin_configs += 1;
         }
+        // A jar that ships the runtime classes loose (`scala/...`, `kotlin/...`)
+        // provides that language to the classpath itself.
+        if name.ends_with(".class")
+            && let Some(lang) = runtime_lang(&name)
+        {
+            signals.provided_runtimes.insert(lang.to_string());
+        }
         match name.as_str() {
             "META-INF/MANIFEST.MF" => {
                 let size = entry.size();
@@ -259,6 +280,12 @@ fn scan_signals(jar_bytes: &[u8]) -> JarSignals {
                     let (coremod, tweaker) = manifest_markers(&raw);
                     signals.manifest_coremod = coremod;
                     signals.manifest_tweaker = tweaker;
+                    // A coremod that carries the runtime as `ContainedDeps`
+                    // (scala-library-*.jar, kotlin-stdlib-*.jar) provides it at
+                    // boot -- the Scalar mechanism.
+                    for lang in manifest_contained_runtimes(&raw) {
+                        signals.provided_runtimes.insert(lang);
+                    }
                 }
             }
             "fabric.mod.json" => {
@@ -301,6 +328,49 @@ pub(crate) fn manifest_markers(raw: &[u8]) -> (bool, bool) {
         }
     }
     (coremod, tweaker)
+}
+
+/// The JVM runtime language a class/package name belongs to (`scala` / `kotlin`)
+/// -- the two languages a legacy Forge jar needs on the classpath that a
+/// modern-fork loader does not bundle. `None` for everything else. These sit in
+/// `STOP_PREFIXES` (never a mod identity), so this is the only place they read
+/// as a signal rather than being dropped.
+fn runtime_lang(binary: &str) -> Option<&'static str> {
+    if starts_with_segment(binary, "scala") {
+        Some("scala")
+    } else if starts_with_segment(binary, "kotlin") {
+        Some("kotlin")
+    } else {
+        None
+    }
+}
+
+/// Runtime languages a jar bundles as Forge `ContainedDeps`: nested library
+/// jars named in the `ContainedDeps` main attribute, extracted onto the
+/// classpath by the jar's loading plugin at boot (how Scalar ships Scala 2.11).
+/// A `scala-library` / `scala-reflect` entry means scala; a `kotlin-stdlib` /
+/// `kotlin-runtime` / `kotlin-reflect` entry means kotlin.
+pub(crate) fn manifest_contained_runtimes(raw: &[u8]) -> BTreeSet<String> {
+    let text = String::from_utf8_lossy(raw);
+    let mut out = BTreeSet::new();
+    // ContainedDeps is a space-separated list; the manifest may wrap it across
+    // continuation lines (` ` at column 0), so scan the whole body for the jar
+    // names rather than a single line. Gate on the attribute being present so a
+    // stray mention of a scala jar elsewhere is not read as a provider.
+    let lower = text.to_ascii_lowercase();
+    if !lower.contains("containeddeps") {
+        return out;
+    }
+    if lower.contains("scala-library") || lower.contains("scala-reflect") {
+        out.insert("scala".to_string());
+    }
+    if lower.contains("kotlin-stdlib")
+        || lower.contains("kotlin-runtime")
+        || lower.contains("kotlin-reflect")
+    {
+        out.insert("kotlin".to_string());
+    }
+    out
 }
 
 /// A mixin configuration resource: `<anything>.mixins.json` or
@@ -453,11 +523,28 @@ pub(crate) fn aggregate(classes: &[ClassInfo], signals: &JarSignals) -> JarBytec
         optional_refs.remove(p);
     }
 
+    // Classpath runtime languages (scala/kotlin). Referenced but never an edge
+    // (STOP_PREFIXES), so gathered straight from the raw class references. A jar
+    // that provides the runtime itself does not also need it.
+    let provides_runtime: BTreeSet<String> = signals.provided_runtimes.clone();
+    let mut needs_runtime: BTreeSet<String> = BTreeSet::new();
+    for c in classes {
+        for r in &c.referenced {
+            if let Some(lang) = runtime_lang(r)
+                && !provides_runtime.contains(lang)
+            {
+                needs_runtime.insert(lang.to_string());
+            }
+        }
+    }
+
     let (side, side_confidence, match_policy, kind, evidence) = classify(classes, signals);
     JarBytecode {
         owned,
         hard_refs,
         optional_refs,
+        needs_runtime,
+        provides_runtime,
         side,
         side_confidence,
         match_policy,
@@ -761,6 +848,71 @@ mod tests {
         assert!(!is_platform("com/author/mod/Main"));
         // no false prefix match past a segment boundary
         assert!(!is_platform("javaxtra/Foo"));
+    }
+
+    #[test]
+    fn scala_reference_is_a_runtime_need_not_an_edge() {
+        // A bdew-style jar (BdLib/AE2Stuff) references scala/ at classload. The
+        // STOP_PREFIXES filter keeps it out of hard_refs, but it is a real
+        // classpath need a modern-fork loader will not satisfy on its own.
+        let classes = vec![ci(
+            "bdlib/network/Packet",
+            &["scala/collection/Seq", "cofh/api/energy/IEnergyHandler"],
+            false,
+        )];
+        let out = aggregate(&classes, &mod_signals());
+        assert!(out.needs_runtime.contains("scala"));
+        assert!(out.provides_runtime.is_empty());
+        // scala never reads as a dependency edge
+        assert!(!out.hard_refs.iter().any(|p| p.starts_with("scala")));
+        // an ordinary mod reference still resolves normally
+        assert!(out.hard_refs.contains("cofh/api"));
+    }
+
+    #[test]
+    fn kotlin_reference_is_a_runtime_need() {
+        let classes = vec![ci("mymod/Main", &["kotlin/jvm/internal/Intrinsics"], false)];
+        let out = aggregate(&classes, &mod_signals());
+        assert!(out.needs_runtime.contains("kotlin"));
+    }
+
+    #[test]
+    fn a_runtime_provider_does_not_also_need_it() {
+        // Scalar references scala from its own plugin classes but ships the
+        // runtime -- it is a provider, not a consumer, so it needs nothing.
+        let mut signals = JarSignals::default();
+        signals.provided_runtimes.insert("scala".to_string());
+        let classes = vec![ci(
+            "com/cleanroommc/scalar/Plugin",
+            &["scala/Predef"],
+            false,
+        )];
+        let out = aggregate(&classes, &signals);
+        assert!(out.provides_runtime.contains("scala"));
+        assert!(
+            out.needs_runtime.is_empty(),
+            "a provider is not also a consumer"
+        );
+    }
+
+    #[test]
+    fn contained_deps_manifest_reads_as_a_provider() {
+        let scalar = b"Manifest-Version: 1.0\r\nFMLCorePlugin: com.cleanroommc.scalar.ScalarLoadingPlugin\r\nContainedDeps: scala-library-2.11.1.jar scala-reflect-2.11.1.jar\r\n";
+        assert_eq!(
+            manifest_contained_runtimes(scalar),
+            BTreeSet::from(["scala".to_string()])
+        );
+        // no ContainedDeps -> not a provider, even if a scala jar is named elsewhere
+        let plain = b"Manifest-Version: 1.0\r\nName: scala-library-note\r\n";
+        assert!(manifest_contained_runtimes(plain).is_empty());
+    }
+
+    #[test]
+    fn runtime_lang_matches_at_segment_boundary() {
+        assert_eq!(runtime_lang("scala/collection/Seq"), Some("scala"));
+        assert_eq!(runtime_lang("kotlin/Unit"), Some("kotlin"));
+        assert_eq!(runtime_lang("scalaesque/Foo"), None);
+        assert_eq!(runtime_lang("net/minecraft/block/Block"), None);
     }
 
     #[test]

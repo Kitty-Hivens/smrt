@@ -81,6 +81,12 @@ pub struct JarSeed {
     // typed, version-ranged. Emitted for a non-Modrinth jar; the target modid,
     // its relation kind, and an optional version range.
     pub declared_deps: Vec<(String, RelKind, Option<String>)>,
+    // JVM runtime languages (scala/kotlin) the jar needs on the classpath but a
+    // modern-fork loader does not bundle, and those it provides itself. Emitted
+    // as `runtime:<lang>` capability requires/provides so the resolver flags a
+    // pack whose scala/kotlin mods have no provider (Scalar). See bytecode.rs.
+    pub needs_runtime: Vec<String>,
+    pub provides_runtime: Vec<String>,
 }
 
 /// One Modrinth version dependency as the seed carries it: the target project
@@ -733,6 +739,39 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
             )?
         {
             bridges_written += 1;
+        }
+
+        // Classpath runtime languages (scala/kotlin). Not a mod and never a
+        // package edge (STOP_PREFIXES), but a modern-fork loader ships no
+        // Scala/Kotlin, so a jar referencing one crashes at classload unless a
+        // provider is in the pack. Emitted as a `runtime:<lang>` capability --
+        // provides from the runtime carrier (Scalar), requires from every mod
+        // that needs it -- so the resolver's existing capability-satisfaction
+        // pass reports the gap. Ungated: it applies to cache and Modrinth jars
+        // alike, and Modrinth's curated deps never model a JVM-runtime need.
+        for rt in &jar.provides_runtime {
+            upsert::upsert_relation(
+                conn,
+                mod_id,
+                Some(mod_version_id),
+                &format!("runtime:{rt}"),
+                None,
+                RelKind::Provides,
+                Source::Inferred,
+                now,
+            )?;
+        }
+        for rt in &jar.needs_runtime {
+            upsert::upsert_relation(
+                conn,
+                mod_id,
+                Some(mod_version_id),
+                &format!("runtime:{rt}"),
+                None,
+                RelKind::Requires,
+                Source::Inferred,
+                now,
+            )?;
         }
 
         if let Some(pid) = jar.project_id.as_deref() {
@@ -1464,6 +1503,12 @@ pub async fn scan(
                             .collect()
                     })
                     .unwrap_or_default(),
+                needs_runtime: bc
+                    .map(|b| b.needs_runtime.iter().cloned().collect())
+                    .unwrap_or_default(),
+                provides_runtime: bc
+                    .map(|b| b.provides_runtime.iter().cloned().collect())
+                    .unwrap_or_default(),
                 sha1: sha,
             }
         })
@@ -1548,6 +1593,8 @@ mod tests {
                     kind: None,
                     modrinth_deps: vec![],
                     declared_deps: vec![],
+                    needs_runtime: vec![],
+                    provides_runtime: vec![],
                 },
                 JarSeed {
                     sha1: "sha_b".into(),
@@ -1574,6 +1621,8 @@ mod tests {
                     kind: None,
                     modrinth_deps: vec![],
                     declared_deps: vec![],
+                    needs_runtime: vec![],
+                    provides_runtime: vec![],
                 },
                 JarSeed {
                     sha1: "sha_noid".into(),
@@ -1600,6 +1649,8 @@ mod tests {
                     kind: None,
                     modrinth_deps: vec![],
                     declared_deps: vec![],
+                    needs_runtime: vec![],
+                    provides_runtime: vec![],
                 },
             ],
             packs: vec![PackSeed {
@@ -2058,6 +2109,8 @@ mod tests {
             kind: None,
             modrinth_deps: vec![],
             declared_deps: vec![],
+            needs_runtime: vec![],
+            provides_runtime: vec![],
         }
     }
 
@@ -2096,6 +2149,8 @@ mod tests {
             kind: Some("mod".into()),
             modrinth_deps: vec![],
             declared_deps: vec![],
+            needs_runtime: vec![],
+            provides_runtime: vec![],
         }
     }
 
@@ -2166,6 +2221,56 @@ mod tests {
         };
         let rep = r.with_txn(|c| write_scan(c, &plain, "T1")).unwrap();
         assert_eq!(rep.loader_bridges, 0);
+    }
+
+    // The scala/kotlin classpath need STOP_PREFIXES hides from the edge graph:
+    // a jar that references the runtime emits `requires runtime:<lang>`, its
+    // carrier emits `provides runtime:<lang>`, and the resolver's existing
+    // capability pass reconciles them -- reporting the gap when no carrier is in
+    // the pack (the Scala-on-Cleanroom crash, caught before boot).
+    #[test]
+    fn write_scan_emits_runtime_capability_edges() {
+        let r = Registry::open_in_memory().unwrap();
+        let mut needer = dseed("sha_bdlib", "bdlib", &["net/bdew/lib"], &[], &[], None);
+        needer.needs_runtime = vec!["scala".into()];
+        let mut carrier = dseed(
+            "sha_scalar",
+            "scalar",
+            &["com/cleanroommc/scalar"],
+            &[],
+            &[],
+            None,
+        );
+        carrier.provides_runtime = vec!["scala".into()];
+        let scan = ScanData {
+            jars: vec![needer, carrier],
+            packs: vec![],
+            modrinth_modids_learned: 0,
+            dep_project_slugs: Default::default(),
+            project_envs: Default::default(),
+            modrinth_leg_ok: true,
+        };
+        r.with_txn(|c| write_scan(c, &scan, "T0")).unwrap();
+
+        let edges = |modid: &str| {
+            r.with_conn(|c| {
+                let id = queries::mod_id_for_alias(c, "modid", modid)?.unwrap();
+                queries::relations_from(c, id)
+            })
+            .unwrap()
+        };
+        assert!(
+            edges("bdlib")
+                .iter()
+                .any(|e| e.kind == RelKind::Requires && e.target == "runtime:scala"),
+            "the scala mod requires the runtime capability"
+        );
+        assert!(
+            edges("scalar")
+                .iter()
+                .any(|e| e.kind == RelKind::Provides && e.target == "runtime:scala"),
+            "the carrier provides it"
+        );
     }
 
     /// A non-Modrinth jar seed carrying modern declared deps (modid, kind, range).
