@@ -31,7 +31,7 @@ toml_edit = { version = "0.22", features = ["serde"] }
 rust-embed = "8"
 async-stream = "0.3"
 ts-rs = { version = "10", features = ["no-serde-warnings"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 utoipa = { version = "5", features = ["preserve_order"] }
 
 [dev-dependencies]
