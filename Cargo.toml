@@ -26,7 +26,7 @@ sha1 = "0.11"
 hex = "0.4"
 rand = "0.8"
 percent-encoding = "2.3.2"
-toml = "0.8"
+toml = "1"
 toml_edit = { version = "0.25", features = ["serde"] }
 rust-embed = "8"
 async-stream = "0.3"
