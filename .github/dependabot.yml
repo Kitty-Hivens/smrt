@@ -7,6 +7,12 @@ updates:
     groups:
       cargo:
         update-types: [minor, patch]
+    ignore:
+      # rusqlite 0.40 pulls libsqlite3-sys 0.38, whose build.rs uses the unstable
+      # cfg_select feature and fails to compile on stable Rust. Hold the major
+      # until libsqlite3-sys ships a build script that builds on stable.
+      - dependency-name: rusqlite
+        update-types: [version-update:semver-major]
   - package-ecosystem: npm
     directory: /web
     schedule:
