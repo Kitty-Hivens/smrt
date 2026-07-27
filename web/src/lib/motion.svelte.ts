@@ -1,10 +1,9 @@
 // Motion primitives shared by the panel.
 //
-// The visual language here is flat and mechanical -- borders rather than
-// elevation, contrast rather than colour -- so movement follows: short, linear
-// -out easings, no overshoot, no bounce. Anything that springs would read as a
-// different product. Durations and easings live in app.css as tokens; these are
-// the behaviours that need JavaScript.
+// Movement decelerates to a stop, short and calm. Large surfaces do not
+// overshoot; small controls may settle a few pixels via --ease-out-back (see
+// app.css). Durations and easings live in app.css as tokens; these are the
+// behaviours that need JavaScript.
 
 /// Requests currently in flight, for the shell's activity wire. A counter
 /// rather than a boolean: overlapping requests must not have the first one to
