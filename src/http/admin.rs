@@ -8,7 +8,7 @@ use crate::registry::model::GraphData;
 use crate::state::AppState;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, HeaderName, StatusCode, header};
 use axum::middleware::from_fn_with_state;
 use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
@@ -724,23 +724,104 @@ async fn list_authoring_packs(
     }))
 }
 
+// ── config revisions (optimistic concurrency) ───────────────────────────────
+//
+// Config edits used to be a plain read-modify-write: two accounts editing one
+// pack each saved against their own snapshot, and whoever saved second
+// overwrote the first with no error and no trace (#52). A config now carries an
+// `ETag` of its authored content, and a save may state which revision it edited
+// via `If-Match`. A save whose base no longer matches disk is refused instead of
+// applied, so the loser re-reads and reapplies rather than losing the work
+// silently. The header is optional: a script or CLI that sends none writes
+// unconditionally, exactly as before.
+
+/// What a conditional write requires of the stored config: any config at all
+/// (`If-Match: *`), or one specific revision.
+enum Precondition {
+    Any,
+    Rev(String),
+}
+
+/// The `If-Match` precondition on this request, if it carries one. Entity tags
+/// are opaque strings here, so the quoting and any weak-validator prefix are
+/// stripped and what remains is compared verbatim. Only the single-tag form is
+/// understood -- a tag list is not a shape this API's own clients produce, and
+/// treating one as a mismatch refuses the write rather than waving it through.
+fn precondition(headers: &HeaderMap) -> Option<Precondition> {
+    let raw = headers.get(header::IF_MATCH)?.to_str().ok()?.trim();
+    if raw == "*" {
+        return Some(Precondition::Any);
+    }
+    let tag = raw
+        .strip_prefix("W/")
+        .unwrap_or(raw)
+        .trim_matches('"')
+        .to_string();
+    (!tag.is_empty()).then_some(Precondition::Rev(tag))
+}
+
+/// Whether a conditional write may proceed against the revision now on disk
+/// (`None` = the pack has no stored config).
+fn check_precondition(
+    pre: Option<&Precondition>,
+    current: Option<&str>,
+    pack_id: &str,
+) -> Result<(), ApiError> {
+    match (pre, current) {
+        (None, _) => Ok(()),
+        (Some(Precondition::Any), Some(_)) => Ok(()),
+        (Some(Precondition::Rev(want)), Some(now)) if want == now => Ok(()),
+        (Some(Precondition::Rev(want)), Some(now)) => Err(ApiError::Conflict(format!(
+            "pack {pack_id:?} was saved by someone else since this edit began \
+             (edited {}, now {}); reload the config and reapply the change",
+            short_rev(want),
+            short_rev(now)
+        ))),
+        (Some(_), None) => Err(ApiError::Conflict(format!(
+            "pack {pack_id:?} has no stored config to match against; it was deleted or never existed"
+        ))),
+    }
+}
+
+/// A revision in an operator-facing message: enough to tell two apart, short
+/// enough to read.
+fn short_rev(rev: &str) -> &str {
+    rev.get(..8).unwrap_or(rev)
+}
+
+/// The config's revision, or an internal error -- a config that cannot be
+/// serialized has no revision to compare, and answering with one that always
+/// matches would put the silent overwrite back.
+fn rev_of(cfg: &PackConfig) -> Result<String, ApiError> {
+    cfg.edit_rev()
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("config rev: {e}")))
+}
+
+/// The `ETag` response header carrying a config revision.
+fn etag(rev: &str) -> [(HeaderName, String); 1] {
+    [(header::ETAG, format!("\"{rev}\""))]
+}
+
 async fn get_pack_config(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
-) -> Result<Json<PackConfig>, ApiError> {
+) -> Result<([(HeaderName, String); 1], Json<PackConfig>), ApiError> {
     if !super::auth::may_author(&identity, &pack_id) {
         return Err(ApiError::Forbidden);
     }
-    Ok(Json(state.storage.load_pack_config(&pack_id).await?))
+    let cfg = state.storage.load_pack_config(&pack_id).await?;
+    let rev = rev_of(&cfg)?;
+    Ok((etag(&rev), Json(cfg)))
 }
 
 async fn put_pack_config(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
+    headers: HeaderMap,
     Json(mut cfg): Json<PackConfig>,
-) -> Result<(StatusCode, Json<PackConfig>), ApiError> {
+) -> Result<(StatusCode, [(HeaderName, String); 1], Json<PackConfig>), ApiError> {
     // The path id is authoritative; reject a body that disagrees so a
     // mis-targeted PUT can't write one pack's config under another's id.
     if cfg.pack_id != pack_id {
@@ -758,6 +839,12 @@ async fn put_pack_config(
     if let Some(dup) = cfg.duplicate_declaration() {
         return Err(ApiError::BadRequest(dup));
     }
+    let pre = precondition(&headers);
+    // From here to the write, this pack's config is ours alone: the stored
+    // config is read, its server-controlled fields and pulled dependencies are
+    // carried over, and the result is written. Two of those interleaving is the
+    // same lost update `If-Match` refuses, arriving from the other side.
+    let _guard = state.storage.lock_pack_config(&pack_id).await;
     // owner / tier / visibility / fork_of are server-controlled and never trusted
     // from the client. On an edit, carry them from the stored config so a member
     // can't reassign ownership, self-promote to official, or publish. On create,
@@ -765,6 +852,7 @@ async fn put_pack_config(
     // owned by that uid; a flat id is an official published operator pack.
     match state.storage.load_pack_config(&pack_id).await {
         Ok(existing) => {
+            check_precondition(pre.as_ref(), Some(&rev_of(&existing)?), &pack_id)?;
             cfg.owner = existing.owner;
             cfg.tier = existing.tier;
             cfg.visibility = existing.visibility;
@@ -776,21 +864,24 @@ async fn put_pack_config(
             // nothing declared reaches them.
             crate::authoring::depfill::merge_pulled(&existing, &mut cfg);
         }
-        Err(_) => match super::auth::pack_namespace_uid(&pack_id) {
-            Some(uid) => {
-                super::auth::require_terms(&state, identity.uid).await?;
-                cfg.owner = uid;
-                cfg.tier = PackTier::Community;
-                cfg.visibility = Visibility::Draft;
-                cfg.fork_of = None;
+        Err(_) => {
+            check_precondition(pre.as_ref(), None, &pack_id)?;
+            match super::auth::pack_namespace_uid(&pack_id) {
+                Some(uid) => {
+                    super::auth::require_terms(&state, identity.uid).await?;
+                    cfg.owner = uid;
+                    cfg.tier = PackTier::Community;
+                    cfg.visibility = Visibility::Draft;
+                    cfg.fork_of = None;
+                }
+                None => {
+                    cfg.owner = identity.uid;
+                    cfg.tier = PackTier::Official;
+                    cfg.visibility = Visibility::Published;
+                    cfg.fork_of = None;
+                }
             }
-            None => {
-                cfg.owner = identity.uid;
-                cfg.tier = PackTier::Official;
-                cfg.visibility = Visibility::Published;
-                cfg.fork_of = None;
-            }
-        },
+        }
     }
     // Pull in each mod's missing hard dependencies (Modrinth first, the mirror's
     // own cache second) and record the resolved requires graph, so the operator
@@ -814,6 +905,9 @@ async fn put_pack_config(
         tracing::warn!(pack_id = %pack_id, error = %e, "dependency auto-fill failed; saving config as-is");
     }
     state.storage.save_pack_config(&pack_id, &cfg).await?;
+    // the revision of what was just stored, so the client that saved it edits
+    // on from there without a re-read
+    let rev = rev_of(&cfg)?;
     audit(
         &state,
         &identity,
@@ -822,7 +916,7 @@ async fn put_pack_config(
         Some(&format!("{} mods", cfg.mods.len())),
     )
     .await;
-    Ok((StatusCode::CREATED, Json(cfg)))
+    Ok((StatusCode::CREATED, etag(&rev), Json(cfg)))
 }
 
 #[derive(serde::Deserialize)]
@@ -839,7 +933,7 @@ async fn revert_pack_config(
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
     Query(p): Query<RevertParams>,
-) -> Result<Json<PackConfig>, ApiError> {
+) -> Result<([(HeaderName, String); 1], Json<PackConfig>), ApiError> {
     if !super::auth::may_author(&identity, &pack_id) {
         return Err(ApiError::Forbidden);
     }
@@ -849,7 +943,13 @@ async fn revert_pack_config(
         .await?;
     let summary = state.storage.load_pack_summary(&pack_id).await?;
     let cfg = reconstruct_config(&manifest, &summary);
+    // A revert is a deliberate overwrite of whatever is there, so it states no
+    // precondition -- but it still takes the lock, so it cannot land in the
+    // middle of a save's read-modify-write, and it answers with the revision it
+    // produced so the editor keeps saving conditionally afterwards.
+    let _guard = state.storage.lock_pack_config(&pack_id).await;
     state.storage.save_pack_config(&pack_id, &cfg).await?;
+    let rev = rev_of(&cfg)?;
     audit(
         &state,
         &identity,
@@ -858,7 +958,7 @@ async fn revert_pack_config(
         Some(&p.version),
     )
     .await;
-    Ok(Json(cfg))
+    Ok((etag(&rev), Json(cfg)))
 }
 
 #[derive(serde::Deserialize)]
@@ -977,7 +1077,62 @@ struct StaticListing {
 
 #[cfg(test)]
 mod tests {
-    use super::github_asset_url;
+    use super::{Precondition, check_precondition, github_asset_url, precondition};
+    use axum::http::{HeaderMap, HeaderValue, header};
+
+    fn headers(if_match: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(header::IF_MATCH, HeaderValue::from_str(if_match).unwrap());
+        h
+    }
+
+    #[test]
+    fn if_match_reads_quoted_weak_and_wildcard_tags() {
+        // what the panel echoes back from an ETag, and what a hand-written
+        // request is likely to carry, must mean the same revision
+        for raw in ["\"abc123\"", "abc123", "W/\"abc123\"", "  \"abc123\" "] {
+            match precondition(&headers(raw)) {
+                Some(Precondition::Rev(rev)) => assert_eq!(rev, "abc123", "raw {raw:?}"),
+                _ => panic!("expected a revision for {raw:?}"),
+            }
+        }
+        assert!(matches!(
+            precondition(&headers("*")),
+            Some(Precondition::Any)
+        ));
+        assert!(precondition(&HeaderMap::new()).is_none(), "header absent");
+        assert!(precondition(&headers("\"\"")).is_none(), "empty tag");
+    }
+
+    #[test]
+    fn a_stale_base_is_refused_and_a_current_one_passes() {
+        let stale = Precondition::Rev("aaaa1111".into());
+        let current = Precondition::Rev("bbbb2222".into());
+
+        assert!(check_precondition(None, Some("bbbb2222"), "Industrial").is_ok());
+        assert!(check_precondition(Some(&current), Some("bbbb2222"), "Industrial").is_ok());
+        assert!(
+            check_precondition(Some(&Precondition::Any), Some("bbbb2222"), "Industrial").is_ok()
+        );
+
+        let err = check_precondition(Some(&stale), Some("bbbb2222"), "Industrial")
+            .expect_err("a base that no longer matches disk is a conflict");
+        let msg = err.to_string();
+        assert!(msg.contains("Industrial"), "names the pack: {msg}");
+        assert!(
+            msg.contains("aaaa1111") && msg.contains("bbbb2222"),
+            "{msg}"
+        );
+
+        // a config that is gone answers a conditional write with a conflict,
+        // not a silent create over the top of a delete
+        assert!(check_precondition(Some(&stale), None, "Industrial").is_err());
+        assert!(check_precondition(Some(&Precondition::Any), None, "Industrial").is_err());
+        assert!(
+            check_precondition(None, None, "Industrial").is_ok(),
+            "an unconditional first save still creates"
+        );
+    }
 
     #[test]
     fn github_url_accepts_plain_repo_and_simple_names() {

@@ -75,6 +75,21 @@ CLI equivalents: `smrt-pack bootstrap | validate | depfill | build
 --channel ... | enrich-mcmod | infer-requires | apply-role-table |
 upload-static | reconstruct-config`.
 
+### Two people in one pack
+
+`GET .../config` answers with an `ETag` -- a revision of the config's authored
+content. A save that sends it back as `If-Match` is applied only while the
+stored config still matches; otherwise it is refused with 409 and nothing is
+written. The panel saves this way, so a second editor is told their base is
+stale instead of overwriting the first, and offers the two ways out: take the
+stored version, or save over it (which re-reads the current revision and
+writes against that, so it stays a conditional write).
+
+The revision covers what a client authors and nothing else -- publishing a
+pack, or depfill appending a pulled dependency, does not invalidate an edit
+someone has in flight. A request that sends no `If-Match` writes
+unconditionally, which is what the CLI and any script does.
+
 ## Harvest
 
 Runs after every real build and cache upload (poked), or on demand:

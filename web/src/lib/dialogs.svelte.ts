@@ -20,7 +20,27 @@ interface PromptReq {
   resolve: (v: string | null) => void;
 }
 
-type Req = ConfirmReq | PromptReq;
+/// One way out of a `choose`. `danger` marks the destructive one so it reads as
+/// the deliberate act it is.
+export interface ChoiceOption {
+  value: string;
+  label: string;
+  danger?: boolean;
+}
+
+/// A question with more than two answers, where confirm/cancel would have to
+/// hide one of them behind an unlabelled button -- a save conflict, where
+/// loading the server's version, overwriting it, and neither are three
+/// different decisions.
+interface ChooseReq {
+  kind: 'choose';
+  title: string;
+  message: string;
+  options: ChoiceOption[];
+  resolve: (v: string | null) => void;
+}
+
+type Req = ConfirmReq | PromptReq | ChooseReq;
 
 let active = $state<Req | null>(null);
 
@@ -28,7 +48,7 @@ let active = $state<Req | null>(null);
 // the superseded promise never hangs (and its caller's busy flag clears).
 function settlePending() {
   if (active?.kind === 'confirm') active.resolve(false);
-  else if (active?.kind === 'prompt') active.resolve(null);
+  else if (active) active.resolve(null);
 }
 
 export const dialogs = {
@@ -66,6 +86,22 @@ export const dialogs = {
     });
   },
 
+  choose(
+    message: string,
+    opts: { title?: string; options: ChoiceOption[] },
+  ): Promise<string | null> {
+    return new Promise((resolve) => {
+      settlePending();
+      active = {
+        kind: 'choose',
+        title: opts.title ?? t('dialog.confirmTitle'),
+        message,
+        options: opts.options,
+        resolve,
+      };
+    });
+  },
+
   resolveConfirm(value: boolean): void {
     const a = active;
     active = null;
@@ -76,5 +112,11 @@ export const dialogs = {
     const a = active;
     active = null;
     if (a?.kind === 'prompt') a.resolve(value);
+  },
+
+  resolveChoice(value: string | null): void {
+    const a = active;
+    active = null;
+    if (a?.kind === 'choose') a.resolve(value);
   },
 };

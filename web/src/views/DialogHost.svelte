@@ -17,6 +17,7 @@
   function cancel() {
     if (!a) return;
     if (a.kind === 'confirm') dialogs.resolveConfirm(false);
+    else if (a.kind === 'choose') dialogs.resolveChoice(null);
     else dialogs.resolvePrompt(null);
   }
   function accept() {
@@ -37,7 +38,7 @@
     <Dialog.Content class="dlg panel">
       {#if a}
         <Dialog.Title class="ttl">{a.title}</Dialog.Title>
-        {#if a.kind === 'confirm'}
+        {#if a.kind === 'confirm' || a.kind === 'choose'}
           <Dialog.Description class="msg">{a.message}</Dialog.Description>
         {:else}
           <label class="fld">
@@ -53,13 +54,27 @@
         {/if}
         <div class="actions">
           <button onclick={cancel}>{t('dialog.cancel')}</button>
-          <button
-            class="primary"
-            class:danger={a.kind === 'confirm' && a.danger}
-            onclick={accept}
-          >
-            {a.kind === 'confirm' && a.danger ? t('dialog.delete') : t('dialog.ok')}
-          </button>
+          {#if a.kind === 'choose'}
+            <!-- Every way out is a named button: which version wins is the
+                 question, and an unlabelled OK cannot ask it. -->
+            {#each a.options as opt}
+              <button
+                class="primary"
+                class:danger={opt.danger}
+                onclick={() => dialogs.resolveChoice(opt.value)}
+              >
+                {opt.label}
+              </button>
+            {/each}
+          {:else}
+            <button
+              class="primary"
+              class:danger={a.kind === 'confirm' && a.danger}
+              onclick={accept}
+            >
+              {a.kind === 'confirm' && a.danger ? t('dialog.delete') : t('dialog.ok')}
+            </button>
+          {/if}
         </div>
       {/if}
     </Dialog.Content>

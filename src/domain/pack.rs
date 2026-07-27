@@ -247,6 +247,25 @@ pub struct PackConfig {
 }
 
 impl PackConfig {
+    /// Revision of everything a client authors in this config, for the
+    /// conditional write on the config PUT.
+    ///
+    /// Deliberately not a hash of the stored file. `owner` / `tier` /
+    /// `visibility` / `fork_of` are server-controlled and depfill-appended
+    /// `pulled` mods are server-managed, so a client can never be the cause of
+    /// a change in them -- publishing a pack, or a fill pulling in a library,
+    /// must not make the next edit look like it lost a race. What remains is
+    /// exactly what two editors can collide on.
+    pub fn edit_rev(&self) -> Result<String, serde_json::Error> {
+        let mut projected = self.clone();
+        projected.owner = 0;
+        projected.tier = PackTier::Official;
+        projected.visibility = Visibility::Published;
+        projected.fork_of = None;
+        projected.mods.retain(|m| !m.pulled);
+        Ok(crate::storage::sha1_hex(&serde_json::to_vec(&projected)?))
+    }
+
     /// The first duplicate declaration in `mods`, described for an error
     /// message, or `None` when every row is distinct.
     ///
@@ -523,5 +542,60 @@ mod tests {
         same_dest.assets = vec![asset("resourcepacks/x.zip"), asset("resourcepacks/x.zip")];
         let msg = same_dest.duplicate_declaration().expect("same dest twice");
         assert!(msg.contains("resourcepacks/x.zip"), "got {msg}");
+    }
+
+    // The conditional-write rev must move on exactly what a client can author,
+    // so a save is rejected when someone else edited the same fields, and only
+    // then.
+    #[test]
+    fn edit_rev_tracks_authored_content() {
+        let base = config_with(vec![mr("jei.jar", "PROJ_JEI", "v1")]);
+        let rev = base.edit_rev().unwrap();
+        assert_eq!(
+            rev,
+            base.clone().edit_rev().unwrap(),
+            "stable for one config"
+        );
+
+        let mut renamed = base.clone();
+        renamed.mods[0].filename = "jei-1.19.jar".into();
+        assert_ne!(rev, renamed.edit_rev().unwrap(), "a renamed row is an edit");
+
+        let mut repinned = base.clone();
+        repinned.mods[0].source = SourceDecl::Modrinth {
+            project_id: "PROJ_JEI".into(),
+            version_id: "v2".into(),
+        };
+        assert_ne!(rev, repinned.edit_rev().unwrap(), "a re-pin is an edit");
+
+        let mut tagline = base.clone();
+        tagline.tagline = "now with more gears".into();
+        assert_ne!(rev, tagline.edit_rev().unwrap(), "a field edit is an edit");
+
+        let mut added = base.clone();
+        added.mods.push(mr("c.jar", "PROJ_C", "v1"));
+        assert_ne!(rev, added.edit_rev().unwrap(), "an added mod is an edit");
+    }
+
+    // The other half of the rule: server-side housekeeping is not a conflict.
+    // Publishing a pack, or a dependency fill appending a library, must not
+    // reject the edit someone had in flight.
+    #[test]
+    fn edit_rev_ignores_server_controlled_fields_and_pulled_mods() {
+        let base = config_with(vec![mr("jei.jar", "PROJ_JEI", "v1")]);
+        let rev = base.edit_rev().unwrap();
+
+        let mut published = base.clone();
+        published.visibility = Visibility::Unlisted;
+        published.tier = PackTier::Community;
+        published.owner = 42;
+        published.fork_of = Some("Industrial".into());
+        assert_eq!(rev, published.edit_rev().unwrap(), "server fields excluded");
+
+        let mut filled = base.clone();
+        let mut dep = mr("redstoneflux.jar", "PROJ_RF", "v1");
+        dep.pulled = true;
+        filled.mods.push(dep);
+        assert_eq!(rev, filled.edit_rev().unwrap(), "pulled deps excluded");
     }
 }
