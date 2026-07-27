@@ -24,7 +24,7 @@ jobs:
     name: cargo fmt + clippy + test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The smrt binary embeds the built panel (web/dist) via rust-embed, so
       # the frontend must be built before any cargo step compiles the crate.
@@ -82,7 +82,7 @@ jobs:
     # auto-proceeds; the gate is opt-in security.
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Build the embedded panel before cargo (the release binary embeds it).
       - uses: pnpm/action-setup@v4
