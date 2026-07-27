@@ -26,9 +26,9 @@ pub fn router(state: AppState) -> Router {
 fn operator_router(state: AppState) -> Router {
     Router::new()
         .route("/v1/servers", post(save_server))
-        .route("/v1/servers/:server_id", delete(delete_server))
+        .route("/v1/servers/{server_id}", delete(delete_server))
         .route(
-            "/v1/cache/:prefix/:filename",
+            "/v1/cache/{prefix}/{filename}",
             put(put_cache_jar).delete(delete_cache_jar),
         )
         .route("/v1/authoring/packs", get(list_authoring_packs))
@@ -36,16 +36,16 @@ fn operator_router(state: AppState) -> Router {
         .route("/v1/featured", post(save_featured))
         .route("/v1/cache/removed", get(list_removed))
         .route(
-            "/v1/cache/removed/:sha1",
+            "/v1/cache/removed/{sha1}",
             post(takedown_jar).delete(restore_jar),
         )
         .route("/v1/cache/usage", get(list_cache_usage))
         .route("/v1/cache/github", post(ingest_github))
         .route("/v1/users", get(list_users))
-        .route("/v1/users/:uid/role", post(set_user_role))
+        .route("/v1/users/{uid}/role", post(set_user_role))
         .route("/v1/uploads", get(list_uploads))
-        .route("/v1/uploads/:id/approve", post(approve_upload))
-        .route("/v1/uploads/:id/reject", post(reject_upload))
+        .route("/v1/uploads/{id}/approve", post(approve_upload))
+        .route("/v1/uploads/{id}/reject", post(reject_upload))
         .route("/v1/audit", get(get_audit_log))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BODY))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
@@ -59,30 +59,30 @@ fn operator_router(state: AppState) -> Router {
 fn authoring_router(state: AppState) -> Router {
     Router::new()
         .route(
-            "/v1/authoring/packs/:pack_id/static/*rel_path",
+            "/v1/authoring/packs/{pack_id}/static/{*rel_path}",
             put(put_pack_static).delete(delete_pack_static),
         )
-        .route("/v1/authoring/packs/:pack_id/static", get(list_pack_static))
+        .route("/v1/authoring/packs/{pack_id}/static", get(list_pack_static))
         .route(
-            "/v1/authoring/packs/:pack_id/config",
+            "/v1/authoring/packs/{pack_id}/config",
             get(get_pack_config).put(put_pack_config),
         )
-        .route("/v1/authoring/packs/:pack_id", delete(delete_pack))
+        .route("/v1/authoring/packs/{pack_id}", delete(delete_pack))
         .route(
-            "/v1/authoring/packs/:pack_id/visibility",
+            "/v1/authoring/packs/{pack_id}/visibility",
             put(set_pack_visibility),
         )
         .route(
-            "/v1/authoring/packs/:pack_id/config/revert",
+            "/v1/authoring/packs/{pack_id}/config/revert",
             post(revert_pack_config),
         )
         .route(
-            "/v1/authoring/packs/:pack_id/duplicate",
+            "/v1/authoring/packs/{pack_id}/duplicate",
             post(duplicate_pack),
         )
-        .route("/v1/authoring/packs/:pack_id/validate", post(validate_pack))
-        .route("/v1/authoring/packs/:pack_id/resolve", get(pack_resolve))
-        .route("/v1/authoring/packs/:pack_id/graph", get(pack_graph_view))
+        .route("/v1/authoring/packs/{pack_id}/validate", post(validate_pack))
+        .route("/v1/authoring/packs/{pack_id}/resolve", get(pack_resolve))
+        .route("/v1/authoring/packs/{pack_id}/graph", get(pack_graph_view))
         .route("/v1/modrinth/search", get(modrinth_search))
         .route("/v1/modrinth/versions", get(modrinth_versions))
         .route("/v1/modrinth/icon", get(modrinth_icon))

@@ -17,7 +17,7 @@ struct Assets;
 pub fn router() -> Router {
     Router::new()
         .route("/", get(index))
-        .route("/assets/*path", get(asset))
+        .route("/assets/{{*path}}", get(asset))
         // The panel owns its URLs: a section is a path, and a mod page is a
         // shareable link. Any path the API does not claim serves the app shell,
         // which then reads the URL -- so a reload, a bookmark or the mouse's

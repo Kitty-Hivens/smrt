@@ -23,7 +23,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/me/packs", get(my_packs))
         .route("/v1/me/authoring", get(my_authoring))
-        .route("/v1/me/packs/:pack_id/uploads", post(upload_jar))
+        .route("/v1/me/packs/{pack_id}/uploads", post(upload_jar))
         .route("/v1/me/uploads", get(my_uploads))
         .route("/v1/me/forks", post(fork_pack))
         .route("/v1/me/accept-terms", post(accept_terms))

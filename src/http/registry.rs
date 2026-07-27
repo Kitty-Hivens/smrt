@@ -41,7 +41,7 @@ pub fn router(state: AppState) -> Router {
 fn member_routes(state: AppState) -> Router {
     Router::new()
         .route("/v1/registry/mods", get(get_mods))
-        .route("/v1/registry/mod-releases/:mod_id", get(get_releases_by_id))
+        .route("/v1/registry/mod-releases/{mod_id}", get(get_releases_by_id))
         .route("/v1/registry/graph", get(get_graph))
         .route("/v1/registry/graph/slices", get(get_graph_slices))
         .route("/v1/registry/modrinth-names", get(get_modrinth_names))
@@ -63,22 +63,22 @@ fn operator_routes(state: AppState) -> Router {
         .route("/v1/registry/eligible", get(get_eligible))
         // registry browser: versions by surrogate id, builds (the faceted mod list
         // and a mod's releases are read-only and open to members -- see below)
-        .route("/v1/registry/mod-versions/:mod_id", get(get_versions_by_id))
+        .route("/v1/registry/mod-versions/{mod_id}", get(get_versions_by_id))
         .route("/v1/registry/builds", get(get_builds))
         .route(
-            "/v1/registry/builds/:pack_id/:pack_version",
+            "/v1/registry/builds/{pack_id}/{pack_version}",
             get(get_build_mods),
         )
         .route(
-            "/v1/registry/builds/:pack_id/:pack_version/assets",
+            "/v1/registry/builds/{pack_id}/{pack_version}/assets",
             get(get_build_assets),
         )
         .route(
-            "/v1/registry/mods/:alias_source/:external_key",
+            "/v1/registry/mods/{alias_source}/{external_key}",
             get(get_mod_versions),
         )
         .route(
-            "/v1/registry/mods/:alias_source/:external_key/uses",
+            "/v1/registry/mods/{alias_source}/{external_key}/uses",
             get(get_mod_uses),
         )
         .route("/v1/registry/backup", post(post_backup))
@@ -87,14 +87,14 @@ fn operator_routes(state: AppState) -> Router {
         .route("/v1/registry/unassigned", get(get_unassigned))
         // repackage (tamper) diff: what a self-hosted jar changed vs its genuine
         // Modrinth counterpart. Read-only.
-        .route("/v1/registry/files/:sha1/repack-diff", get(get_repack_diff))
+        .route("/v1/registry/files/{sha1}/repack-diff", get(get_repack_diff))
         // cosmetic: canonical name / slug, nothing the resolver reads
-        .route("/v1/registry/mod-meta/:mod_id", put(put_mod_rename))
+        .route("/v1/registry/mod-meta/{mod_id}", put(put_mod_rename))
         // Naming a cached jar (its mod, version, channel, loaders/mc). It does
         // feed the derivation, but it is the operator's routine job of putting a
         // name to a jar the mirror already holds, not a surgical override of it,
         // so it sits at admin rather than the debug rung (#13).
-        .route("/v1/registry/files/:sha1/identity", put(put_file_identity))
+        .route("/v1/registry/files/{sha1}/identity", put(put_file_identity))
         .layer(from_fn_with_state(state.clone(), super::auth::require_auth))
         .with_state(state)
 }
@@ -107,12 +107,12 @@ fn operator_routes(state: AppState) -> Router {
 fn debug_routes(state: AppState) -> Router {
     Router::new()
         .route("/v1/registry/conflicts", post(post_conflict))
-        .route("/v1/registry/releases/:release_id", put(put_release_edit))
+        .route("/v1/registry/releases/{release_id}", put(put_release_edit))
         .route("/v1/registry/merge", post(post_merge))
         .route("/v1/registry/relations", post(post_relation))
         // classification override: moves the side/policy the required
         // derivation and the client invariant ride on
-        .route("/v1/registry/files/:sha1/class", put(put_file_class))
+        .route("/v1/registry/files/{sha1}/class", put(put_file_class))
         .layer(from_fn_with_state(
             state.clone(),
             super::auth::require_debug,

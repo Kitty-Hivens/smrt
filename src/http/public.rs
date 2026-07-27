@@ -17,31 +17,31 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/packs", get(list_packs))
-        .route("/v1/packs/:pack_id", get(get_pack_summary))
-        // Static segments win over dynamic in axum 0.7, so order does not
-        // matter for /manifest/versions vs /manifest/:version, but keeping
+        .route("/v1/packs/{pack_id}", get(get_pack_summary))
+        // Static segments win over dynamic in axum 0.8, so order does not
+        // matter for /manifest/versions vs /manifest/{version}, but keeping
         // the more specific routes first matches the spec ordering.
-        .route("/v1/packs/:pack_id/manifest", get(get_latest_manifest))
+        .route("/v1/packs/{pack_id}/manifest", get(get_latest_manifest))
         .route(
-            "/v1/packs/:pack_id/manifest/versions",
+            "/v1/packs/{pack_id}/manifest/versions",
             get(list_manifest_versions),
         )
         .route(
-            "/v1/packs/:pack_id/manifest/:version",
+            "/v1/packs/{pack_id}/manifest/{version}",
             get(get_manifest_version),
         )
-        .route("/v1/packs/:pack_id/diff", get(get_pack_diff))
-        .route("/v1/packs/:pack_id/static/*rel_path", get(get_pack_static))
+        .route("/v1/packs/{pack_id}/diff", get(get_pack_diff))
+        .route("/v1/packs/{pack_id}/static/{{*rel_path}}", get(get_pack_static))
         .route("/v1/servers", get(list_servers))
-        .route("/v1/servers/:server_id", get(get_server))
+        .route("/v1/servers/{server_id}", get(get_server))
         .route("/v1/featured", get(get_featured))
-        .route("/v1/cache/:prefix/:filename", get(get_cache_jar))
-        .route("/v1/cache/icon/:sha1", get(get_cache_icon))
+        .route("/v1/cache/{prefix}/{filename}", get(get_cache_jar))
+        .route("/v1/cache/icon/{sha1}", get(get_cache_icon))
         .route("/v1/cache/inventory", get(get_cache_inventory))
         .route("/v1/community", get(list_community))
-        .route("/v1/mods/:key", get(get_mod_detail))
-        .route("/v1/files/:sha1", get(get_file_detail))
-        .route("/v1/users/:uid/avatar", get(get_user_avatar))
+        .route("/v1/mods/{key}", get(get_mod_detail))
+        .route("/v1/files/{sha1}", get(get_file_detail))
+        .route("/v1/users/{uid}/avatar", get(get_user_avatar))
         .with_state(state)
 }
 
