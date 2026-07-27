@@ -13,6 +13,11 @@ updates:
       # until libsqlite3-sys ships a build script that builds on stable.
       - dependency-name: rusqlite
         update-types: [version-update:semver-major]
+      # rand 0.10 restructured its trait API (RngCore, Rng::fill, random all
+      # moved or removed) and the migration is not a mechanical bump. Hold the
+      # major for a deliberate migration against the 0.10 docs, not a guess.
+      - dependency-name: rand
+        update-types: [version-update:semver-major]
   - package-ecosystem: npm
     directory: /web
     schedule:
