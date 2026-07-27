@@ -115,7 +115,7 @@ jobs:
         # ssh-agent and tears it down at job exit. Far better than
         # writing the key to ~/.ssh/id_ed25519 directly -- the key
         # never lands on the runner filesystem.
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.SMRT_DEPLOY_SSH_KEY }}
 
