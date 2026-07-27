@@ -94,7 +94,7 @@ mod tests {
         async fn echo(Path(id): Path<String>) -> String {
             id
         }
-        let app = Router::new().route("/p/:id", get(echo));
+        let app = Router::new().route("/p/{id}", get(echo));
         let resp = app
             .oneshot(
                 Request::builder()

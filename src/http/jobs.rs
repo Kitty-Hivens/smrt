@@ -30,9 +30,9 @@ pub fn router(state: AppState) -> Router {
 /// Job status/events poll by an unguessable job id, so they need only a session.
 fn build_router(state: AppState) -> Router {
     Router::new()
-        .route("/v1/authoring/packs/:pack_id/build", post(build_pack))
-        .route("/v1/jobs/:job_id", get(job_status))
-        .route("/v1/jobs/:job_id/events", get(job_events))
+        .route("/v1/authoring/packs/{pack_id}/build", post(build_pack))
+        .route("/v1/jobs/{job_id}", get(job_status))
+        .route("/v1/jobs/{job_id}/events", get(job_events))
         .layer(DefaultBodyLimit::max(crate::http::MAX_UPLOAD_BODY))
         .layer(from_fn_with_state(
             state.clone(),
@@ -46,7 +46,7 @@ fn build_router(state: AppState) -> Router {
 fn bootstrap_router(state: AppState) -> Router {
     Router::new()
         .route(
-            "/v1/authoring/packs/:pack_id/bootstrap",
+            "/v1/authoring/packs/{pack_id}/bootstrap",
             post(bootstrap_pack),
         )
         .layer(DefaultBodyLimit::max(crate::http::MAX_UPLOAD_BODY))
