@@ -22,4 +22,4 @@ slug?: string,
  * never saw it must not delete it), and it is dropped only when no
  * curator-declared mod still reaches it through hard requires edges.
  */
-pulled: boolean, };
+pulled?: boolean, };
