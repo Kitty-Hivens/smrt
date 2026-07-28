@@ -12,6 +12,7 @@
     DeclaredAsset,
     JobStatus,
     PackConfig,
+    PackEvent,
     ResolveReport,
     SourceDecl,
     ValidateReport,
@@ -175,6 +176,14 @@
   // save as a precondition, so a save the mirror would apply over someone else's
   // is refused instead (#52). Null until the pack has a stored config.
   let rev = $state<string | null>(null);
+  // Who else has this pack open, from the stream. Names, not a count: "bo is
+  // here" is a different fact from "1 other person", and it is the one that
+  // changes what you do next.
+  let alsoHere = $state<string[]>([]);
+  // The revision the stream last announced. Compared against our own so an
+  // editor can tell its own save coming back from someone else's.
+  let streamRev = $state<string | null>(null);
+
   // A refused save is a fork in the road, not a retry: until the operator says
   // whose version wins, autosave stops rather than re-sending a base the mirror
   // has already rejected once.
@@ -306,6 +315,42 @@
     if (!unsaved) return;
     route.setLeaveGuard(() => dialogs.confirm(t('pe.unsavedLeave'), { danger: true }));
     return () => route.setLeaveGuard(null);
+  });
+
+  // Subscribe while the editor is open. The subscription is also the presence:
+  // the mirror counts whoever is listening, so a closed tab or a dropped
+  // connection is a departure without anything having to say goodbye.
+  $effect(() => {
+    const src = new EventSource(api.packEventsUrl(packId));
+    src.addEventListener('pack', (e) => {
+      let event: PackEvent;
+      try {
+        event = JSON.parse((e as MessageEvent).data) as PackEvent;
+      } catch {
+        return; // a frame we cannot read is not worth acting on
+      }
+      if (event.kind === 'present') {
+        alsoHere = event.editors.filter((name) => name !== me.login);
+        return;
+      }
+      streamRev = event.rev;
+      // Our own save coming back: the revision is the one we now hold.
+      if (event.rev === rev) return;
+      // Someone else saved. With nothing of our own in flight the honest move is
+      // to show their work rather than a stale screen; with unsaved edits it
+      // stays a decision, which is the machinery the 409 already drives.
+      if (saveState === 'saving' || unsaved || sig() !== lastSig) {
+        toasts.push({
+          kind: 'info',
+          text: t('pe.movedBy', { who: event.by }),
+          detail: t('pe.movedHint'),
+        });
+        return;
+      }
+      void load();
+      toasts.push({ kind: 'info', text: t('pe.movedBy', { who: event.by }) });
+    });
+    return () => src.close();
   });
 
   // debounced autosave: deep-reads cfg + tags + gallery, persists once they settle
@@ -811,6 +856,11 @@
       {:else if saveState === 'error'}{t('pe.saveError')}{/if}
     </span>
   {/if}
+  {#if alsoHere.length}
+    <span class="alsohere" title={t('pe.alsoHereHint')}>
+      {t('pe.alsoHere', { who: alsoHere.join(', ') })}
+    </span>
+  {/if}
   {#if saveState === 'conflict'}
     <!-- the notice carries the same action, but it can be dismissed; a refused
          save must not become unreachable because a toast was closed -->
@@ -1209,6 +1259,11 @@
   }
   .spacer {
     flex: 1;
+  }
+  .alsohere {
+    font-size: var(--fs-xs);
+    color: var(--accent-hue);
+    white-space: nowrap;
   }
   .savestate {
     font-size: var(--fs-sm);

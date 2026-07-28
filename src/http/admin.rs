@@ -71,6 +71,7 @@ fn authoring_router(state: AppState) -> Router {
             "/v1/authoring/packs/{pack_id}/config",
             get(get_pack_config).put(put_pack_config),
         )
+        .route("/v1/authoring/packs/{pack_id}/events", get(pack_events))
         .route("/v1/authoring/packs/{pack_id}", delete(delete_pack))
         .route(
             "/v1/authoring/packs/{pack_id}/visibility",
@@ -876,6 +877,50 @@ async fn list_authoring_packs(
     }))
 }
 
+/// What is happening to a pack while it is open, as a stream (#52 follow-on).
+///
+/// The revision check refuses a save that would overwrite someone else's, which
+/// stops the loss and says nothing until the collision: you learn someone else
+/// is here by colliding with them. This says it earlier -- who else has the pack
+/// open, and that it moved, the moment it moves.
+///
+/// A save publishes the revision it produced, which is the same string
+/// `If-Match` compares, so an editor can tell its own save from someone else's
+/// without asking the server anything.
+async fn pack_events(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    // The subscription is held by the stream itself: when the client goes away
+    // the stream drops, the guard drops with it, and the leave is announced --
+    // no separate goodbye to miss.
+    let mut presence = state.packs.join(&pack_id, &identity.login);
+    let events = async_stream::stream! {
+        loop {
+            match presence.events.recv().await {
+                Ok(event) => {
+                    let data = serde_json::to_string(&event).unwrap_or_default();
+                    yield Ok::<Event, std::convert::Infallible>(Event::default().event("pack").data(data));
+                }
+                // Lagged: this client fell behind the backlog. Nothing is lost
+                // that matters -- the editor re-reads on the next event, and the
+                // revision tells it whether anything moved -- so keep going.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    };
+    Ok(Sse::new(events)
+        .keep_alive(KeepAlive::default())
+        .into_response())
+}
+
 // ── config revisions (optimistic concurrency) ───────────────────────────────
 //
 // Config edits used to be a plain read-modify-write: two accounts editing one
@@ -1068,6 +1113,13 @@ async fn put_pack_config(
         Some(&format!("{} mods", cfg.mods.len())),
     )
     .await;
+    state.packs.publish(
+        &pack_id,
+        crate::authoring::PackEvent::Saved {
+            rev: rev.clone(),
+            by: identity.login.clone(),
+        },
+    );
     Ok((StatusCode::CREATED, etag(&rev), Json(cfg)))
 }
 
