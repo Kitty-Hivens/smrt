@@ -12,7 +12,6 @@
     bucketAssets,
     conflictIndex,
     formatBytes,
-    groupByRole,
     isLibrary,
     letterAvatar,
     resolveDeps,
@@ -43,9 +42,8 @@
   // a null-summary guard; ts-rs already types it as always-present.
   const gallery = $derived(summary?.gallery_urls ?? []);
   const mods = $derived<ModEntry[]>(manifest?.mods ?? []);
-  const grouping = $derived(groupByRole(mods));
-  const ungroupedNonLib = $derived(grouping.ungrouped.filter((m) => !isLibrary(m)));
-  const libraries = $derived(grouping.ungrouped.filter(isLibrary));
+  const ungroupedNonLib = $derived(mods.filter((m) => !isLibrary(m)));
+  const libraries = $derived(mods.filter(isLibrary));
   const buckets = $derived(manifest ? bucketAssets(manifest.assets) : null);
   const dep = $derived(resolveDeps(mods));
   const conflictIdx = $derived(conflictIndex(mods));
@@ -248,28 +246,7 @@
       </div>
     {/if}
 
-    <!-- role groups -->
-    {#each grouping.byRole as g (g.role)}
-      <section>
-        <h3 class="sec">{g.label} <span class="faint">{t('prev.interchangeable')}</span></h3>
-        <div class="rows">
-          {#each g.members as m, idx (m.filename)}
-            <ModRow
-              mod={m}
-              enabled={enabled[m.filename] ?? (m.required || (m.default_enabled ?? true))}
-              locked={m.required}
-              onToggle={(on) => toggle(m.filename, on)}
-              edges={dep.edgesBySource.get(m.filename) ?? []}
-              missing={dep.missingBySource.get(m.filename) ?? []}
-              conflicts={conflictsFor(m.filename)}
-              alt={idx >= 1}
-            />
-          {/each}
-        </div>
-      </section>
-    {/each}
-
-    <!-- ungrouped (non-library) mods -->
+    <!-- mods (libraries get their own collapsed section below) -->
     {#if ungroupedNonLib.length}
       <section>
         <h3 class="sec">{t('pe.mods')} <span class="faint">({ungroupedNonLib.length})</span></h3>

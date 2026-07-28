@@ -72,8 +72,8 @@ Day to day, everything happens in the panel; the CLI mirrors it for scripting.
    new mods may need one more save -> build cycle.
 
 CLI equivalents: `smrt-pack bootstrap | validate | depfill | build
---channel ... | enrich-mcmod | infer-requires | apply-role-table |
-upload-static | reconstruct-config`.
+--channel ... | enrich-mcmod | infer-requires | upload-static |
+reconstruct-config`.
 
 ### Two people in one pack
 

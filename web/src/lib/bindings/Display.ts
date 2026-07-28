@@ -8,10 +8,16 @@ import type { Requirement } from "./Requirement";
  * version stays at 2. Clients that don't recognise the block fall back
  * to defaults derived from `filename` / `dest`.
  *
- * `icon_url`, `role`, and `requires` are additive launcher-side richer
- * UX hooks (per-item icons, role-grouped pickers, dependency graph
- * rendering). All three optional; manifests without them parse cleanly
- * on every client that reached the v2 schema.
+ * `icon_url` and `requires` are additive launcher-side richer UX hooks
+ * (per-item icons, dependency graph rendering). Both optional; manifests
+ * without them parse cleanly on every client that reached the v2 schema.
+ *
+ * A `role` field once grouped interchangeable mods into one selectable slot.
+ * It was only ever settable through a hand-written TOML table and a CLI pass,
+ * which is more curation than the grouping was worth; a mod that must not run
+ * beside another says so through `incompatible_with`, which is the part that
+ * protects an install. A manifest still carrying the key parses -- an unknown
+ * field is ignored -- and a rebuild drops it.
  */
 export type Display = { name?: string, description?: string, category?: string, incompatible_with?: Array<string>, 
 /**
@@ -34,13 +40,6 @@ url?: string,
  * the Modrinth API. Null = client falls back to a letter avatar.
  */
 icon_url?: string, 
-/**
- * Short tag for grouping interchangeable mods. Launcher renders all
- * mods with the same role as a single selectable slot ("Recipe
- * viewer: JEI [v]" with REI / JER / EMI alternatives). Canonical
- * values are mirror-curated; the launcher does not enumerate them.
- */
-role?: string, 
 /**
  * Same-manifest dependency declarations. Each entry's `filename`
  * points at another mod in this pack's `mods[]`. Resolver

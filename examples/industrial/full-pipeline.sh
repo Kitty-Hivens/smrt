@@ -20,7 +20,7 @@
 #                                  serves)
 #
 # Pack-card metadata (icon / banner / gallery / description) and per-mod
-# settings (optional / default-off, category, role, incompatibilities) live
+# settings (optional / default-off, category, incompatibilities) live
 # in the pack config, edited in the panel's Config tab.
 #
 # Run from anywhere; the script is self-locating. Each step is

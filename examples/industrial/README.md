@@ -66,14 +66,13 @@ SKIP_BOOTSTRAP=1 bash examples/industrial/full-pipeline.sh _
        --config  /tmp/Industrial.bootstrap.json
    ```
 
-Pack-card metadata (icon / banner / gallery / description) and per-mod settings (optional / default-off, category, role, incompatibilities, source substitution) live on the pack config -- edited in the panel's Config tab, not in a separate file. Roles can also be bulk-applied with `apply-role-table`, which writes `display.role` straight into the config.
+Pack-card metadata (icon / banner / gallery / description) and per-mod settings (optional / default-off, category, incompatibilities, source substitution) live on the pack config -- edited in the panel's Config tab, not in a separate file.
 
 ## Files in this directory
 
 | File              | Purpose                                                                                                       |
 | ----------------- | ------------------------------------------------------------------------------------------------------------- |
 | `full-pipeline.sh`| One-shot orchestrator: bootstrap -> upload-mods -> upload-static -> build -> verify. Set `SKIP_BOOTSTRAP=1` to refresh without re-extracting the SC archive. |
-| `role-table.toml` | Role-table example for the `apply-role-table` subcommand, which writes `display.role` per mod straight into the pack config. |
 | `upload-mods.sh`  | Bulk uploader for mod jars (bash). Keeps the OSN-substitute step inline; will get a `smrt-pack upload-cache` subcommand in a follow-up.                              |
 | `README.md`       | This file.                                                                                                    |
 

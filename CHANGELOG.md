@@ -55,6 +55,22 @@ version section when a release is tagged.
   values (operator uid, public base URL) moved to the environment; the
   SmartyCraft/Nexira setup is the reference deployment, not the definition.
 
+### Removed
+
+- Mod roles. A role grouped interchangeable mods into one selectable slot in a
+  launcher -- "Minimap: VoxelMap" with Xaero behind a dropdown -- and the only
+  way to set one was a hand-written TOML table plus a CLI pass, on a mirror
+  whose point is that authoring happens in the panel. That is more curation
+  than the grouping was worth, and it is a vocabulary that has to be kept in
+  step with the launcher's own strings to render at all. What actually protects
+  an install is `display.incompatible_with` and the registry's conflict edges:
+  enabling one of a conflicting pair still switches the other off, and the
+  pre-publish check still reports live conflicts. `display.role` is gone from
+  the wire, `RoleTable` / `apply_role_table` / `smrt-pack apply-role-table` and
+  the example table with them. A manifest or config still carrying the key
+  parses -- an unknown field is ignored -- and a rebuild stops emitting it, so
+  nothing needs migrating. `display.category` remains for plain labelling.
+
 ### Added
 
 - A build is checked before it publishes. Until now a real build wrote the
