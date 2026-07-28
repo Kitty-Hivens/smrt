@@ -87,6 +87,10 @@ fn authoring_router(state: AppState) -> Router {
             "/v1/authoring/packs/{pack_id}/validate",
             post(validate_pack),
         )
+        .route(
+            "/v1/authoring/packs/{pack_id}/dependency-preview",
+            post(preview_dependencies),
+        )
         .route("/v1/authoring/packs/{pack_id}/resolve", get(pack_resolve))
         .route("/v1/authoring/packs/{pack_id}/graph", get(pack_graph_view))
         .route("/v1/modrinth/search", get(modrinth_search))
@@ -477,6 +481,38 @@ async fn validate_pack(
         .map_err(|e| ApiError::Internal(e.into()))?
         .map_err(ApiError::Internal)?;
     Ok(Json(report))
+}
+
+/// What saving this config would pull in, answered before the save.
+///
+/// Adding a mod landed blind: the dependencies appeared later, on save, and the
+/// curator learned what came with it after the fact (#53). The plan was already
+/// computed on every save; this asks for it in advance. Read-only -- it runs the
+/// real fill on a copy, so the answer cannot drift from what the save does, and
+/// writes nothing.
+///
+/// The body is the config as the editor currently holds it, not the stored one:
+/// the question is about the mod just added, which by definition is not saved.
+async fn preview_dependencies(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+    Json(cfg): Json<PackConfig>,
+) -> Result<Json<Vec<crate::authoring::depfill::PulledPreview>>, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    let cached: std::collections::HashSet<String> = state
+        .storage
+        .list_cache_inventory()
+        .await
+        .map(|inv| inv.into_iter().map(|e| e.sha1).collect())
+        .unwrap_or_default();
+    let pulled =
+        crate::authoring::depfill::preview_fill(&cfg, &state.registry, &state.modrinth, &cached)
+            .await
+            .map_err(ApiError::Internal)?;
+    Ok(Json(pulled))
 }
 
 // ── resolve against the dependency graph ─────────────────────────────────────

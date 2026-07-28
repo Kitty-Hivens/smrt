@@ -242,6 +242,78 @@ pub fn merge_pulled(saved: &PackConfig, incoming: &mut PackConfig) {
     }
 }
 
+/// One dependency a save would pull in, answered before the save happens.
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct PulledPreview {
+    pub filename: String,
+    /// Where the mirror would take it from: `modrinth` or the mirror's own cache.
+    pub source: String,
+    /// The declared mods that require it, by filename. A library two mods need
+    /// names both, so removing one does not imply the library leaves.
+    pub needed_by: Vec<String>,
+}
+
+/// What saving this config would pull in, computed without saving anything.
+///
+/// Adding a mod used to be blind: the dependencies arrived later, on save, and
+/// whoever added it found out afterwards by opening the preview or resolving by
+/// hand (#53). The plan was always computed -- it is what runs on save -- it was
+/// simply never asked for in advance.
+///
+/// It runs the real fill on a copy rather than reimplementing the rules, so the
+/// answer cannot drift from what the save will actually do; nothing is written.
+pub async fn preview_fill(
+    cfg: &PackConfig,
+    registry: &Registry,
+    modrinth: &Modrinth,
+    cached: &HashSet<String>,
+) -> Result<Vec<PulledPreview>> {
+    let before: HashSet<String> = cfg
+        .mods
+        .iter()
+        .map(|m| source_identity(&m.source))
+        .collect();
+    let mut filled = cfg.clone();
+    fill_dependencies(&mut filled, registry, modrinth, cached).await?;
+
+    // who requires what, among the mods the filled config would hold
+    let plan = {
+        let filled = &filled;
+        registry.with_conn(|c| resolve::dependency_fill_plan(c, filled))?
+    };
+    let mut needed_by: HashMap<&str, Vec<String>> = HashMap::new();
+    for (requirer, dep) in &plan.requires {
+        needed_by
+            .entry(dep.as_str())
+            .or_default()
+            .push(requirer.clone());
+    }
+
+    Ok(filled
+        .mods
+        .iter()
+        .filter(|m| !before.contains(&source_identity(&m.source)))
+        .map(|m| {
+            let mut who = needed_by
+                .get(m.filename.as_str())
+                .cloned()
+                .unwrap_or_default();
+            who.sort();
+            who.dedup();
+            PulledPreview {
+                filename: m.filename.clone(),
+                source: match &m.source {
+                    SourceDecl::Modrinth { .. } => "modrinth".to_string(),
+                    SourceDecl::SmrtCache { .. } => "cache".to_string(),
+                    SourceDecl::SmrtStatic { .. } => "static".to_string(),
+                },
+                needed_by: who,
+            }
+        })
+        .collect())
+}
+
 /// The identity a pulled entry is matched by across saves: the Modrinth
 /// project (a re-pin to another version is still the same dependency), the
 /// cache sha1, the static path.
@@ -602,6 +674,61 @@ mod tests {
             Ok(id)
         })
         .unwrap()
+    }
+
+    // The same answer the save would give, before the save happens: what a mod
+    // brings with it, who needs it, and nothing written to the config that was
+    // asked about.
+    #[tokio::test]
+    async fn preview_reports_what_a_save_would_pull_without_touching_the_config() {
+        let r = Registry::open_in_memory().unwrap();
+        let a = add_artifact(&r, "moda", "1.0", "sha_a", "a.jar");
+        add_artifact(&r, "modb", "1.0", "sha_b", "modb-1.0.jar");
+        r.with_conn_mut(|c| {
+            upsert::upsert_relation(
+                c,
+                a,
+                None,
+                "modb",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let mut c = cfg(vec![cache_mod("a.jar", "sha_a")]);
+        c.loader.name = "forge".into();
+        let modrinth = Modrinth::new().unwrap();
+        let cached: HashSet<String> = ["sha_a", "sha_b"].iter().map(|s| s.to_string()).collect();
+
+        let preview = preview_fill(&c, &r, &modrinth, &cached).await.unwrap();
+        assert_eq!(preview.len(), 1, "one dependency would come with a.jar");
+        assert_eq!(preview[0].filename, "modb-1.0.jar");
+        assert_eq!(preview[0].source, "cache");
+        assert_eq!(
+            preview[0].needed_by,
+            vec!["a.jar".to_string()],
+            "the preview says which declared mod asks for it"
+        );
+        assert_eq!(
+            c.mods.len(),
+            1,
+            "asking what a save would do must not do it"
+        );
+
+        // and it agrees with the save: filling for real adds exactly that row
+        fill_dependencies(&mut c, &r, &modrinth, &cached)
+            .await
+            .unwrap();
+        let filled: Vec<&str> = c
+            .mods
+            .iter()
+            .filter(|m| m.pulled)
+            .map(|m| m.filename.as_str())
+            .collect();
+        assert_eq!(filled, vec!["modb-1.0.jar"]);
     }
 
     // The cache leg of the source chain: a hard dependency Modrinth cannot
