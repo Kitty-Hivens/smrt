@@ -56,6 +56,29 @@ The largest single gap is search. A pack cannot be assembled without the Modrint
 website open alongside, because the mirror only lets you add a mod whose exact
 name you already know. It is still unfiled.
 
+## The shape it is heading toward
+
+One space with several instances in it, not a stack of overlays. Panels slide
+out and stay: a pack editor open beside a mod page beside what the mirror holds,
+because that is how the work actually goes. `FloatDock` was the first move in
+that direction and stays as the nucleus. What each kind of panel obeys is
+recorded in ADR 0005.
+
+Two things gate it, in order. The surfaces are dark-first with white tints
+written literally into the tokens (`--dotfield`, `--seam`, the table zebra,
+`--accent-soft`), so a light substrate is a rewrite rather than a swap -- and
+the geometry only reads on a substrate where elevation can be a shadow instead
+of a lighter surface, which is what the token file says it currently is not.
+Then the reflow rules have to key off the container: a pane is a narrow context
+inside a wide window, and every one of the 21 `@media` rules asks the window.
+
+A spike (warm paper substrate, softer geometry, an editor that arrives rather
+than cuts) said the idiom sits on this product without a fight, and said the two
+places it breaks: rows lose their boundary when elevation stops being a lighter
+surface, and a blanket pill radius swallows small destructive controls. Both are
+per-component decisions, not token values. The spike was a look, not a
+foundation; it is not in the tree.
+
 ## How to write things down
 
 Plainly, and so they can be checked. "Motion may overshoot 4px on controls" can
