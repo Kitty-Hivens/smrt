@@ -97,7 +97,7 @@
     margin: 10px 0 14px;
     max-width: 640px;
   }
-  @media (max-width: 560px) {
+  @container view (max-width: 560px) {
     .bar {
       flex-wrap: wrap;
     }

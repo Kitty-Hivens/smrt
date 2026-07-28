@@ -463,6 +463,13 @@
     flex: 1;
     overflow: auto;
     padding: var(--space-5);
+    /* Everything inside a view reflows against this box, not against the window.
+       A view is not always the width of the screen -- it is a column beside
+       other columns as soon as panels sit side by side (ADR 0005) -- and a
+       window-keyed rule cannot tell the difference. The shell's own layout below
+       stays window-keyed: the rail becoming a strip or a drawer is a fact about
+       the screen, not about any container. */
+    container: view / inline-size;
   }
 
   /* scrim base -- inert until the drawer breakpoint */
