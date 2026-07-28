@@ -199,6 +199,7 @@ export const en = {
   'pe.reports': 'Reports',
   'pe.dupAsset': '{dest} is already in this pack.',
   'pe.saveFailed': 'Not saved -- the config on screen differs from the one on the server.',
+  'pe.pulls': '{name} brings {n} more',
   'pe.saveRetry': 'Retry',
   'pe.unsavedLeave': 'The last save was rejected. Close anyway and lose those edits?',
   'pe.conflict': 'Not saved -- someone else saved this pack while you were editing it.',

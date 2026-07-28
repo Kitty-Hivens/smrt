@@ -341,7 +341,14 @@
       },
     };
     try {
-      rev = await api.savePackConfig(packId, payload, rev);
+      const saved = await api.savePackConfig(packId, payload, rev);
+      rev = saved.rev;
+      // The mirror answers with the config it stored, dependencies and all. That
+      // answer used to be discarded, so a pulled library existed on disk and was
+      // invisible here until a reload. Only the pulled rows are taken: they are
+      // server-managed, and anything else would overwrite what was typed during
+      // the save.
+      mergePulled(saved.config);
       lastSig = s;
       saveState = 'saved';
       toasts.dismiss(saveToast);
@@ -548,6 +555,34 @@
     }
   }
 
+  // Server-managed rows: the fill owns them, so they are merged in rather than
+  // edited here. Without this they only appeared after a reload.
+  function mergePulled(saved: PackConfig) {
+    if (!cfg) return;
+    const here = new Set(cfg.mods.map((m) => sourceKey(m.source)));
+    const added = (saved.mods ?? []).filter((m) => m.pulled && !here.has(sourceKey(m.source)));
+    if (added.length) cfg.mods = [...cfg.mods, ...added];
+  }
+
+  // What a mod brings with it, asked at the moment it is added rather than
+  // discovered on the next save (#53). Silent when it brings nothing: a notice
+  // for the common case is noise, and most mods pull nothing.
+  async function announcePulled(name: string) {
+    if (!cfg) return;
+    try {
+      const pulled = await api.previewDependencies(packId, $state.snapshot(cfg));
+      if (!pulled.length) return;
+      toasts.push({
+        kind: 'info',
+        text: t('pe.pulls', { name, n: pulled.length }),
+        detail: pulled.map((p) => p.filename).join(', '),
+      });
+    } catch {
+      // an advisory that could not be computed (an outage, a slow registry) is
+      // not worth a failure notice: the save still reports what it pulled
+    }
+  }
+
   // a stable identity for a declared source, so the same mod isn't added twice
   // (cache by sha1, Modrinth by project, static by path). The pinned version is
   // deliberately not part of it: the same project at another version is still the
@@ -589,6 +624,7 @@
         pulled: false,
       },
     ];
+    announcePulled(sel.filename);
     return true;
   }
 
@@ -650,6 +686,7 @@
           pulled: false,
         },
       ];
+      announcePulled(`${sel.slug}.jar`);
     } else {
       const m = cfg.mods[pick.row];
       m.source = { type: 'modrinth', project_id: sel.project_id, version_id: sel.version_id };

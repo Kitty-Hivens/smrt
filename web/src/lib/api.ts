@@ -25,6 +25,7 @@ import type {
   PackListing,
   PackManifest,
   PackSummary,
+  PulledPreview,
   ReleaseRow,
   ResolveReport,
   ServerEntry,
@@ -237,12 +238,13 @@ export const api = {
   // Save against `baseRev`: the mirror refuses the write with 409 when the
   // stored config has moved on since. Passing null writes unconditionally --
   // creating a config that does not exist yet, or a deliberate overwrite.
-  // Returns the revision the save produced, to edit on from.
+  // Returns what the mirror stored -- the config with the fill's dependencies in
+  // it, and the revision to edit on from.
   async savePackConfig(
     id: string,
     cfg: PackConfig,
     baseRev: string | null,
-  ): Promise<string | null> {
+  ): Promise<RevisionedConfig> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (baseRev) headers['If-Match'] = `"${baseRev}"`;
     activity.begin();
@@ -254,7 +256,7 @@ export const api = {
         body: JSON.stringify(cfg),
       });
       if (!r.ok) throw await toError(r);
-      return revisionOf(r);
+      return { config: (await r.json()) as PackConfig, rev: revisionOf(r) };
     } finally {
       activity.end();
     }
@@ -307,6 +309,22 @@ export const api = {
     getJson<PackManifest>(
       `/v1/packs/${encodeURIComponent(id)}/manifest/${encodeURIComponent(version)}`,
     ),
+
+  // What saving this config would pull in, asked before the save. Read-only:
+  // the mirror runs the real fill on a copy and writes nothing.
+  async previewDependencies(id: string, cfg: PackConfig): Promise<PulledPreview[]> {
+    const r = await fetch(
+      `/v1/authoring/packs/${encodeURIComponent(id)}/dependency-preview`,
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg),
+      },
+    );
+    if (!r.ok) throw await toError(r);
+    return (await r.json()) as PulledPreview[];
+  },
 
   // ── resolve the saved config against the registry dependency graph ──
   // the pack's own relation graph: its mods, wired by what its shipped artifacts
