@@ -57,6 +57,20 @@ version section when a release is tagged.
 
 ### Added
 
+- A pack says who is in it and what is happening to it, live
+  (`GET /v1/authoring/packs/{id}/events`, server-sent). The revision check
+  refuses a save that would overwrite someone else's, which stops the loss and
+  says nothing until the collision -- you learned another person was there by
+  colliding with them. The editor now subscribes while it is open: it lists who
+  else has the pack, and a save by any of them arrives immediately. With nothing
+  of your own in flight the editor takes their version rather than showing a
+  stale screen; with unsaved edits it says who moved and leaves the decision
+  where it already lives, in the conflict resolution. Subscribing is the
+  presence, so a closed tab or a dropped connection is a departure without
+  anything having to say goodbye, and one person in two tabs is one person.
+
+### Added
+
 - The mirror can ask a server what it runs
   (`GET /v1/servers/{id}/advertised`). The handshake spoof a pack ships has to
   claim exactly the mod list the server expects, and until now that list was

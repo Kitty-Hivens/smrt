@@ -1,4 +1,5 @@
 use crate::accounts::Accounts;
+use crate::authoring::PackStream;
 use crate::authoring::{HarvestScheduler, Modrinth};
 use crate::config::Config;
 use crate::jobs::JobRegistry;
@@ -21,6 +22,10 @@ pub struct AppState {
     pub harvest: Arc<HarvestScheduler>,
     /// Persistent accounts + sessions (GitHub identities, server-side sessions).
     pub accounts: Arc<Accounts>,
+    /// Who is in which pack, and what has happened to it. In-process like the
+    /// job registry: presence that outlived the process would be a list of
+    /// ghosts.
+    pub packs: Arc<PackStream>,
 }
 
 impl AppState {
@@ -40,6 +45,7 @@ impl AppState {
             harvest,
             config: Arc::new(config),
             jobs: Arc::new(JobRegistry::default()),
+            packs: Arc::new(PackStream::default()),
             accounts,
         })
     }

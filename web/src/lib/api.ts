@@ -20,6 +20,7 @@ import type {
   ModDetail,
   ModHit,
   ModrinthHit,
+  PackEvent,
   ModrinthVersion,
   ModSummary,
   PackConfig,
@@ -300,6 +301,9 @@ export const api = {
     return (await r.json()) as { job_id: string };
   },
   jobEventsUrl: (jobId: string) => `/v1/jobs/${encodeURIComponent(jobId)}/events`,
+  // What is happening to a pack while it is open: who else is in it, and that it
+  // moved. Subscribing is also how the mirror learns you are here.
+  packEventsUrl: (id: string) => `/v1/authoring/packs/${encodeURIComponent(id)}/events`,
   jobStatus: (jobId: string) => getJson<JobResult>(`/v1/jobs/${encodeURIComponent(jobId)}`),
 
   // ── published manifest (preview baseline + version diff) ──
