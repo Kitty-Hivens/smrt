@@ -57,6 +57,21 @@ version section when a release is tagged.
 
 ### Added
 
+- The mirror can ask a server what it runs
+  (`GET /v1/servers/{id}/advertised`). The handshake spoof a pack ships has to
+  claim exactly the mod list the server expects, and until now that list was
+  pasted in by hand and went stale in silence after a server bump. The server
+  states the list itself -- on 1.12.2 Forge the FML handshake's mod list also
+  rides in the status ping, and newer Forge carries an equivalent under
+  `forgeData` -- so asking is a status query, no account and no login, and it can
+  be repeated whenever the answer matters. A server that will not advertise is
+  reported as exactly that rather than as a server with no mods: a spoof built
+  from silence would be a guess wearing the shape of an answer. `ServerEntry`
+  gained the address this needs, which the mirror did not hold at all -- it
+  modelled servers without recording where any of them was.
+
+### Added
+
 - One picker for adding a mod, on that search. "From the mirror" and "From
   Modrinth" were a decision about provenance taken before the decision about
   which mod, and it cannot be made correctly without already knowing whether the

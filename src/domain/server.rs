@@ -27,6 +27,13 @@ pub struct ServerEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub website_url: Option<String>,
+    /// Where the server actually is, `host` or `host:port`. Absent on entries
+    /// written before the field existed -- and absent means the mirror cannot
+    /// ask the server anything, which is why it is worth filling: the handshake
+    /// mod list a pack has to advertise comes from the server itself (#110).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub address: Option<String>,
     pub owner_display: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
