@@ -5,6 +5,7 @@
 
 use super::modrinth::{Modrinth, Version as MrVersion};
 use crate::domain::{AssetEntry, DeclaredAsset, DeclaredMod, ModEntry, Source, SourceDecl};
+use crate::registry::{Registry, queries};
 use crate::storage::{cache_jar_path_in, is_safe_rel_path, sha1_shard};
 use anyhow::{Context, Result, anyhow, bail};
 use sha1::{Digest, Sha1};
@@ -45,6 +46,8 @@ pub(super) async fn resolve_mod(
     mirror_base: &str,
     modrinth: &Modrinth,
     cache: &ModrinthCache,
+    registry: &Registry,
+    fell_back: &mut Vec<String>,
 ) -> Result<ModEntry> {
     // filename lands in the manifest and the launcher writes mods/<filename>.
     // Reject traversal (any '/', '\\', leading dot, or empty) but keep the broad
@@ -61,24 +64,57 @@ pub(super) async fn resolve_mod(
             project_id,
             version_id,
         } => {
-            let v = cache
-                .get_or_fetch(modrinth, project_id, version_id)
-                .await
-                .with_context(|| format!("resolving Modrinth mod {}", decl.filename))?;
-            let f = v.primary_file().ok_or_else(|| {
-                anyhow!(
-                    "Modrinth version {project_id}/{version_id} ships no file -- \
-                     upstream published the version without a jar; pin another one"
-                )
-            })?;
-            (
-                f.hashes.sha1.clone(),
-                f.size,
-                Source::Modrinth {
-                    project_id: project_id.clone(),
-                    version_id: version_id.clone(),
-                },
-            )
+            // The network is asked first: it is authoritative, and a version
+            // re-uploaded upstream must not be built from stale numbers. Only
+            // when it cannot answer does the registry stand in -- with what the
+            // harvest recorded for this exact version id, which is the same file
+            // the build would have downloaded. A pack that has been built before
+            // therefore keeps building through an outage (#57); one naming a
+            // version the mirror has never seen still fails, and says so.
+            match cache.get_or_fetch(modrinth, project_id, version_id).await {
+                Ok(v) => {
+                    let f = v.primary_file().ok_or_else(|| {
+                        anyhow!(
+                            "Modrinth version {project_id}/{version_id} ships no file -- \
+                             upstream published the version without a jar; pin another one"
+                        )
+                    })?;
+                    (
+                        f.hashes.sha1.clone(),
+                        f.size,
+                        Source::Modrinth {
+                            project_id: project_id.clone(),
+                            version_id: version_id.clone(),
+                        },
+                    )
+                }
+                Err(upstream) => {
+                    let known = {
+                        let vid = version_id.clone();
+                        registry
+                            .with_conn(|c| queries::modrinth_file_by_version_id(c, &vid))
+                            .unwrap_or(None)
+                    };
+                    let Some((sha1, size)) = known else {
+                        return Err(upstream).with_context(|| {
+                            format!(
+                                "resolving Modrinth mod {} -- and the registry has no record of \
+                                 version {version_id}, so there is nothing to build it from",
+                                decl.filename
+                            )
+                        });
+                    };
+                    fell_back.push(decl.filename.clone());
+                    (
+                        sha1,
+                        size,
+                        Source::Modrinth {
+                            project_id: project_id.clone(),
+                            version_id: version_id.clone(),
+                        },
+                    )
+                }
+            }
         }
         SourceDecl::SmrtCache { sha1 } => {
             let path = cache_jar_path(storage, sha1)?;
@@ -339,6 +375,91 @@ pub(super) fn sha1_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A build must not die because Modrinth is down. The harvest already recorded
+    // the sha1 and size of every version the mirror has seen, so the registry can
+    // answer for a pinned version the network cannot -- and the build says it did
+    // (#57).
+    #[tokio::test]
+    async fn a_pinned_modrinth_mod_resolves_from_the_registry_when_upstream_is_down() {
+        use crate::registry::upsert;
+        const NOW: &str = "2026-07-28T00:00:00Z";
+        let dir = tempfile::tempdir().unwrap();
+        let r = Registry::open_in_memory().unwrap();
+        r.with_conn_mut(|c| {
+            let id = upsert::upsert_mod_by_alias(c, &[("modid", "jei")], NOW)?;
+            upsert::upsert_mod_version(
+                c,
+                id,
+                "4.16.1",
+                &["forge"],
+                &"a".repeat(40),
+                4242,
+                Some("jei.jar"),
+                None,
+                NOW,
+            )?;
+            upsert::set_mod_version_modrinth(c, &"a".repeat(40), Some("VERSION_ID"), NOW)?;
+            Ok(())
+        })
+        .unwrap();
+
+        // port 1 refuses instantly: an outage without the wait
+        let modrinth = Modrinth::with_base("http://127.0.0.1:1").unwrap();
+        let decl = DeclaredMod {
+            filename: "jei.jar".into(),
+            default_enabled: true,
+            source: SourceDecl::Modrinth {
+                project_id: "PROJ".into(),
+                version_id: "VERSION_ID".into(),
+            },
+            display: None,
+            slug: None,
+            pulled: false,
+        };
+        let mut fell_back = Vec::new();
+        let entry = resolve_mod(
+            &decl,
+            dir.path(),
+            "https://mirror.example",
+            &modrinth,
+            &ModrinthCache::default(),
+            &r,
+            &mut fell_back,
+        )
+        .await
+        .expect("the registry knows this version");
+
+        assert_eq!(entry.sha1, "a".repeat(40), "the harvested hash is used");
+        assert_eq!(entry.size_bytes, 4242);
+        assert_eq!(
+            fell_back,
+            vec!["jei.jar".to_string()],
+            "the build is told it did not reach upstream"
+        );
+
+        // a version the mirror has never seen still fails, and says both reasons
+        let unknown = DeclaredMod {
+            source: SourceDecl::Modrinth {
+                project_id: "PROJ".into(),
+                version_id: "NEVER_HARVESTED".into(),
+            },
+            ..decl
+        };
+        let err = resolve_mod(
+            &unknown,
+            dir.path(),
+            "https://mirror.example",
+            &modrinth,
+            &ModrinthCache::default(),
+            &r,
+            &mut fell_back,
+        )
+        .await
+        .expect_err("nothing to build it from");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("NEVER_HARVESTED"), "names the version: {msg}");
+    }
 
     #[test]
     fn write_to_cache_refuses_a_removed_sha1() {

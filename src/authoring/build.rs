@@ -8,6 +8,7 @@ use crate::domain::{
     AssetEntry, Display, JavaSpec, LoaderSpec, MatchPolicy, MinecraftSpec, ModEntry, PackConfig,
     PackManifest, PackSummary, PresenceClass, SCHEMA_VERSION, SideClass, VersionChannel,
 };
+use crate::registry::Registry;
 use crate::registry::classify::Classification;
 use anyhow::{Result, bail};
 use std::collections::{HashMap, HashSet};
@@ -22,6 +23,19 @@ use tracing::info;
 /// `changelog` is the curator's release notes, stored as given.
 /// `classifications` is the pack's side/policy map (`resolve::classify_pack`),
 /// keyed by filename; an absent entry reads as unclassified.
+/// A finished build: the manifest, plus which mods the network could not answer
+/// for and the registry did. A build that reached upstream and one that did not
+/// are different events, and the caller says so in its log rather than the two
+/// looking identical (#57).
+pub struct Built {
+    pub manifest: PackManifest,
+    pub resolved_from_registry: Vec<String>,
+}
+
+// The inputs are a build request and travel together; splitting them into a
+// struct would move the same list one line up. The out-parameter this used to
+// carry is gone, which was the part worth fixing.
+#[allow(clippy::too_many_arguments)]
 pub async fn build_manifest(
     cfg: &PackConfig,
     storage: &Path,
@@ -30,7 +44,8 @@ pub async fn build_manifest(
     changelog: Option<String>,
     mirror_base: &str,
     classifications: &HashMap<String, Classification>,
-) -> Result<PackManifest> {
+    registry: &Registry,
+) -> Result<Built> {
     let pack_version = match pack_version {
         Some(v) => {
             validate_pack_version(v)?;
@@ -49,9 +64,21 @@ pub async fn build_manifest(
     let modrinth = Modrinth::new()?;
     let modrinth_cache = ModrinthCache::default();
 
+    let mut fell_back: Vec<String> = Vec::new();
     let mut mod_entries = Vec::with_capacity(cfg.mods.len());
     for m in &cfg.mods {
-        mod_entries.push(resolve_mod(m, storage, mirror_base, &modrinth, &modrinth_cache).await?);
+        mod_entries.push(
+            resolve_mod(
+                m,
+                storage,
+                mirror_base,
+                &modrinth,
+                &modrinth_cache,
+                registry,
+                &mut fell_back,
+            )
+            .await?,
+        );
     }
     mod_entries.sort_by(|a, b| a.filename.cmp(&b.filename));
     derive_required(&mut mod_entries, classifications)?;
@@ -81,20 +108,23 @@ pub async fn build_manifest(
     let fingerprint =
         content_fingerprint(&minecraft, &cfg.loader, &java, &mod_entries, &asset_entries);
 
-    Ok(PackManifest {
-        schema_version: SCHEMA_VERSION,
-        pack_id: cfg.pack_id.clone(),
-        pack_version,
-        channel: Some(channel),
-        changelog,
-        generated_at: now_rfc3339(),
-        fingerprint: Some(fingerprint),
-        minecraft,
-        loader: cfg.loader.clone(),
-        java,
-        auth: cfg.auth.clone(),
-        mods: mod_entries,
-        assets: asset_entries,
+    Ok(Built {
+        resolved_from_registry: fell_back,
+        manifest: PackManifest {
+            schema_version: SCHEMA_VERSION,
+            pack_id: cfg.pack_id.clone(),
+            pack_version,
+            channel: Some(channel),
+            changelog,
+            generated_at: now_rfc3339(),
+            fingerprint: Some(fingerprint),
+            minecraft,
+            loader: cfg.loader.clone(),
+            java,
+            auth: cfg.auth.clone(),
+            mods: mod_entries,
+            assets: asset_entries,
+        },
     })
 }
 

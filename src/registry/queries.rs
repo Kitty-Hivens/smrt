@@ -394,6 +394,26 @@ pub fn version_by_modrinth_version_id(
         .optional()?)
 }
 
+/// The file facts of a harvested Modrinth artifact -- sha1 and size -- keyed by
+/// its Modrinth version id.
+///
+/// A build asks Modrinth for these on every Modrinth-sourced mod, so a pack with
+/// one such mod could not be rebuilt while Modrinth was unreachable (#57). The
+/// harvest has already recorded them for every version the mirror has seen, so
+/// this is the answer the registry can give when the network cannot.
+pub fn modrinth_file_by_version_id(
+    conn: &Connection,
+    version_id: &str,
+) -> Result<Option<(String, u64)>> {
+    Ok(conn
+        .query_row(
+            "SELECT sha1, size_bytes FROM mod_version WHERE modrinth_version_id = ?1 LIMIT 1",
+            params![version_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)),
+        )
+        .optional()?)
+}
+
 /// The `mod_version` row id of a harvested Modrinth artifact, keyed by its
 /// Modrinth version id. The resolver needs the artifact itself, not just its
 /// version string, to scope the artifact's relations (#48).
