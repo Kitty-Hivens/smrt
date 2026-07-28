@@ -27,6 +27,7 @@ fn operator_router(state: AppState) -> Router {
     Router::new()
         .route("/v1/servers", post(save_server))
         .route("/v1/servers/{server_id}", delete(delete_server))
+        .route("/v1/servers/{server_id}/advertised", get(advertised_mods))
         .route(
             "/v1/cache/{prefix}/{filename}",
             put(put_cache_jar).delete(delete_cache_jar),
@@ -244,6 +245,47 @@ async fn save_server(
 ) -> Result<(StatusCode, Json<ServerEntry>), ApiError> {
     state.storage.save_server(&entry).await?;
     Ok((StatusCode::CREATED, Json(entry)))
+}
+
+/// What the server itself says it runs (#110).
+///
+/// The spoof a pack ships has to claim exactly the list the server expects, and
+/// the server states that list: on 1.12.2 Forge the FML handshake's mod list
+/// also rides in the status ping. Asking is a status query -- no account, no
+/// login, nothing a player could not do from the multiplayer screen -- so it can
+/// be repeated whenever the answer matters instead of being pasted once and
+/// trusted forever.
+///
+/// A server with no address recorded is a 400 rather than a silent empty list:
+/// "we never asked" and "it answered nothing" are different facts.
+async fn advertised_mods(
+    State(state): State<AppState>,
+    Path(server_id): Path<String>,
+) -> Result<Json<crate::authoring::ServerStatus>, ApiError> {
+    let entry = state.storage.load_server(&server_id).await?;
+    let Some(address) = entry
+        .address
+        .as_deref()
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+    else {
+        return Err(ApiError::BadRequest(format!(
+            "server {server_id:?} has no address recorded, so there is nothing to ask"
+        )));
+    };
+    // host, or host:port -- the default is Minecraft's, not the caller's problem
+    let (host, port) = match address.rsplit_once(':') {
+        Some((h, p)) => (
+            h,
+            p.parse::<u16>()
+                .map_err(|_| ApiError::BadRequest(format!("port {p:?} is not a port")))?,
+        ),
+        None => (address, 25565),
+    };
+    crate::authoring::server_status(host, port)
+        .await
+        .map(Json)
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("asking {address}: {e:#}")))
 }
 
 async fn delete_server(
