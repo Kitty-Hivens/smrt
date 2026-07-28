@@ -37,15 +37,18 @@
   let q = $state('');
 
   // the expanded mod and its lazily-loaded releases
-  let openId = $state<number | null>(null);
-  let releases = $state<ReleaseRow[]>([]);
-  let relLoading = $state(false);
-
-  // a file whose sha1 Modrinth confirmed is authentic; a self-hosted file under a
-  // mod that ALSO has a Modrinth-verified one is a likely repackage (the SC case)
-  const modHasVerified = $derived(
-    releases.some((r) => r.files.some((f) => f.modrinth_version_id)),
-  );
+  // More than one mod may be open: comparing two mods' builds is the reason to
+  // open them at all, and a single slot made that a matter of remembering what
+  // the other one said.
+  let openIds = $state<number[]>([]);
+  let relsByMod = $state<Record<number, ReleaseRow[]>>({});
+  let loadingIds = $state<number[]>([]);
+  const isOpen = (id: number) => openIds.includes(id);
+  // A file whose sha1 Modrinth confirmed is authentic; a self-hosted file under a
+  // mod that ALSO has a Modrinth-verified one is a likely repackage (the SC case).
+  // Asked per mod, since several are open at once and the answer is about one.
+  const hasVerified = (modId: number) =>
+    (relsByMod[modId] ?? []).some((r) => r.files.some((f) => f.modrinth_version_id));
 
   let idTarget = $state<IdentityTarget | null>(null);
 
@@ -100,30 +103,31 @@
   }
 
   async function toggle(m: ModSummary) {
-    if (openId === m.mod_id) {
-      openId = null;
-      releases = [];
+    if (isOpen(m.mod_id)) {
+      openIds = openIds.filter((id) => id !== m.mod_id);
+      const { [m.mod_id]: _dropped, ...rest } = relsByMod;
+      relsByMod = rest;
       return;
     }
-    openId = m.mod_id;
-    releases = [];
-    relLoading = true;
+    openIds = [...openIds, m.mod_id];
+    await loadReleases(m.mod_id);
+  }
+
+  async function loadReleases(modId: number) {
+    loadingIds = [...loadingIds, modId];
     try {
-      releases = await api.modReleases(m.mod_id);
+      relsByMod = { ...relsByMod, [modId]: await api.modReleases(modId) };
     } catch (e) {
       notifyFail(e);
     } finally {
-      relLoading = false;
+      loadingIds = loadingIds.filter((id) => id !== modId);
     }
   }
 
+  // after an edit lands, every open mod is refreshed: the change may have moved
+  // a file between two of them (a merge, a re-identified jar)
   async function reloadOpen() {
-    if (openId == null) return;
-    try {
-      releases = await api.modReleases(openId);
-    } catch (e) {
-      notifyFail(e);
-    }
+    await Promise.all(openIds.map(loadReleases));
   }
 
   async function onDropJars(files: File[]) {
@@ -149,12 +153,12 @@
     idTarget = { sha1: u.sha1, filename: null, mode: 'assign' };
   }
 
-  function editFile(f: VersionRow, rel: ReleaseRow, modName: string) {
+  function editFile(f: VersionRow, rel: ReleaseRow, modName: string, modId: number) {
     idTarget = {
       sha1: f.sha1,
       filename: f.filename ?? null,
       mode: 'edit',
-      modId: openId ?? undefined,
+      modId,
       modName,
       version_number: rel.version_number,
       channel: rel.channel,
@@ -202,7 +206,7 @@
     if (!ok) return;
     try {
       await api.mergeMods(m.mod_id, into);
-      if (openId === m.mod_id) openId = null;
+      openIds = openIds.filter((id) => id !== m.mod_id);
       await load();
     } catch (x) {
       notifyFail(x);
@@ -353,12 +357,12 @@
 
   <div class="panel modlist">
     {#each mods as m, i (m.mod_id)}
-      <div class="mod row-in" class:open={openId === m.mod_id} use:stagger={i}>
+      <div class="mod row-in" class:open={isOpen(m.mod_id)} use:stagger={i}>
         <div
           class="modrow"
           role="button"
           tabindex="0"
-          aria-expanded={openId === m.mod_id}
+          aria-expanded={isOpen(m.mod_id)}
           onclick={() => toggle(m)}
           onkeydown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
@@ -404,28 +408,28 @@
               </div>
             {/if}
           </div>
+          {#if canOperate && isOpen(m.mod_id)}
+            <span class="modactions">
+              <button class="link" onclick={(e) => rename(m, e)} title={t('mm.renameTitle')}>
+                {t('mm.rename')}
+              </button>
+              {#if canDebug}
+                <button class="link" onclick={(e) => merge(m, e)} title={t('mm.mergeTitle')}>
+                  {t('mm.merge')}
+                </button>
+                <span class="faint mono modid">#{m.mod_id}</span>
+              {/if}
+            </span>
+          {/if}
           <span class="cnt mono">{t('mirror.versionsN', { n: m.version_count })}</span>
         </div>
 
-        {#if openId === m.mod_id}
+        {#if isOpen(m.mod_id)}
           <div class="rels">
-            {#if canOperate}
-              <div class="modactions">
-                <button class="link" onclick={(e) => rename(m, e)} title={t('mm.renameTitle')}>
-                  {t('mm.rename')}
-                </button>
-                {#if canDebug}
-                  <button class="link" onclick={(e) => merge(m, e)} title={t('mm.mergeTitle')}>
-                    {t('mm.merge')}
-                  </button>
-                  <span class="faint mono modid">#{m.mod_id}</span>
-                {/if}
-              </div>
-            {/if}
-            {#if relLoading}
+            {#if loadingIds.includes(m.mod_id)}
               <div class="muted s">{t('common.loading')}</div>
             {/if}
-            {#each releases as rel (rel.release_id)}
+            {#each relsByMod[m.mod_id] ?? [] as rel (rel.release_id)}
               <div class="rel">
                 <div class="relhead">
                   <span class="rver mono">{rel.version_number}</span>
@@ -437,9 +441,14 @@
                 </div>
                 {#each rel.files as f (f.sha1)}
                   <div class="file">
+                    <!-- the file's own embedded icon when the mirror holds the
+                         jar; otherwise the mod's, because an uncached build has
+                         no icon of its own and a letter says less than the mod's
+                         face does -->
                     <ModIcon
                       name={f.filename ?? m.name}
-                      source={{ type: 'smrt_cache', sha1: f.sha1 }}
+                      source={f.cached ? { type: 'smrt_cache', sha1: f.sha1 } : iconSource(m)}
+                      sha1={f.cached ? f.sha1 : (m.icon_sha1 ?? null)}
                       size={22}
                       mono
                     />
@@ -452,20 +461,20 @@
                     </div>
                     {#if f.modrinth_version_id}
                       <span class="chip verified" title="Modrinth-verified">{t('mm.verified')}</span>
-                    {:else if modHasVerified}
+                    {:else if hasVerified(m.mod_id)}
                       <span class="chip repack" title={t('mm.repackHint')}>{t('mm.repack')}</span>
                     {:else}
                       <span class="chip">{t('mm.selfhost')}</span>
                     {/if}
                     {#if canOperate}
                       <div class="factions">
-                        {#if !f.modrinth_version_id && modHasVerified && f.cached}
+                        {#if !f.modrinth_version_id && hasVerified(m.mod_id) && f.cached}
                           <button
                             class="link"
                             class:active={diffFor === f.sha1}
                             onclick={() => showDiff(f)}>{t('mm.diff')}</button>
                         {/if}
-                        <button class="link" onclick={() => editFile(f, rel, m.name)}>{t('mm.edit')}</button>
+                        <button class="link" onclick={() => editFile(f, rel, m.name, m.mod_id)}>{t('mm.edit')}</button>
                         <button class="link" onclick={() => delFile(f)}>{t('common.delete')}</button>
                         <button class="link danger" onclick={() => takedown(f)} title={t('mm.takedownHint')}>{t('mm.takedown')}</button>
                       </div>
@@ -499,7 +508,7 @@
                 {/each}
               </div>
             {/each}
-            {#if !relLoading && releases.length === 0}
+            {#if !loadingIds.includes(m.mod_id) && (relsByMod[m.mod_id] ?? []).length === 0}
               <div class="muted s">{t('mirror.noVersions')}</div>
             {/if}
           </div>
@@ -678,11 +687,10 @@
     margin-left: 1px;
   }
   .modactions {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    justify-content: flex-end;
     gap: var(--space-2);
-    padding: 0 0 4px;
+    flex: none;
   }
   .modid {
     font-size: var(--fs-xs);

@@ -162,6 +162,19 @@ version section when a release is tagged.
 
 ### Fixed
 
+- The registry view opens more than one mod at a time, shows an icon on every
+  build, and stops leaving a band of empty space when a mod is expanded.
+  Comparing two mods' builds is the reason to open them at all, and a single
+  open slot made that a matter of remembering what the other one said. A build
+  the mirror has not cached had no icon candidate at all -- its own jar is not
+  here to read one from -- so it fell to a letter; it now borrows the mod's,
+  which is what the row above it already shows. The operator actions (rename,
+  merge, the id) sat in a right-aligned band above the releases, so the left of
+  that band read as an unexplained indent; they are on the mod's own row now,
+  where the mod they act on is.
+
+### Fixed
+
 - A bad value is reported at the field, while it is being typed. Around ten
   error signals existed across every view, so a wrong value surfaced as a notice
   after saving: you learned it was wrong after trying to use it. Every rule the
