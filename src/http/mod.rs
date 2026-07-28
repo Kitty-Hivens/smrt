@@ -111,6 +111,77 @@ mod tests {
         assert_eq!(&body[..], b"u/42/MyPack");
     }
 
+    // A wildcard segment is `{*name}`; `{{` and `}}` are how axum 0.8 escapes a
+    // literal brace. Written `{{*name}}` a route quietly stops matching anything
+    // real and every request for it falls through to the SPA -- which is a 200
+    // page of HTML where an asset or a file was asked for, not an error anyone
+    // notices. Both wildcard routes are pinned here by behaviour: reaching the
+    // handler at all is the assertion.
+    #[tokio::test]
+    async fn wildcard_routes_reach_their_handlers() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config {
+            bind_addr: std::net::SocketAddr::from_str("127.0.0.1:0").unwrap(),
+            storage_dir: dir.path().to_path_buf(),
+            admin_token: None,
+            cookie_secure: false,
+            mirror_base: "http://localhost".into(),
+            github_client_id: None,
+            github_client_secret: None,
+            admin_github_uids: Vec::new(),
+            debug_token: None,
+            debug_github_uids: Vec::new(),
+        };
+        let app = router(AppState::new(config).unwrap());
+
+        // A panel asset that does not exist answers 404 from the asset handler.
+        // Escaped, this request would instead be served the app shell: 200 HTML.
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/assets/nothing-here.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "an /assets/ request must reach the asset handler, not the SPA fallback"
+        );
+
+        // Same for a pack's static tree, one level deep so only a wildcard can
+        // match it. The handler answers the API's error envelope; the fallback
+        // answers plain text, so the body says which one replied.
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/packs/Ghost/static/_nexira/icon.png")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v.get("error").cloned())
+                .is_some(),
+            "a pack-static request must reach the handler; got {:?}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+
     #[test]
     fn full_router_assembles_without_route_conflicts() {
         let dir = tempfile::tempdir().unwrap();

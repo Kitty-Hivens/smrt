@@ -32,7 +32,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/packs/{pack_id}/diff", get(get_pack_diff))
         .route(
-            "/v1/packs/{pack_id}/static/{{*rel_path}}",
+            "/v1/packs/{pack_id}/static/{*rel_path}",
             get(get_pack_static),
         )
         .route("/v1/servers", get(list_servers))

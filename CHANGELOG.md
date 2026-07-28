@@ -59,6 +59,13 @@ version section when a release is tagged.
 
 ### Fixed
 
+- The panel and every curated pack asset are served again. The axum 0.8 route
+  migration wrote the two wildcard routes with escaped braces (`{{*path}}`),
+  which matches a literal path rather than any real request: every panel asset
+  was answered with the app shell, so the panel loaded as a blank page, and
+  every `/v1/packs/{id}/static/...` file -- pack icons, banners, and any
+  `smrt_static` source a manifest points at -- answered 404. Both routes are
+  pinned by tests that assert the request reaches its handler.
 - Two accounts editing one pack no longer lose each other's work. The config
   read answers with an `ETag` of its authored content and a save may carry it
   as `If-Match`; a save whose base has moved on is refused with 409 instead of
