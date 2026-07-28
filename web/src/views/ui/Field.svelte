@@ -26,34 +26,55 @@
   let {
     label,
     hint,
+    error,
     wide = false,
     children,
   }: {
     label: string;
     hint?: string;
+    /// What is wrong with the value in this field, said at the field while it is
+    /// being typed rather than as a notice after a save the server refused.
+    error?: string | null;
     wide?: boolean;
     children: Snippet;
   } = $props();
 
   const captionId = `fld-${nextId()}`;
+  const errorId = `${captionId}-err`;
 
   // The control belongs to the caller, so the wiring happens here rather than as
   // an id threaded through every call site: one mechanism that cannot drift,
   // instead of forty chances to forget one. A control that already carries its
   // own name keeps it.
+  function control(node: HTMLElement): HTMLElement | null {
+    return node.querySelector<HTMLElement>('input, textarea, select, [role="combobox"]');
+  }
+
   function nameControl(node: HTMLElement) {
-    const el = node.querySelector<HTMLElement>(
-      'input, textarea, select, [role="combobox"]',
-    );
-    if (!el || el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')) return;
-    el.setAttribute('aria-labelledby', captionId);
+    const el = control(node);
+    if (!el) return;
+    if (!el.getAttribute('aria-label') && !el.getAttribute('aria-labelledby')) {
+      el.setAttribute('aria-labelledby', captionId);
+    }
+    // The error has to reach the control, not just the eye: a caption below it
+    // that nothing points at is the same defect the label had.
+    $effect(() => {
+      if (error) {
+        el.setAttribute('aria-invalid', 'true');
+        el.setAttribute('aria-describedby', errorId);
+      } else {
+        el.removeAttribute('aria-invalid');
+        el.removeAttribute('aria-describedby');
+      }
+    });
   }
 </script>
 
 <div class="field" class:wide use:nameControl>
   <span class="lbl" id={captionId}>{label}</span>
   {@render children()}
-  {#if hint}<span class="hint">{hint}</span>{/if}
+  {#if error}<span class="err" id={errorId}>{error}</span>{/if}
+  {#if hint && !error}<span class="hint">{hint}</span>{/if}
 </div>
 
 <style>
@@ -75,5 +96,16 @@
     font-size: var(--fs-xs);
     color: var(--fg-dim);
     line-height: 1.4;
+  }
+  /* the error takes the hint's place rather than pushing it down: a field that
+     grows while being typed in moves everything under it */
+  .err {
+    font-size: var(--fs-xs);
+    color: var(--danger);
+    line-height: 1.4;
+  }
+  .field:has(.err) :global(input),
+  .field:has(.err) :global(textarea) {
+    border-color: var(--danger);
   }
 </style>
