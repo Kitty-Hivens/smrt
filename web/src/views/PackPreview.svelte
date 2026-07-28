@@ -7,6 +7,7 @@
   import ModIcon from './ModIcon.svelte';
   import { renderMarkdown } from '../lib/markdown';
   import { diffIsEmpty, diffManifests } from '../lib/diff';
+  import { unroll } from '../lib/motion.svelte';
   import {
     assetName,
     bucketAssets,
@@ -273,7 +274,7 @@
           <span class="caret"></span>{t('prev.libraries')} <span class="faint">({libraries.length})</span>
         </button>
         {#if libsOpen}
-          <div class="rows">
+          <div class="rows" transition:unroll>
             {#each libraries as m (m.filename)}
               <ModRow
                 mod={m}

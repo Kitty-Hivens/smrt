@@ -5,7 +5,7 @@
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
-  import { stagger } from '../lib/motion.svelte';
+  import { arrive, stagger } from '../lib/motion.svelte';
   import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
   import { isDebug } from '../lib/roles';
   import type {
@@ -827,7 +827,13 @@
   ]);
 </script>
 
-<div class="hd">
+<!-- The editor arrives rather than being present. `|global` is load-bearing:
+     these elements belong to this component, and the block that creates them is
+     the caller's `{#if}` -- a local transition does not play then (#114). Both
+     halves take the same duration, so they read as one surface, and that
+     duration comes from the stylesheet's own token, which reduced motion
+     zeroes. -->
+<div class="hd" in:arrive|global>
   <h2 class="ttl mono">{packId}<span class="faint">/{t('pe.edit')}</span></h2>
   <TabStrip value={tab} tabs={tabItems} ariaLabel={t('pe.edit')} onChange={(v) => (tab = v as Tab)} />
   <div class="spacer"></div>
@@ -876,7 +882,7 @@
 
 
 
-<div class="body" class:split={previewOpen}>
+<div class="body" class:split={previewOpen} in:arrive|global>
   <div class="editcol">
     {#if loading}
       <div class="muted mono">{t('common.loading')}</div>

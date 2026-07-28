@@ -5,6 +5,9 @@
 // app.css). Durations and easings live in app.css as tokens; these are the
 // behaviours that need JavaScript.
 
+import { fly, slide } from 'svelte/transition';
+import type { TransitionConfig } from 'svelte/transition';
+
 /// Requests currently in flight, for the shell's activity wire. A counter
 /// rather than a boolean: overlapping requests must not have the first one to
 /// finish declare the app idle.
@@ -81,4 +84,83 @@ export function countUp(node: HTMLElement, value: number) {
     update: run,
     destroy: () => cancelAnimationFrame(raf),
   };
+}
+
+// ── the shared duration source ──────────────────────────────────────────────
+//
+// A JavaScript transition must not carry its own timing. app.css zeroes the
+// duration tokens under `prefers-reduced-motion: reduce`, and a transition that
+// reads them there is disarmed by that one rule rather than by remembering to
+// ask a second time. Two motion switches is how a product ends up with a
+// setting that only half works.
+
+/// Milliseconds for a duration token, as the stylesheet answers it right now.
+/// Read per call rather than cached: the reduced-motion rule rewrites these,
+/// and a cached copy would be the stale half of a setting.
+export function dur(token: 'state' | 'enter' | 'layer'): number {
+  const raw = getComputedStyle(document.documentElement)
+    .getPropertyValue(`--dur-${token}`)
+    .trim();
+  const n = parseFloat(raw);
+  if (!Number.isFinite(n)) return 0;
+  return raw.endsWith('ms') ? n : raw.endsWith('s') ? n * 1000 : n;
+}
+
+/// The `--ease-out` token as a JavaScript easing, so a sliding panel and a
+/// counting digit trace the same curve. Falls back to a plain cubic ease-out if
+/// the token is not a cubic-bezier -- a near-miss curve is better than a
+/// linear one, and better than throwing inside a transition.
+function easeOut(): (t: number) => number {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--ease-out').trim();
+  const m = /^cubic-bezier\(([^)]+)\)$/.exec(raw);
+  const nums = m?.[1].split(',').map((s) => parseFloat(s.trim()));
+  if (!nums || nums.length !== 4 || nums.some((n) => !Number.isFinite(n))) {
+    return (t) => 1 - Math.pow(1 - t, 3);
+  }
+  return cubicBezier(nums[0], nums[1], nums[2], nums[3]);
+}
+
+/// y(x) of a CSS cubic-bezier easing. x is solved by bisection rather than
+/// Newton-Raphson: the curve is monotonic in x by CSS's own constraint, twenty
+/// halvings put the error below a thousandth of a frame, and there is no
+/// derivative to get wrong.
+function cubicBezier(x1: number, y1: number, x2: number, y2: number): (t: number) => number {
+  const axis = (a: number, b: number, t: number) => {
+    const u = 1 - t;
+    return 3 * u * u * t * a + 3 * u * t * t * b + t * t * t;
+  };
+  return (x: number) => {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    let lo = 0;
+    let hi = 1;
+    for (let i = 0; i < 20; i++) {
+      const mid = (lo + hi) / 2;
+      if (axis(x1, x2, mid) < x) lo = mid;
+      else hi = mid;
+    }
+    return axis(y1, y2, (lo + hi) / 2);
+  };
+}
+
+/// A surface arriving rather than being present: it rises the last few pixels
+/// into place as it fades in. Used where a whole view replaces another, so the
+/// eye is given the direction the new thing came from.
+///
+/// At the use site this needs `|global` whenever the element belongs to a
+/// component that a parent block creates -- a local transition does not play
+/// then. Measured, not assumed (#114).
+export function arrive(node: Element, params?: { y?: number }): TransitionConfig {
+  return fly(node, {
+    y: params?.y ?? 8,
+    duration: dur('layer'),
+    easing: easeOut(),
+  });
+}
+
+/// A block unrolling in place, and rolling back up when it closes: a mod's
+/// builds under the mod they belong to. Height, so the rows below are pushed
+/// rather than covered -- the list stays one surface.
+export function unroll(node: Element): TransitionConfig {
+  return slide(node, { duration: dur('enter'), easing: easeOut() });
 }
