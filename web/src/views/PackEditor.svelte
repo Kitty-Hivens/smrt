@@ -1372,7 +1372,7 @@
   /* ---- responsive reflow ---- */
   /* multi-column forms collapse; the editor/preview split stacks. The desktop
      rules above are left untouched, so wide layouts are unchanged. */
-  @media (max-width: 768px) {
+  @container view (max-width: 768px) {
     .meta,
     .brow {
       grid-template-columns: repeat(2, 1fr);
@@ -1385,7 +1385,7 @@
       max-height: none;
     }
   }
-  @media (max-width: 560px) {
+  @container view (max-width: 560px) {
     .meta,
     .brow {
       grid-template-columns: 1fr;
@@ -1394,7 +1394,7 @@
 
   /* mod row: the 8-column desktop grid becomes a stacked flex card on narrow
      viewports. Every control is preserved -- only the arrangement changes. */
-  @media (min-width: 561px) and (max-width: 768px) {
+  @container view (min-width: 561px) and (max-width: 768px) {
     .modrow {
       display: flex;
       flex-wrap: wrap;
@@ -1425,7 +1425,7 @@
       flex: 0 0 auto;
     }
   }
-  @media (max-width: 560px) {
+  @container view (max-width: 560px) {
     .modrow {
       display: flex;
       flex-wrap: wrap;

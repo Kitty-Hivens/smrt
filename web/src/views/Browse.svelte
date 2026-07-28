@@ -503,7 +503,7 @@
     grid-template-columns: 1fr 1fr;
     gap: var(--space-4);
   }
-  @media (max-width: 768px) {
+  @container view (max-width: 768px) {
     .cols {
       grid-template-columns: 1fr;
     }

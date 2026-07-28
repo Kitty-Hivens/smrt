@@ -32,6 +32,23 @@
   } = $props();
 
   const MARGIN = 8;
+  // declared above the geometry helpers: they run during init, before the
+  // element exists, and reading a `let` from its own temporal dead zone throws
+  let panel = $state<HTMLElement | null>(null);
+
+  // The dock is `position: fixed`, but the view it lives in is now a container
+  // (`container-type` makes an element the containing block for fixed
+  // descendants), so "fixed" means fixed to the column rather than to the
+  // window. That is the behaviour we want -- a tool panel belongs to the view it
+  // was opened from and must not cover the rail -- but the clamp has to measure
+  // the same box, or dragging would be bounded by a rectangle the dock does not
+  // live in.
+  function bounds() {
+    const box = panel?.offsetParent?.getBoundingClientRect();
+    return box
+      ? { w: box.width, h: box.height }
+      : { w: window.innerWidth, h: window.innerHeight };
+  }
   // one storage slot per dock instance; `id` is fixed for the life of a dock
   const storageKey = $derived(`smrt.dock.${id}`);
 
@@ -52,19 +69,18 @@
   // opens on top of the buttons that opened it has to be dragged before it can
   // be read.
   function initial(): { x: number; y: number } {
-    return stored() ?? { x: Math.max(MARGIN, window.innerWidth - width - 24), y: 168 };
+    return stored() ?? { x: Math.max(MARGIN, bounds().w - width - 24), y: 24 };
   }
 
   let pos = $state(initial());
   let dragging = $state(false);
-  let panel = $state<HTMLElement | null>(null);
 
   function clamp(p: { x: number; y: number }) {
     const w = panel?.offsetWidth ?? width;
     return {
       // keep a grabbable strip on screen in both axes, whatever the viewport does
-      x: Math.min(Math.max(MARGIN - w + 80, p.x), window.innerWidth - 80),
-      y: Math.min(Math.max(MARGIN, p.y), window.innerHeight - 40),
+      x: Math.min(Math.max(MARGIN - w + 80, p.x), bounds().w - 80),
+      y: Math.min(Math.max(MARGIN, p.y), bounds().h - 40),
     };
   }
 
