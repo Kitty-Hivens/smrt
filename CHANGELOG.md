@@ -72,7 +72,8 @@ version section when a release is tagged.
   running animations and the computed style shows the builds' height climbing
   0 -> 41 -> 71 -> 84 -> 98px across a 150ms declared duration, and the editor's
   opacity climbing over 240ms; under `prefers-reduced-motion` both report zero
-  animations and arrive already finished on the first frame.
+  animations and arrive already finished on the first frame. The preview's two
+  collapsed lists -- libraries and config files -- open the same way.
 
 ### Removed
 
