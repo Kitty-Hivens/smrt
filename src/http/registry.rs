@@ -41,7 +41,10 @@ pub fn router(state: AppState) -> Router {
 fn member_routes(state: AppState) -> Router {
     Router::new()
         .route("/v1/registry/mods", get(get_mods))
-        .route("/v1/registry/mod-releases/{mod_id}", get(get_releases_by_id))
+        .route(
+            "/v1/registry/mod-releases/{mod_id}",
+            get(get_releases_by_id),
+        )
         .route("/v1/registry/graph", get(get_graph))
         .route("/v1/registry/graph/slices", get(get_graph_slices))
         .route("/v1/registry/modrinth-names", get(get_modrinth_names))
@@ -63,7 +66,10 @@ fn operator_routes(state: AppState) -> Router {
         .route("/v1/registry/eligible", get(get_eligible))
         // registry browser: versions by surrogate id, builds (the faceted mod list
         // and a mod's releases are read-only and open to members -- see below)
-        .route("/v1/registry/mod-versions/{mod_id}", get(get_versions_by_id))
+        .route(
+            "/v1/registry/mod-versions/{mod_id}",
+            get(get_versions_by_id),
+        )
         .route("/v1/registry/builds", get(get_builds))
         .route(
             "/v1/registry/builds/{pack_id}/{pack_version}",
@@ -87,7 +93,10 @@ fn operator_routes(state: AppState) -> Router {
         .route("/v1/registry/unassigned", get(get_unassigned))
         // repackage (tamper) diff: what a self-hosted jar changed vs its genuine
         // Modrinth counterpart. Read-only.
-        .route("/v1/registry/files/{sha1}/repack-diff", get(get_repack_diff))
+        .route(
+            "/v1/registry/files/{sha1}/repack-diff",
+            get(get_repack_diff),
+        )
         // cosmetic: canonical name / slug, nothing the resolver reads
         .route("/v1/registry/mod-meta/{mod_id}", put(put_mod_rename))
         // Naming a cached jar (its mod, version, channel, loaders/mc). It does

@@ -13,7 +13,7 @@ import type { Requirement } from "./Requirement";
  * rendering). All three optional; manifests without them parse cleanly
  * on every client that reached the v2 schema.
  */
-export type Display = { name?: string, description?: string, category?: string, incompatible_with: Array<string>, 
+export type Display = { name?: string, description?: string, category?: string, incompatible_with?: Array<string>, 
 /**
  * SPDX license identifier where known (e.g. "MIT", "LGPL-3.0-only",
  * "CC-BY-NC-SA-3.0"). Useful for a launcher to surface
@@ -47,7 +47,7 @@ role?: string,
  * validates the reference at install time; missing references
  * surface as a warning rather than a hard failure.
  */
-requires: Array<Requirement>, 
+requires?: Array<Requirement>, 
 /**
  * Presence class of the entry in this pack (required / optional_client /
  * optional_server / optional_both / coremod), computed at build from the

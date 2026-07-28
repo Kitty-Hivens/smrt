@@ -31,7 +31,10 @@ pub fn router(state: AppState) -> Router {
             get(get_manifest_version),
         )
         .route("/v1/packs/{pack_id}/diff", get(get_pack_diff))
-        .route("/v1/packs/{pack_id}/static/{{*rel_path}}", get(get_pack_static))
+        .route(
+            "/v1/packs/{pack_id}/static/{{*rel_path}}",
+            get(get_pack_static),
+        )
         .route("/v1/servers", get(list_servers))
         .route("/v1/servers/{server_id}", get(get_server))
         .route("/v1/featured", get(get_featured))

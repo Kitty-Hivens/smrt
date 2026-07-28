@@ -4,4 +4,4 @@
  * Authored mapping of mod filename to role string.
  * Loaded from a TOML file via [`load_role_table`].
  */
-export type RoleTable = { roles: { [key in string]?: string }, };
+export type RoleTable = { roles: { [key in string]: string }, };
