@@ -18,6 +18,7 @@ import type {
   JobResult,
   ManifestVersionsListing,
   ModDetail,
+  ModHit,
   ModrinthHit,
   ModrinthVersion,
   ModSummary,
@@ -398,6 +399,21 @@ export const api = {
   staticUrl(id: string, relPath: string): string {
     const enc = relPath.split('/').map(encodeURIComponent).join('/');
     return `/v1/packs/${encodeURIComponent(id)}/static/${enc}`;
+  },
+
+  // One search over both places a mod can come from: the mirror's registry and
+  // Modrinth, merged and ranked against the pack (#101). `pack` is what makes a
+  // bridged verdict possible -- whether the connector is already in the pack.
+  searchMods: (
+    q: string,
+    opts: { mc?: string; loader?: string; pack?: string; limit?: number } = {},
+  ) => {
+    const p = new URLSearchParams({ q });
+    if (opts.mc) p.set('mc', opts.mc);
+    if (opts.loader) p.set('loader', opts.loader);
+    if (opts.pack) p.set('pack', opts.pack);
+    if (opts.limit) p.set('limit', String(opts.limit));
+    return getJson<ModHit[]>(`/v1/search/mods?${p}`);
   },
 
   // ── Modrinth search-to-add ──

@@ -44,6 +44,8 @@ export type { Requirement } from './bindings/Requirement';
 export type { ValidateReport } from './bindings/ValidateReport';
 
 // resolve report (config vs registry dependency graph)
+export type { LoaderFit } from './bindings/LoaderFit';
+export type { ModHit } from './bindings/ModHit';
 export type { PulledPreview } from './bindings/PulledPreview';
 export type { ResolveReport } from './bindings/ResolveReport';
 export type { MissingDep } from './bindings/MissingDep';

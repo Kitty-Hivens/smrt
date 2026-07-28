@@ -24,6 +24,7 @@
   import ResolvePanel from './ResolvePanel.svelte';
   import ModrinthPicker from './ModrinthPicker.svelte';
   import MirrorPicker from './MirrorPicker.svelte';
+  import ModPicker from './ModPicker.svelte';
   import GithubPicker from './GithubPicker.svelte';
   import PackPreview from './PackPreview.svelte';
   import DropZone from './ui/DropZone.svelte';
@@ -140,7 +141,14 @@
   let bootJobId = $state<string | null>(null);
 
   // source picker: { src, row } -- row null means "add a new mod"
-  let pick = $state<{ src: 'cache' | 'modrinth' | 'github'; row: number | null } | null>(null);
+  // 'search' finds a mod across both sources (#101); 'cache' is the other
+  // question -- copying from a build, or a raw jar by hash -- and keeps its own
+  // picker; 'modrinth' remains for re-pinning a row that is already a Modrinth
+  // source, where the project is known and only the version is in question.
+  let pick = $state<{
+    src: 'search' | 'cache' | 'modrinth' | 'github';
+    row: number | null;
+  } | null>(null);
   // a resolve-report suggestion routed into the Modrinth picker as its search
   let suggestQuery = $state('');
   let dropBusy = $state(false);
@@ -885,8 +893,8 @@
           {#snippet actions()}
             <button class="sm" class:active={sortDir === 'asc'} onclick={() => (sortDir = 'asc')} title={t('pe.sortHint')}>{t('pe.sortAsc')}</button>
             <button class="sm" class:active={sortDir === 'desc'} onclick={() => (sortDir = 'desc')} title={t('pe.sortHint')}>{t('pe.sortDesc')}</button>
-            <button class="sm" onclick={() => (pick = { src: 'cache', row: null })}>{t('pe.fromMirror')}</button>
-            <button class="sm" onclick={() => (pick = { src: 'modrinth', row: null })}>{t('pe.fromModrinth')}</button>
+            <button class="sm" onclick={() => (pick = { src: 'search', row: null })}>{t('pe.addMod')}</button>
+            <button class="sm" onclick={() => (pick = { src: 'cache', row: null })}>{t('pe.fromBuild')}</button>
             <button class="sm" onclick={() => (pick = { src: 'github', row: null })}>{t('pe.fromGithub')}</button>
             {#if packId.startsWith('u/')}
               <label class="sm valbtn">
@@ -1095,7 +1103,7 @@
         report={resReport}
         onSuggest={(sel) => {
           suggestQuery = sel.replace(/^modrinth:/, '');
-          pick = { src: 'modrinth', row: null };
+          pick = { src: 'search', row: null };
         }}
       />
     {:else if reportTab === 'validate'}
@@ -1104,6 +1112,23 @@
   </FloatDock>
 {/if}
 
+{#if pick?.src === 'search' && cfg}
+  <ModPicker
+    {packId}
+    mc={cfg.minecraft_version}
+    loader={cfg.loader.name}
+    present={presentKeys(pick.row)}
+    initialQuery={suggestQuery}
+    onClose={() => {
+      pick = null;
+      suggestQuery = '';
+    }}
+    onPick={(sel) => {
+      onMirrorPick(sel);
+      suggestQuery = '';
+    }}
+  />
+{/if}
 {#if pick?.src === 'cache' && cfg}
   <MirrorPicker
     mc={cfg.minecraft_version}
