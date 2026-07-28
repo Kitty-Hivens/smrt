@@ -93,6 +93,7 @@ fn authoring_router(state: AppState) -> Router {
         )
         .route("/v1/authoring/packs/{pack_id}/resolve", get(pack_resolve))
         .route("/v1/authoring/packs/{pack_id}/graph", get(pack_graph_view))
+        .route("/v1/search/mods", get(search_mods_combined))
         .route("/v1/modrinth/search", get(modrinth_search))
         .route("/v1/modrinth/versions", get(modrinth_versions))
         .route("/v1/modrinth/icon", get(modrinth_icon))
@@ -381,6 +382,79 @@ async fn save_featured(
 ) -> Result<(StatusCode, Json<Featured>), ApiError> {
     state.storage.save_featured(&featured).await?;
     Ok((StatusCode::CREATED, Json(featured)))
+}
+
+#[derive(serde::Deserialize)]
+struct ModSearchQuery {
+    q: String,
+    mc: Option<String>,
+    loader: Option<String>,
+    /// The pack being filled. Its declared mods decide whether a foreign-loader
+    /// hit is carried by a bridge already in the pack or would need one added --
+    /// two different answers that must not be flattened into "incompatible".
+    pack: Option<String>,
+    limit: Option<usize>,
+}
+
+/// One search over both places a mod can come from (#101).
+///
+/// Provenance is the mirror's problem, not a question to ask before the question:
+/// a hit says whether the mirror holds the bytes, and the caller does not have to
+/// pick a door first. Neither loader nor Minecraft version filters -- a mod
+/// riding a bridge loads, and hiding it would be a lie -- they rank, and each hit
+/// carries the verdict it was ranked by.
+async fn search_mods_combined(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Query(q): Query<ModSearchQuery>,
+) -> Result<Json<Vec<crate::authoring::ModHit>>, ApiError> {
+    // The pack is optional, but reading one is authoring: gate it the same way
+    // the rest of the authoring surface is.
+    let present: std::collections::HashSet<String> = match &q.pack {
+        Some(pack_id) => {
+            if !super::auth::may_author(&identity, pack_id) {
+                return Err(ApiError::Forbidden);
+            }
+            state
+                .storage
+                .load_pack_config(pack_id)
+                .await
+                .map(|cfg| {
+                    cfg.mods
+                        .iter()
+                        .filter_map(|m| match &m.source {
+                            SourceDecl::Modrinth { project_id, .. } => Some(project_id.clone()),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+        None => Default::default(),
+    };
+    let cached: std::collections::HashSet<String> = state
+        .storage
+        .list_cache_inventory()
+        .await
+        .map(|inv| inv.into_iter().map(|e| e.sha1).collect())
+        .unwrap_or_default();
+
+    let ctx = crate::authoring::PackContext {
+        mc: q.mc.as_deref(),
+        loader: q.loader.as_deref(),
+        present_projects: &present,
+    };
+    let hits = crate::authoring::search_mods(
+        &q.q,
+        &ctx,
+        &cached,
+        q.limit.unwrap_or(30).clamp(1, 100),
+        &state.registry,
+        &state.modrinth,
+    )
+    .await
+    .map_err(ApiError::Internal)?;
+    Ok(Json(hits))
 }
 
 // ── Modrinth proxy (search-to-add) ──────────────────────────────────────────

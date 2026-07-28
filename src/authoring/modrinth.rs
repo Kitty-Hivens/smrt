@@ -442,6 +442,14 @@ pub struct SearchHit {
     /// as a pick-time facet.
     #[serde(default)]
     pub author: String,
+    /// Modrinth's category facets, which is where it puts the loaders. The only
+    /// loader signal available for a project the mirror has never harvested, so
+    /// without it such a hit cannot be judged for fit at all.
+    #[serde(default)]
+    pub categories: Vec<String>,
+    /// Latest MC versions the project supports, as Modrinth reports them.
+    #[serde(default)]
+    pub versions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
