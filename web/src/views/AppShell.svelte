@@ -5,7 +5,7 @@
   import { href, plainClick, route, visibleSections, type Section } from '../lib/route.svelte';
   import { reload } from '../lib/reload.svelte';
   import { activity } from '../lib/motion.svelte';
-  import { t, i18n, LOCALES } from '../lib/i18n.svelte';
+  import { t } from '../lib/i18n.svelte';
   import Avatar from './Avatar.svelte';
   import NavIcon from './ui/NavIcon.svelte';
 
@@ -61,6 +61,7 @@
     moderation: 'nav.moderation',
     audit: 'nav.audit',
     profile: 'nav.profile',
+    settings: 'nav.settings',
     mypacks: 'nav.mypacks',
   };
 </script>
@@ -161,18 +162,6 @@
             <span class="spin" aria-hidden="true"></span>
           </button>
         {/if}
-        <div class="locale" role="group" aria-label={t('shell.locale')}>
-          {#each LOCALES as loc}
-            <button
-              class="loc"
-              class:active={i18n.locale === loc}
-              aria-pressed={i18n.locale === loc}
-              onclick={() => i18n.set(loc)}
-            >
-              {loc.toUpperCase()}
-            </button>
-          {/each}
-        </div>
       </div>
     </header>
 
@@ -470,29 +459,6 @@
       animation: none;
     }
   }
-  .locale {
-    display: inline-flex;
-    border: 1px solid var(--seam-bright);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-  }
-  .loc {
-    border: none;
-    border-radius: 0;
-    padding: 5px 11px;
-    font-size: var(--fs-xs);
-    letter-spacing: 0.04em;
-    color: var(--fg-dim);
-    background: transparent;
-    box-shadow: none;
-  }
-  .loc:hover {
-    background: var(--panel-2);
-  }
-  .loc.active {
-    background: var(--accent-soft);
-    color: var(--accent-strong);
-  }
   .content {
     flex: 1;
     overflow: auto;
@@ -599,7 +565,7 @@
       position: fixed;
       inset: 0;
       z-index: 40;
-      background: rgba(0, 0, 0, 0.6);
+      background: var(--scrim);
       opacity: 0;
       visibility: hidden;
       transition:

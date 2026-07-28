@@ -70,6 +70,13 @@
     <circle cx="3.2" cy="4.4" r="0.9" fill="currentColor" stroke="none" />
     <circle cx="3.2" cy="8" r="0.9" fill="currentColor" stroke="none" />
     <circle cx="3.2" cy="11.6" r="0.9" fill="currentColor" stroke="none" />
+  {:else if name === 'settings'}
+    <path d="M2.6 4.4h4" />
+    <path d="M9.4 4.4h4" />
+    <path d="M2.6 11.6h4.8" />
+    <path d="M10.2 11.6h3.2" />
+    <circle cx="7.8" cy="4.4" r="1.7" />
+    <circle cx="8.9" cy="11.6" r="1.7" />
   {:else if name === 'profile'}
     <circle cx="8" cy="5.4" r="2.6" />
     <path d="M2.9 13.8c0-2.9 2.3-4.3 5.1-4.3s5.1 1.4 5.1 4.3" />
