@@ -3,3 +3,8 @@
 .env
 .idea/
 .vscode/
+
+# scratch probes: driving the panel with a headless browser needs the web
+# package context, so they are written next to the real scripts and must not
+# be committed with them
+web/scripts/.*.tmp.mjs
