@@ -72,6 +72,25 @@ async function toError(r: Response): Promise<ApiError> {
   return new ApiError(r.status, await r.text().catch(() => ''));
 }
 
+// A pack config together with the revision it was read at. The revision rides
+// back on the next save as `If-Match`, so a save whose base is no longer what
+// is on disk is refused instead of quietly overwriting whoever saved first
+// (#52). Null means "no revision known" -- an unconditional write, which is
+// what a first save of a pack that has no config yet is.
+export interface RevisionedConfig {
+  config: PackConfig;
+  rev: string | null;
+}
+
+// The entity tag as an opaque revision: quoting and the weak-validator prefix
+// are transport, not identity.
+function revisionOf(r: Response): string | null {
+  const raw = r.headers.get('ETag');
+  if (!raw) return null;
+  const tag = raw.replace(/^W\//, '').replace(/^"|"$/g, '');
+  return tag || null;
+}
+
 async function getJson<T>(path: string): Promise<T> {
   activity.begin();
   try {
@@ -202,18 +221,52 @@ export const api = {
   removed: () => getJson<{ schema_version: number; removed: string[] }>('/v1/cache/removed'),
 
   // ── authoring: config, build ──
-  packConfig: (id: string) =>
-    getJson<PackConfig>(`/v1/authoring/packs/${encodeURIComponent(id)}/config`),
-  savePackConfig: (id: string, cfg: PackConfig) =>
-    send('PUT', `/v1/authoring/packs/${encodeURIComponent(id)}/config`, cfg),
+  async packConfig(id: string): Promise<RevisionedConfig> {
+    activity.begin();
+    try {
+      const r = await fetch(`/v1/authoring/packs/${encodeURIComponent(id)}/config`, {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      });
+      if (!r.ok) throw await toError(r);
+      return { config: (await r.json()) as PackConfig, rev: revisionOf(r) };
+    } finally {
+      activity.end();
+    }
+  },
+  // Save against `baseRev`: the mirror refuses the write with 409 when the
+  // stored config has moved on since. Passing null writes unconditionally --
+  // creating a config that does not exist yet, or a deliberate overwrite.
+  // Returns the revision the save produced, to edit on from.
+  async savePackConfig(
+    id: string,
+    cfg: PackConfig,
+    baseRev: string | null,
+  ): Promise<string | null> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (baseRev) headers['If-Match'] = `"${baseRev}"`;
+    activity.begin();
+    try {
+      const r = await fetch(`/v1/authoring/packs/${encodeURIComponent(id)}/config`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify(cfg),
+      });
+      if (!r.ok) throw await toError(r);
+      return revisionOf(r);
+    } finally {
+      activity.end();
+    }
+  },
   // overwrite the config with one reconstructed from a published build; returns it
-  async revertPackConfig(id: string, version: string): Promise<PackConfig> {
+  async revertPackConfig(id: string, version: string): Promise<RevisionedConfig> {
     const r = await fetch(
       `/v1/authoring/packs/${encodeURIComponent(id)}/config/revert?version=${encodeURIComponent(version)}`,
       { method: 'POST', credentials: 'include' },
     );
     if (!r.ok) throw await toError(r);
-    return (await r.json()) as PackConfig;
+    return { config: (await r.json()) as PackConfig, rev: revisionOf(r) };
   },
   async buildPack(
     id: string,

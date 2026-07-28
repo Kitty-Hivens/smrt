@@ -158,9 +158,17 @@
   const fail = notifyFail;
 
   // autosave
-  type SaveState = 'idle' | 'saving' | 'saved' | 'error';
+  type SaveState = 'idle' | 'saving' | 'saved' | 'error' | 'conflict';
   let saveState = $state<SaveState>('idle');
   let saveErr = $state('');
+  // The revision this editor loaded and has been saving against; it rides every
+  // save as a precondition, so a save the mirror would apply over someone else's
+  // is refused instead (#52). Null until the pack has a stored config.
+  let rev = $state<string | null>(null);
+  // A refused save is a fork in the road, not a retry: until the operator says
+  // whose version wins, autosave stops rather than re-sending a base the mirror
+  // has already rejected once.
+  let conflict = $state(false);
   // one slot for the save state, reused: a rejection that persists is one
   // notice, not one per attempt
   let saveToast: number | null = null;
@@ -187,17 +195,19 @@
   async function load() {
     loading = true;
     try {
-      const c = await api.packConfig(packId);
+      const { config: c, rev: r } = await api.packConfig(packId);
       if (!c.pack_meta) {
         c.pack_meta = { icon_url: null, banner_url: null, gallery_urls: [], description_md: null };
       }
       cfg = c;
+      rev = r;
       tagsStr = (c.tags ?? []).join(', ');
       cardGalleryStr = (c.pack_meta.gallery_urls ?? []).join('\n');
       lastSig = sig();
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) {
         cfg = null; // offer to create
+        rev = null;
       } else {
         fail(e);
       }
@@ -217,14 +227,18 @@
     const ok = await dialogs.confirm(t('pe.revertConfirm', { version }), { danger: true });
     if (!ok) return;
     try {
-      const c = await api.revertPackConfig(packId, version);
+      const { config: c, rev: r } = await api.revertPackConfig(packId, version);
       if (!c.pack_meta) {
         c.pack_meta = { icon_url: null, banner_url: null, gallery_urls: [], description_md: null };
       }
       cfg = c;
+      rev = r;
       tagsStr = (c.tags ?? []).join(', ');
       cardGalleryStr = (c.pack_meta.gallery_urls ?? []).join('\n');
       lastSig = sig(); // matches new cfg -> autosave doesn't re-fire
+      // a revert replaces the server's config outright, so whatever this editor
+      // was in conflict with is gone
+      clearConflict();
       if (previewOpen) previewToken++;
     } catch (e) {
       fail(e);
@@ -263,7 +277,7 @@
   // True while the editor holds edits the server has not accepted. Drives the
   // banner, the beforeunload guard and the close confirmation -- all three read
   // one fact rather than each deciding for itself.
-  const unsaved = $derived(saveState === 'error');
+  const unsaved = $derived(saveState === 'error' || saveState === 'conflict');
 
   // A tab close / reload with a rejected save pending would drop the edits
   // silently; the browser's own confirmation is the only thing that can stop it.
@@ -282,7 +296,7 @@
 
   // debounced autosave: deep-reads cfg + tags + gallery, persists once they settle
   $effect(() => {
-    if (!cfg) return;
+    if (!cfg || conflict) return;
     const s = sig();
     if (s === lastSig) return;
     saveState = 'saving';
@@ -322,22 +336,64 @@
       },
     };
     try {
-      await api.savePackConfig(packId, payload);
+      rev = await api.savePackConfig(packId, payload, rev);
       lastSig = s;
       saveState = 'saved';
       toasts.dismiss(saveToast);
       saveToast = null;
       if (previewOpen) previewToken++; // auto-refresh the preview
     } catch (e) {
-      saveState = 'error';
+      // 409: the stored config moved on since this editor read it -- someone
+      // else saved the same pack. The edits on screen are intact and unsaved;
+      // which version survives is the operator's call, not a retry's.
+      const stale = e instanceof ApiError && e.status === 409;
+      saveState = stale ? 'conflict' : 'error';
+      conflict = stale;
       saveErr = detailOf(e);
       saveToast = toasts.replace(saveToast, {
         kind: 'error',
-        text: t('pe.saveFailed'),
+        text: stale ? t('pe.conflict') : t('pe.saveFailed'),
         detail: saveErr,
         sticky: true,
-        action: { label: t('pe.saveRetry'), run: retrySave },
+        action: stale
+          ? { label: t('pe.conflictResolve'), run: resolveConflict }
+          : { label: t('pe.saveRetry'), run: retrySave },
       });
+    }
+  }
+
+  function clearConflict() {
+    conflict = false;
+    if (saveState === 'conflict') saveState = 'idle';
+    toasts.dismiss(saveToast);
+    saveToast = null;
+  }
+
+  // The two ways out of a refused save, both explicit: take the other version
+  // and lose the edits on screen, or save on top of it. Overwriting re-reads the
+  // current revision first and saves against that, so it stays a conditional
+  // write -- a third save landing in this very window is caught too, rather than
+  // being the one thing the fix does not cover.
+  async function resolveConflict() {
+    const choice = await dialogs.choose(t('pe.conflictAsk'), {
+      title: t('pe.conflictTitle'),
+      options: [
+        { value: 'reload', label: t('pe.conflictReload') },
+        { value: 'overwrite', label: t('pe.conflictOverwrite'), danger: true },
+      ],
+    });
+    if (choice === 'reload') {
+      clearConflict();
+      await load();
+    } else if (choice === 'overwrite') {
+      try {
+        rev = (await api.packConfig(packId)).rev;
+      } catch (e) {
+        fail(e);
+        return;
+      }
+      clearConflict();
+      await doSave(sig());
     }
   }
 
@@ -697,11 +753,17 @@
     </span>
   {/if}
   {#if !loading && cfg && tab === 'config'}
-    <span class="savestate" class:err={saveState === 'error'} title={saveErr}>
+    <span class="savestate" class:err={unsaved} title={saveErr}>
       {#if saveState === 'saving'}{t('pe.saving')}
       {:else if saveState === 'saved'}{t('pe.saved')}
+      {:else if saveState === 'conflict'}{t('pe.conflictShort')}
       {:else if saveState === 'error'}{t('pe.saveError')}{/if}
     </span>
+  {/if}
+  {#if saveState === 'conflict'}
+    <!-- the notice carries the same action, but it can be dismissed; a refused
+         save must not become unreachable because a toast was closed -->
+    <button class="sm danger" onclick={resolveConflict}>{t('pe.conflictResolve')}</button>
   {/if}
   {#if !loading && cfg}
     <button class="pv" class:active={previewOpen} onclick={() => (previewOpen = !previewOpen)}>

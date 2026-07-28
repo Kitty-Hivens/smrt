@@ -59,6 +59,17 @@ version section when a release is tagged.
 
 ### Fixed
 
+- Two accounts editing one pack no longer lose each other's work. The config
+  read answers with an `ETag` of its authored content and a save may carry it
+  as `If-Match`; a save whose base has moved on is refused with 409 instead of
+  overwriting whoever saved first, and the pack's whole load-merge-write runs
+  under a per-pack lock so two saves cannot interleave either. The editor keeps
+  the refused edits on screen, stops autosaving, and asks which version wins --
+  take the stored one, or save over it, the latter rebasing onto the current
+  revision so it stays a conditional write. Server-side changes a client cannot
+  cause -- publishing a pack, a pulled dependency appearing -- are outside the
+  revision, so they never reject an edit in flight, and a request that sends no
+  `If-Match` (the CLI, a script) writes unconditionally as before.
 - The curator slug is offered where it does something. It is load-bearing for
   a self-hosted mod, whose filename changes under it and which has no project
   id -- so a Modrinth row now states what actually keys it instead of showing

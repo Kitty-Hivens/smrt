@@ -13,6 +13,10 @@ pub struct Storage {
     /// Serializes the read-modify-write of removed.txt so concurrent takedowns
     /// don't lose each other's appends.
     removed_lock: Arc<tokio::sync::Mutex<()>>,
+    /// One lock per pack id, serializing the read-modify-write of that pack's
+    /// authoring config. See [`Storage::lock_pack_config`].
+    config_locks:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 impl Storage {
@@ -20,7 +24,22 @@ impl Storage {
         Self {
             root,
             removed_lock: Arc::new(tokio::sync::Mutex::new(())),
+            config_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
+    }
+
+    /// Hold this for the whole load-check-write of one pack's authoring config.
+    /// The config PUT reads the stored config, carries server-controlled fields
+    /// and pulled dependencies over from it, then writes the result -- two of
+    /// those interleaving drops whatever the first one merged in, which is the
+    /// same lost update the `If-Match` check exists to stop, just from the
+    /// other side (#52). Keyed by pack id, so packs never wait on each other.
+    pub async fn lock_pack_config(&self, pack_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = {
+            let mut locks = self.config_locks.lock().unwrap();
+            locks.entry(pack_id.to_string()).or_default().clone()
+        };
+        lock.lock_owned().await
     }
 
     pub fn root(&self) -> &Path {
@@ -303,6 +322,7 @@ impl Storage {
             self.save_pack_summary(&summary).await?;
             found = true;
         }
+        let _guard = self.lock_pack_config(pack_id).await;
         if let Ok(mut cfg) = self.load_pack_config(pack_id).await {
             cfg.visibility = visibility;
             self.save_pack_config(pack_id, &cfg).await?;
@@ -354,6 +374,9 @@ impl Storage {
                 "source and target pack id are the same".into(),
             ));
         }
+        // the existence check and the write of the clone are one step: two
+        // duplicates racing onto the same target must not both pass the check
+        let _guard = self.lock_pack_config(to).await;
         if fs::metadata(self.authoring_path(to, "config.json"))
             .await
             .is_ok()
