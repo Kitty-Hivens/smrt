@@ -345,6 +345,10 @@
 </div>
 
 <style>
+  /* The literal blacks and whites below are deliberate and must not become
+     theme tokens: this view renders what the launcher shows, and the launcher
+     is dark whichever theme the panel is wearing. A preview that followed the
+     panel would stop being a preview. */
   .preview {
     --p-bg: #121212;
     --p-surface: #1e1e1e;

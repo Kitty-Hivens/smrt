@@ -142,8 +142,82 @@
   --shadow-pop: 0 20px 48px -20px rgba(0, 0, 0, 0.7);
   --ring: 0 0 0 3px rgba(255, 255, 255, 0.18);
 
+  /* what dims the page under a layer, and the faint stripe that keeps long
+     tables trackable. Both were written literally at their use sites, which is
+     why they could not follow a theme. */
+  --scrim: rgba(0, 0, 0, 0.55);
+  --zebra: rgba(255, 255, 255, 0.025);
+
   --mono: 'JetBrains Mono', 'SF Mono', ui-monospace, 'Cascadia Code', monospace;
   --sans: 'Inter', ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ── the light half ────────────────────────────────────────────────────────
+   Black is the product's own look and stays the default. This exists because
+   working under pure black for hours is real, and there was no way to step off
+   it. It is not a token swap: every tint above was written as literal white or
+   literal black, so on paper they inverted. They are values now, and this block
+   is the other set.
+
+   Two things are decided here, not carried over.
+
+   Elevation. On black a drop shadow is invisible, so the note above says lift a
+   card with a higher surface instead. On paper that reverses: the surface ladder
+   nearly vanishes (--panel-2 against --panel is a hair) while a shadow reads
+   cleanly, so --shadow-1/2 carry the raise here and the ladder stays only for
+   hover.
+
+   Contrast. Every value below was measured against the worst surface it can sit
+   on, which on paper is --bg (the field), not --panel: a mid grey on a lighter
+   card reads better, so the field is the binding case. Body text 12.5:1, dim
+   6.2:1, faint 4.64:1 -- the same floor the dark half holds. The four status
+   hues are re-solved rather than reused: the dark greens and ambers land at
+   1.5-1.7:1 on paper, invisible. Their soft tints keep the equal-weight rule
+   (each solved to 1.38:1 against the field) rather than sharing one alpha.
+
+   Not decided here: the accent stays contrast rather than a hue, exactly as on
+   black -- near-black plays the part white plays there. Giving the product a
+   brand colour is a separate decision, not something to smuggle into a theme. */
+:root[data-theme='light'] {
+  --bg: #efeae1;
+  --bg-2: #f6f2ec;
+  --panel: #fdfbf8;
+  --panel-2: #f5f1ea;
+  --panel-3: #ece6dc;
+
+  --dotfield: rgba(60, 45, 30, 0.05);
+  --seam: rgba(60, 45, 30, 0.1);
+  --seam-bright: rgba(60, 45, 30, 0.22);
+
+  --fg: #2b2622;
+  --fg-dim: #5c544b;
+  --fg-faint: #6f675f;
+
+  --accent: #2b2622;
+  --accent-strong: #1f1b18;
+  --accent-soft: rgba(43, 38, 34, 0.171);
+  --accent-hue: #5348b8;
+  --accent-hue-soft: rgba(83, 72, 184, 0.18);
+
+  --solid: #2b2622;
+  --on-solid: #fdfbf8;
+
+  --ok: #1f7a4a;
+  --ok-soft: rgba(31, 122, 74, 0.246);
+  --warn: #7a5a12;
+  --warn-soft: rgba(122, 90, 18, 0.233);
+  --danger: #b32338;
+  --danger-soft: rgba(179, 35, 56, 0.204);
+  --info: #1b62a4;
+  --info-soft: rgba(27, 98, 164, 0.224);
+
+  --shadow-1: 0 1px 2px rgba(60, 45, 30, 0.06);
+  --shadow-2: 0 10px 28px -14px rgba(60, 45, 30, 0.22);
+  --shadow-pop: 0 24px 60px -24px rgba(60, 45, 30, 0.35);
+  --ring: 0 0 0 3px rgba(43, 38, 34, 0.18);
+
+  --scrim: rgba(60, 45, 30, 0.32);
+  --zebra: rgba(60, 45, 30, 0.03);
 }
 
 /* One switch for the whole product: durations go to zero, so every transition
@@ -377,7 +451,7 @@ input[type='number']::-webkit-inner-spin-button {
 .dlg-scrim {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--scrim);
   z-index: 60;
 }
 
@@ -455,7 +529,7 @@ tr:last-child td {
 /* faint zebra so rows stay trackable on long lists; the hover tint is defined
    after at equal specificity, so hover still wins */
 tbody tr:nth-child(even) td {
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--zebra);
 }
 tbody tr:hover td {
   background: var(--panel-2);

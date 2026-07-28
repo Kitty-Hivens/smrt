@@ -15,6 +15,7 @@ export type Section =
   | 'moderation'
   | 'audit'
   | 'profile'
+  | 'settings'
   | 'mypacks';
 // The operator's official tabs. `mypacks` is not among them because it is a
 // personal surface, not an operator one -- but every account has it, admins
@@ -32,15 +33,25 @@ export const SECTIONS: Section[] = [
   'moderation',
   'audit',
   'profile',
+  'settings',
 ];
 // Guest sees only the public catalog; a signed-in member also gets their own
 // packs and profile; everything else is operator-only.
-export const GUEST_SECTIONS: Section[] = ['browse'];
+// Settings is everyone's: the theme is a preference of whoever is looking, not
+// a privilege. A guest gets the catalog and their own preferences, nothing else.
+export const GUEST_SECTIONS: Section[] = ['browse', 'settings'];
 // The registry browser (mods) and the graph are read-only for a member -- the
 // views gate their own authoring, and the data is already public per-mod on the
 // mod page -- so a member building a community pack gets the same read of what the
 // mirror indexes, and the same "does this hold together" view, an operator has.
-export const MEMBER_SECTIONS: Section[] = ['browse', 'mods', 'graph', 'mypacks', 'profile'];
+export const MEMBER_SECTIONS: Section[] = [
+  'browse',
+  'mods',
+  'graph',
+  'mypacks',
+  'profile',
+  'settings',
+];
 const KNOWN_SECTIONS: Section[] = [...SECTIONS, 'mypacks'];
 export function visibleSections(me: { role: string } | null): Section[] {
   if (!me) return GUEST_SECTIONS;

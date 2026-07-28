@@ -11,6 +11,7 @@
   import ModPage from './views/ModPage.svelte';
   import Profile from './views/Profile.svelte';
   import MyPacks from './views/MyPacks.svelte';
+  import Settings from './views/Settings.svelte';
   import Toaster from './views/ui/Toaster.svelte';
   import DialogHost from './views/DialogHost.svelte';
 
@@ -62,6 +63,9 @@
       {:then { default: GraphView }}
         <GraphView />
       {/await}
+    {:else if route.section === 'settings'}
+      <!-- before any role check: preferences belong to whoever is looking -->
+      <Settings />
     {:else if route.section === 'profile' && me}
       <Profile {me} />
     {:else if route.section === 'mypacks' && me}

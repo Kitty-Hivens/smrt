@@ -87,7 +87,7 @@
   :global(.overlay) {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.55);
+    background: var(--scrim);
     z-index: 80;
   }
   :global(.dlg) {
