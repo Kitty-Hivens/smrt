@@ -2,7 +2,7 @@
   import GraphCanvas from './GraphCanvas.svelte';
   import { api, ApiError } from '../lib/api';
   import { notifyFail, toasts } from '../lib/toasts.svelte';
-  import { route } from '../lib/route.svelte';
+  import { href, plainClick, route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
   import type { GraphData } from '../lib/types';
 
@@ -45,7 +45,14 @@
 
   <GraphCanvas {raw} {loading} onError={(m) => toasts.push({ kind: 'error', text: m })}>
     {#snippet actions(focusId: number)}
-      <button class="sm" onclick={() => route.openMod(focusId)}>{t('graph.openPage')}</button>
+      <a
+        class="sm btnlike"
+        href={href.mod(focusId)}
+        onclick={(e) => {
+          if (!plainClick(e)) return;
+          e.preventDefault();
+          route.openMod(focusId);
+        }}>{t('graph.openPage')}</a>
     {/snippet}
   </GraphCanvas>
 </div>

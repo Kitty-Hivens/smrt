@@ -174,6 +174,23 @@ if (typeof window !== 'undefined') {
   remember(section);
 }
 
+/// The address a destination has, for the `href` of the control that goes
+/// there. Every one of these was a click handler on a button: the addresses
+/// existed and nothing wore them, so the browser had nothing to act on -- no
+/// middle click, no ctrl-click, nothing to copy, and a screen reader announcing
+/// "button" for a place.
+export const href = {
+  section: (s: Section) => `/${s}`,
+  mod: (ref: number | string) => `/mod/${encodeURIComponent(String(ref))}`,
+  pack: (id: string, from: Section = section) => `/${from}/${encodeURIComponent(id)}`,
+};
+
+/// True for a click the app should handle itself. A modified or middle click is
+/// the browser being asked for a new tab or window, and must be left alone.
+export function plainClick(e: MouseEvent): boolean {
+  return !e.defaultPrevented && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+}
+
 export const route = {
   get section(): Section {
     return section;
@@ -201,6 +218,16 @@ export const route = {
   openPack(id: string) {
     editPack = id;
     pushPath(`/${section}/${encodeURIComponent(id)}`);
+  },
+  /// Open a pack's editor from another section (the overview's recent list), as
+  /// a single step: the section and the editor arrive in one history entry
+  /// rather than two, so back goes where it was clicked from.
+  openPackIn(s: Section, id: string) {
+    focusMod = null;
+    section = s;
+    remember(s);
+    editPack = id;
+    pushPath(href.pack(id, s));
   },
   /// Close the editor the same way the back button does, so both routes through
   /// the unsaved-changes guard are the one route.

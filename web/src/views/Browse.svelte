@@ -3,7 +3,7 @@
   import { countUp } from '../lib/motion.svelte';
   import { notifyFail } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
-  import { route } from '../lib/route.svelte';
+  import { href, plainClick, route } from '../lib/route.svelte';
   import { reload } from '../lib/reload.svelte';
   import { t } from '../lib/i18n.svelte';
   import type { ModSummary, PackSummary, ServerEntry, UnassignedJar } from '../lib/types';
@@ -233,20 +233,13 @@
             <h3>{t('overview.packs')}</h3>
             {#each allPackIds as id}
               {@const p = summaryFor(id)}
-              <div
+              <a
                 class="lrow clickable"
-                role="button"
-                tabindex="0"
-                onclick={() => {
-                  route.go('packs');
-                  route.openPack(id);
-                }}
-                onkeydown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    route.go('packs');
-                    route.openPack(id);
-                  }
+                href={href.pack(id, 'packs')}
+                onclick={(e) => {
+                  if (!plainClick(e)) return;
+                  e.preventDefault();
+                  route.openPackIn('packs', id);
                 }}
               >
                 <span class="av">{(p?.display_name ?? id).slice(0, 2).toUpperCase()}</span>
@@ -262,7 +255,7 @@
                 {:else}
                   <span class="chip"><span class="g"></span>{t('packs.unbuilt')}</span>
                 {/if}
-              </div>
+              </a>
             {/each}
             {#if allPackIds.length === 0 && !loading}
               <div class="lrow"><span class="muted">{t('packs.empty')}</span></div>
@@ -320,7 +313,16 @@
             }}
           >
             <td>
-              <div>{r.name}</div>
+              <!-- the row stays clickable for the mouse, but the name is the real
+                   destination: a link the browser can open, copy and announce -->
+              <a
+                class="rowlink"
+                href={href.pack(r.id, 'packs')}
+                onclick={(e) => {
+                  if (!plainClick(e)) return;
+                  e.preventDefault();
+                  route.openPack(r.id);
+                }}>{r.name}</a>
               {#if r.name !== r.id}<div class="faint mono">{r.id}</div>{/if}
             </td>
             <td class="mono">{r.summary?.minecraft_version ?? '-'}</td>
@@ -524,8 +526,18 @@
     padding: var(--space-3) var(--space-4);
     border-bottom: 1px solid var(--seam);
   }
+  .rowlink {
+    color: inherit;
+    text-decoration: none;
+  }
+  .rowlink:hover {
+    text-decoration: underline;
+    text-decoration-color: var(--seam-bright);
+  }
   .lrow {
     display: flex;
+    color: inherit;
+    text-decoration: none;
     align-items: center;
     gap: var(--space-3);
     padding: 11px var(--space-4);

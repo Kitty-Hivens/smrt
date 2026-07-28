@@ -2,7 +2,7 @@
   import type { Snippet } from 'svelte';
   import { api } from '../lib/api';
   import type { Health } from '../lib/types';
-  import { route, visibleSections, type Section } from '../lib/route.svelte';
+  import { href, plainClick, route, visibleSections, type Section } from '../lib/route.svelte';
   import { reload } from '../lib/reload.svelte';
   import { activity } from '../lib/motion.svelte';
   import { t, i18n, LOCALES } from '../lib/i18n.svelte';
@@ -74,18 +74,21 @@
     <ul class="nav">
       {#each visibleSections(me) as s}
         <li>
-          <button
+          <a
             class="item"
             class:active={route.section === s}
             aria-current={route.section === s ? 'page' : undefined}
-            onclick={() => {
+            href={href.section(s)}
+            onclick={(e) => {
+              if (!plainClick(e)) return; // a modified click is asking the browser for a tab
+              e.preventDefault();
               route.go(s);
               closeDrawer();
             }}
           >
             <NavIcon name={s} />
             <span class="label">{t(navKey[s])}</span>
-          </button>
+          </a>
         </li>
       {/each}
     </ul>
@@ -99,10 +102,19 @@
         </div>
       {/if}
       {#if me}
-        <button class="who" onclick={() => route.go('profile')} title={t('nav.profile')}>
+        <a
+          class="who"
+          href={href.section('profile')}
+          title={t('nav.profile')}
+          onclick={(e) => {
+            if (!plainClick(e)) return;
+            e.preventDefault();
+            route.go('profile');
+          }}
+        >
           <Avatar uid={me.uid} login={me.login} size={26} />
           <span class="whotext faint mono">{me.login} &middot; {me.role}</span>
-        </button>
+        </a>
         <button class="signout" onclick={onLogout}>{t('shell.signOut')}</button>
       {:else}
         <button class="signin primary" onclick={onSignIn}>{t('shell.signIn')}</button>
@@ -218,6 +230,8 @@
   }
   .item {
     position: relative;
+    text-decoration: none;
+    cursor: pointer;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -290,6 +304,8 @@
   }
   .who {
     display: flex;
+    text-decoration: none;
+    cursor: pointer;
     align-items: center;
     gap: 8px;
     width: 100%;

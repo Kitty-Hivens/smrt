@@ -2,7 +2,7 @@
   import { api, ApiError } from '../lib/api';
   import { notifyFail } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
-  import { route } from '../lib/route.svelte';
+  import { href, plainClick, route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
   import { reload } from '../lib/reload.svelte';
   import { terms } from '../lib/terms.svelte';
@@ -159,7 +159,15 @@
               <div class="modhead mono faint">{t('browse.modsN', { n: manifest.mods.length })}</div>
               <div class="mods">
                 {#each manifest.mods as m (m.sha1)}
-                  <button class="mrow" onclick={() => route.openMod(`sha1:${m.sha1}`)}>
+                  <a
+                    class="mrow"
+                    href={href.mod(`sha1:${m.sha1}`)}
+                    onclick={(e) => {
+                      if (!plainClick(e)) return;
+                      e.preventDefault();
+                      route.openMod(`sha1:${m.sha1}`);
+                    }}
+                  >
                     <ModIcon
                       name={modName(m)}
                       source={m.source}
@@ -170,7 +178,7 @@
                     />
                     <span class="mn">{modName(m)}</span>
                     {#if !m.required}<span class="opt mono">{t('browse.optional')}</span>{/if}
-                  </button>
+                  </a>
                 {/each}
               </div>
             {/if}
@@ -301,6 +309,8 @@
   }
   .mrow {
     display: flex;
+    color: inherit;
+    text-decoration: none;
     align-items: center;
     gap: var(--space-2);
     min-width: 0;

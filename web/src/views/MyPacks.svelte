@@ -5,7 +5,7 @@
   import { t } from '../lib/i18n.svelte';
   import { reload } from '../lib/reload.svelte';
   import { terms } from '../lib/terms.svelte';
-  import { route } from '../lib/route.svelte';
+  import { href, plainClick, route } from '../lib/route.svelte';
   import type { PackSummary, UploadRow } from '../lib/types';
   import PackEditor from './PackEditor.svelte';
 
@@ -99,16 +99,13 @@
     <div class="panel list">
       {#each allIds as id (id)}
         {@const p = summaryFor(id)}
-        <div
+        <a
           class="row"
-          role="button"
-          tabindex="0"
-          onclick={() => route.openPack(id)}
-          onkeydown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              route.openPack(id);
-            }
+          href={href.pack(id, 'mypacks')}
+          onclick={(e) => {
+            if (!plainClick(e)) return;
+            e.preventDefault();
+            route.openPack(id);
           }}
         >
           <span class="av mono">{nameOf(id).slice(0, 2).toUpperCase()}</span>
@@ -130,7 +127,7 @@
           {:else}
             <span class="tag">{t('packs.unbuilt')}</span>
           {/if}
-        </div>
+        </a>
       {/each}
       {#if allIds.length === 0 && !loading}
         <div class="empty muted">{t('mypacks.empty')}</div>
@@ -171,6 +168,8 @@
   }
   .row {
     display: flex;
+    color: inherit;
+    text-decoration: none;
     align-items: center;
     gap: var(--space-3);
     padding: var(--space-3);

@@ -66,6 +66,15 @@ version section when a release is tagged.
   every `/v1/packs/{id}/static/...` file -- pack icons, banners, and any
   `smrt_static` source a manifest points at -- answered 404. Both routes are
   pinned by tests that assert the request reaches its handler.
+- Navigation is links. Every place in the panel had an address -- sections are
+  paths, a mod page and now a pack editor are their own URLs -- but nothing
+  wore them: eighteen navigations were click handlers on buttons and rows
+  against two `<a href>` in the whole product. So the middle click did nothing,
+  ctrl-click did nothing, "copy link" copied the page you happened to load
+  first, and a screen reader announced "button" for a destination. The rail,
+  pack rows, mod names and the graph's open-page control are links now, with
+  the handler intercepting a plain click for client-side routing and leaving a
+  modified one to the browser.
 - Form fields say what they are. The visible caption a `Field` draws was a
   plain span with nothing tying it to the control, so a screen reader on the
   input heard silence -- and where an `aria-label` existed it repeated the
