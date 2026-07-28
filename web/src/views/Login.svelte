@@ -82,7 +82,7 @@
         <input
           type="password"
           bind:value={token}
-          placeholder="SMRT_ADMIN_TOKEN" aria-label="SMRT_ADMIN_TOKEN"
+          placeholder="SMRT_ADMIN_TOKEN" aria-label={t('login.tokenLabel')}
           autocomplete="off"
         />
         {#if error}<div class="err mono">{error}</div>{/if}

@@ -37,7 +37,7 @@
     </button>
     <label class="ver">
       {t('bld.version')}
-      <input class="mono" bind:value={packVersion} placeholder={t('bld.versionPlaceholder')} aria-label={t('bld.versionPlaceholder')} />
+      <input class="mono" bind:value={packVersion} placeholder={t('bld.versionPlaceholder')} />
     </label>
     <label class="ver">
       {t('bld.channel')}

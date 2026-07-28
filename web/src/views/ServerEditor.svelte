@@ -88,10 +88,10 @@
   <Section title={t('pe.basics')}>
     <div class="grid">
       <Field label={t('se.serverId')} hint={t('se.serverIdHint')}>
-        <input bind:value={f.server_id} disabled={!isNew} placeholder="main" aria-label="main" />
+        <input bind:value={f.server_id} disabled={!isNew} placeholder="main" />
       </Field>
       <Field label={t('packs.col.pack')}>
-        <input bind:value={f.pack_id} list="packids" placeholder="Industrial" aria-label="Industrial" />
+        <input bind:value={f.pack_id} list="packids" placeholder="Industrial" />
         <datalist id="packids">{#each packIds as p}<option value={p}></option>{/each}</datalist>
       </Field>
       <Field label={t('pe.displayName')}>
@@ -113,10 +113,10 @@
         <input bind:value={f.tagline} />
       </Field>
       <Field label={t('se.banner')} wide>
-        <input bind:value={f.banner_url} placeholder="https://..." aria-label="https://..." />
+        <input bind:value={f.banner_url} placeholder="https://..." />
       </Field>
       <Field label={t('pe.tags')} hint={t('pe.tagsHint')} wide>
-        <input bind:value={tagsStr} placeholder="tech, economy" aria-label="tech, economy" />
+        <input bind:value={tagsStr} placeholder="tech, economy" />
       </Field>
       <Field label={t('se.description')} hint={t('se.descHint')} wide>
         <textarea rows="5" bind:value={f.description_md}></textarea>
@@ -127,10 +127,10 @@
   <Section title={t('se.links')}>
     <div class="grid">
       <Field label={t('se.discord')}>
-        <input bind:value={f.discord_url} placeholder="https://discord.gg/..." aria-label="https://discord.gg/..." />
+        <input bind:value={f.discord_url} placeholder="https://discord.gg/..." />
       </Field>
       <Field label={t('se.website')}>
-        <input bind:value={f.website_url} placeholder="https://..." aria-label="https://..." />
+        <input bind:value={f.website_url} placeholder="https://..." />
       </Field>
     </div>
   </Section>

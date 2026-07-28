@@ -1,3 +1,11 @@
+<script lang="ts" module>
+  // Per-instance caption ids, so a control can point at the caption above it.
+  let seq = 0;
+  function nextId(): number {
+    return ++seq;
+  }
+</script>
+
 <script lang="ts">
   import type { Snippet } from 'svelte';
 
@@ -9,6 +17,12 @@
   // whole cell focus the input on click, which reads as the field grabbing focus
   // when you meant only to click near it. Focus now follows the control itself
   // (click it, or Tab), which is what the caption implies.
+  //
+  // That left the caption purely visual, though: a screen reader on the control
+  // heard nothing, or heard a placeholder someone had echoed into an aria-label,
+  // which names the example instead of the field and is worse than silence
+  // (#55). The caption is named and the control points at it, so the two are one
+  // field for everyone.
   let {
     label,
     hint,
@@ -20,10 +34,24 @@
     wide?: boolean;
     children: Snippet;
   } = $props();
+
+  const captionId = `fld-${nextId()}`;
+
+  // The control belongs to the caller, so the wiring happens here rather than as
+  // an id threaded through every call site: one mechanism that cannot drift,
+  // instead of forty chances to forget one. A control that already carries its
+  // own name keeps it.
+  function nameControl(node: HTMLElement) {
+    const el = node.querySelector<HTMLElement>(
+      'input, textarea, select, [role="combobox"]',
+    );
+    if (!el || el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')) return;
+    el.setAttribute('aria-labelledby', captionId);
+  }
 </script>
 
-<div class="field" class:wide>
-  <span class="lbl">{label}</span>
+<div class="field" class:wide use:nameControl>
+  <span class="lbl" id={captionId}>{label}</span>
   {@render children()}
   {#if hint}<span class="hint">{hint}</span>{/if}
 </div>
