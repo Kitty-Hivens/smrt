@@ -6,6 +6,8 @@
 // reverse. The resolved value is always written to the root as `data-theme`, so
 // the CSS never has to reason about preference -- one attribute, one answer.
 
+import { withTransition } from './transition.svelte';
+
 export type ThemeChoice = 'system' | 'dark' | 'light';
 export type Resolved = 'dark' | 'light';
 
@@ -61,7 +63,9 @@ export const theme = {
   set(next: ThemeChoice) {
     choice = next;
     resolved = next === 'system' ? systemPrefers() : next;
-    apply(resolved);
+    // A substrate swap is a shorter act than a rewrite of the text: the shapes
+    // stay where they are and only their colours move.
+    withTransition('theme', () => apply(resolved));
     try {
       localStorage.setItem(STORAGE_KEY, next);
     } catch {

@@ -226,6 +226,40 @@
   --zebra: rgba(60, 45, 30, 0.03);
 }
 
+/* ── whole-page changes ─────────────────────────────────────────────────────
+   A theme flips every token; a locale rewrites every word. Both are crossfaded
+   through a view transition rather than a per-element CSS transition, which
+   would animate the entire page on every repaint.
+
+   The two are not the same act and do not read the same. A substrate swap keeps
+   every shape where it is and only moves colour, so it is quick. A rewrite of
+   the text replaces the content itself: the old goes quickly, and the new is
+   drawn in over roughly twice as long, so the eye follows one thing arriving
+   instead of catching a flicker across every word at once.
+
+   Both are absent under reduced motion: the helper that starts them asks the
+   same question this file's duration rule does, so the product keeps one
+   switch. */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-timing-function: var(--ease-out);
+  }
+  :root[data-transition='theme']::view-transition-old(root) {
+    animation-duration: var(--dur-enter);
+  }
+  :root[data-transition='theme']::view-transition-new(root) {
+    animation-duration: var(--dur-layer);
+  }
+  /* the old text leaves briskly; the new one is drawn in */
+  :root[data-transition='locale']::view-transition-old(root) {
+    animation-duration: var(--dur-enter);
+  }
+  :root[data-transition='locale']::view-transition-new(root) {
+    animation-duration: 420ms;
+  }
+}
+
 /* One switch for the whole product: durations go to zero, so every transition
    and animation below still runs its logic and simply arrives immediately. No
    consumer needs its own media query. */
