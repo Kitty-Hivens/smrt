@@ -36,9 +36,65 @@ version section when a release is tagged.
 
 ### Changed
 
+- A view reflows against its own column, not against the window. Every
+  responsive rule in the panel asked the viewport, which is the same question
+  only while a view is the whole screen -- so a narrow window and a narrow
+  column disagreed about identical content, and a view could never be one pane
+  beside another. The content area is a named container now and the view-level
+  rules ask it; the shell's own layout (the rail becoming a strip, then a
+  drawer) stays window-keyed, because that is a fact about the screen. Measured:
+  at a 560px column inside a 1400px window the editor's basics grid collapses to
+  one column and the mod row becomes a card, which a viewport rule cannot see.
+  The report dock follows the same box -- a container is the containing block
+  for the fixed panels inside it, so the dock now belongs to its view instead of
+  floating over the rail, and its drag bounds measure the column.
+
+### Changed
+
 - The mirror stands alone as a self-hostable product: deployment-specific
   values (operator uid, public base URL) moved to the environment; the
   SmartyCraft/Nexira setup is the reference deployment, not the definition.
+
+### Added
+
+- A settings surface, and a light theme to put in it. The panel had nowhere for
+  a preference to live -- the locale switch sat in the top bar because there was
+  no other place -- and the theme could not exist at all: the tokens were
+  dark-first with white and black tints written literally at their use sites, so
+  on a light background the seams, the dot field, the table zebra and the scrims
+  inverted. Those are values now, and the light half is measured rather than
+  guessed: every text tier clears its floor against the field it sits on (the
+  binding case on paper, not the card), and the four status hues are re-solved
+  because the dark greens and ambers land near 1.6:1 there. Elevation swaps with
+  the substrate -- a shadow on paper, a lighter surface on black -- which is what
+  the token file already said and could not do. The paper is deliberately not
+  office-white: the first pass took the surfaces to 0.97 luminance and glared,
+  since on an emissive screen the brightest thing in the room should not be the
+  empty half of a form. Follow-the-system is the default
+  and keeps following as the desktop changes; the choice is applied before first
+  paint, so a light session never flashes black. The launcher preview keeps its
+  own dark, since it renders another product.
+- A pack still builds while Modrinth is down. Every Modrinth-sourced mod
+  resolved its hash and size live from Modrinth at build time, so a pack with
+  one such mod could not be rebuilt until upstream came back -- on exactly the
+  class of mod the mirror deliberately keeps no bytes for. Harvest had already
+  recorded those numbers, and the build falls back to them: the network is asked
+  first and stays authoritative, so a re-uploaded version is never built from
+  stale numbers, but a version the registry knows no longer takes the build down
+  with it. A pin the mirror has never harvested still fails, naming both the
+  upstream failure and the missing local record. The build log says when it
+  answered from the registry -- a build that reached upstream and one that did
+  not are different events.
+- Adding a mod says what comes with it. The dependencies used to arrive later,
+  on save, so whoever added a mod found out afterwards -- by opening the preview
+  or resolving by hand -- and a pack quietly gained jars nobody chose to look
+  at. The plan was always computed; it is now asked for at the moment of the add
+  (`POST /v1/authoring/packs/{id}/dependency-preview`, read-only: it runs the
+  real fill on a copy so the answer cannot drift from what the save does, and
+  writes nothing) and reported as one line naming what is coming. Silent when a
+  mod brings nothing, which is most of them. The rows themselves now appear as
+  soon as the save returns, too: the mirror always answered with the config it
+  stored, dependencies included, and the editor was discarding that answer.
 
 ### Added
 

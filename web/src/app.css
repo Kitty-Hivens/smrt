@@ -169,8 +169,8 @@
 
    Contrast. Every value below was measured against the worst surface it can sit
    on, which on paper is --bg (the field), not --panel: a mid grey on a lighter
-   card reads better, so the field is the binding case. Body text 12.5:1, dim
-   6.2:1, faint 4.64:1 -- the same floor the dark half holds. The four status
+   card reads better, so the field is the binding case. Body text 11.2:1, dim
+   5.55:1, faint 4.75:1 -- the same floor the dark half holds. The four status
    hues are re-solved rather than reused: the dark greens and ambers land at
    1.5-1.7:1 on paper, invisible. Their soft tints keep the equal-weight rule
    (each solved to 1.38:1 against the field) rather than sharing one alpha.
@@ -179,11 +179,17 @@
    black -- near-black plays the part white plays there. Giving the product a
    brand colour is a separate decision, not something to smuggle into a theme. */
 :root[data-theme='light'] {
-  --bg: #efeae1;
-  --bg-2: #f6f2ec;
-  --panel: #fdfbf8;
-  --panel-2: #f5f1ea;
-  --panel-3: #ece6dc;
+  /* Paper, not office paper. The first pass took the surfaces almost to white
+     (--panel at 0.97 luminance) and it glared: a screen is emissive, so the
+     brightest thing in the room should not be the empty part of a form. The
+     whole ladder sits about a tenth lower, which also widens every step in it --
+     the card, the field and the hover tint were three values inside a narrow
+     band up there and are legibly apart down here. */
+  --bg: #e4ded3;
+  --bg-2: #ebe6dd;
+  --panel: #f2ede4;
+  --panel-2: #e9e3d8;
+  --panel-3: #ded7ca;
 
   --dotfield: rgba(60, 45, 30, 0.05);
   --seam: rgba(60, 45, 30, 0.1);
@@ -191,25 +197,25 @@
 
   --fg: #2b2622;
   --fg-dim: #5c544b;
-  --fg-faint: #6f675f;
+  --fg-faint: #665e56;
 
   --accent: #2b2622;
   --accent-strong: #1f1b18;
-  --accent-soft: rgba(43, 38, 34, 0.171);
+  --accent-soft: rgba(43, 38, 34, 0.176);
   --accent-hue: #5348b8;
-  --accent-hue-soft: rgba(83, 72, 184, 0.18);
+  --accent-hue-soft: rgba(83, 72, 184, 0.23);
 
   --solid: #2b2622;
   --on-solid: #fdfbf8;
 
   --ok: #1f7a4a;
-  --ok-soft: rgba(31, 122, 74, 0.246);
+  --ok-soft: rgba(31, 122, 74, 0.261);
   --warn: #7a5a12;
-  --warn-soft: rgba(122, 90, 18, 0.233);
+  --warn-soft: rgba(122, 90, 18, 0.246);
   --danger: #b32338;
-  --danger-soft: rgba(179, 35, 56, 0.204);
+  --danger-soft: rgba(179, 35, 56, 0.211);
   --info: #1b62a4;
-  --info-soft: rgba(27, 98, 164, 0.224);
+  --info-soft: rgba(27, 98, 164, 0.238);
 
   --shadow-1: 0 1px 2px rgba(60, 45, 30, 0.06);
   --shadow-2: 0 10px 28px -14px rgba(60, 45, 30, 0.22);
