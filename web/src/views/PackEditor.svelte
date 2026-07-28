@@ -29,6 +29,7 @@
   import PackPreview from './PackPreview.svelte';
   import DropZone from './ui/DropZone.svelte';
   import Field from './ui/Field.svelte';
+  import { filenameError, javaError, relPathError, requiredError, say, urlError } from '../lib/validate';
   import Section from './ui/Section.svelte';
   import Select from './ui/Select.svelte';
   import TabStrip from './ui/TabStrip.svelte';
@@ -862,13 +863,17 @@
 
         <Section title={t('pe.basics')}>
           <div class="meta">
-            <Field label={t('pe.displayName')}><input bind:value={cfg.display_name} /></Field>
-            <Field label={t('pe.mcVersion')}><input bind:value={cfg.minecraft_version} /></Field>
+            <Field label={t('pe.displayName')} error={say(requiredError(cfg.display_name))}>
+              <input bind:value={cfg.display_name} />
+            </Field>
+            <Field label={t('pe.mcVersion')} error={say(requiredError(cfg.minecraft_version))}>
+              <input bind:value={cfg.minecraft_version} />
+            </Field>
             <Field label={t('pe.loaderName')}>
               <Select full bind:value={cfg.loader.name} options={loaderOptions} ariaLabel={t('pe.loaderName')} />
             </Field>
             <Field label={t('pe.loaderVersion')}><input bind:value={cfg.loader.version} /></Field>
-            <Field label={t('pe.java')}>
+            <Field label={t('pe.java')} error={say(javaError(cfg.java_major))}>
               <input
                 type="number"
                 min="8"
@@ -922,7 +927,18 @@
             {#each cfg.mods as m, i (m)}
               <div class="modrow row-in" use:stagger={i} animate:flip={{ duration: 200 }}>
                 <ModIcon name={m.filename} iconUrl={m.display?.icon_url} source={m.source} size={24} mono />
-                <input class="fn mono" bind:value={m.filename} placeholder={t('pe.filename')} aria-label={t('pe.filename')} />
+                <!-- no room for a caption in this row, so the verdict is the
+                     control's own state and its title, which is where a dense
+                     row can say something without growing -->
+                <input
+                  class="fn mono"
+                  class:bad={!!filenameError(m.filename)}
+                  bind:value={m.filename}
+                  placeholder={t('pe.filename')}
+                  aria-label={t('pe.filename')}
+                  aria-invalid={!!filenameError(m.filename)}
+                  title={say(filenameError(m.filename)) ?? ''}
+                />
                 <span class="srcsel">
                   <Select
                     compact
@@ -987,7 +1003,16 @@
               <tbody>
                 {#each cfg.assets ?? [] as a, i}
                   <tr>
-                    <td><input class="mono" bind:value={a.dest} aria-label={t('pe.dest')} /></td>
+                    <td>
+                      <input
+                        class="mono"
+                        class:bad={!!relPathError(a.dest)}
+                        bind:value={a.dest}
+                        aria-label={t('pe.dest')}
+                        aria-invalid={!!relPathError(a.dest)}
+                        title={say(relPathError(a.dest)) ?? ''}
+                      />
+                    </td>
                     <td>
                       <Select
                         compact
@@ -1022,8 +1047,12 @@
 
         <Section title={t('pe.card.title')}>
           <div class="card">
-            <Field label={t('pe.card.icon')} wide><input class="mono" bind:value={cfg.pack_meta.icon_url} placeholder="https://.../icon.png" /></Field>
-            <Field label={t('pe.card.banner')} wide><input class="mono" bind:value={cfg.pack_meta.banner_url} placeholder="https://.../banner.png" /></Field>
+            <Field label={t('pe.card.icon')} wide error={say(urlError(cfg.pack_meta.icon_url ?? ''))}>
+              <input class="mono" bind:value={cfg.pack_meta.icon_url} placeholder="https://.../icon.png" />
+            </Field>
+            <Field label={t('pe.card.banner')} wide error={say(urlError(cfg.pack_meta.banner_url ?? ''))}>
+              <input class="mono" bind:value={cfg.pack_meta.banner_url} placeholder="https://.../banner.png" />
+            </Field>
             <Field label={t('pe.card.gallery')} wide><textarea class="mono" rows="3" bind:value={cardGalleryStr}></textarea></Field>
             <Field label={t('pe.card.description')} wide><textarea class="mono" rows="5" bind:value={cfg.pack_meta.description_md}></textarea></Field>
           </div>
@@ -1263,6 +1292,11 @@
   .modrow input {
     padding: 5px 7px;
     font-size: var(--fs-sm);
+  }
+  /* a value the mirror would refuse, marked where the row has no space to
+     explain -- the sentence is on the control's title */
+  input.bad {
+    border-color: var(--danger);
   }
   /* curator slug in the 7th grid column: the stable optional-toggle key for
      smrt_cache mods (ADR 0002) */

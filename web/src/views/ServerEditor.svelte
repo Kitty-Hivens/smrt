@@ -4,6 +4,7 @@
   import { notifyFail } from '../lib/toasts.svelte';
   import { t } from '../lib/i18n.svelte';
   import Section from './ui/Section.svelte';
+  import { idError, requiredError, say, urlError } from '../lib/validate';
   import Field from './ui/Field.svelte';
   import type { ServerEntry } from '../lib/types';
 
@@ -73,24 +74,37 @@
       busy = false;
     }
   }
+
+  // Every rule the mirror would apply, in one place: the submit and the fields
+  // read the same verdicts, so a disabled button always has a field explaining
+  // itself.
+  const invalid = $derived(
+    !!idError(f.server_id) ||
+      !!requiredError(f.pack_id) ||
+      !!urlError(f.banner_url ?? '') ||
+      !!urlError(f.discord_url ?? '') ||
+      !!urlError(f.website_url ?? ''),
+  );
 </script>
 
+<!-- the submit is refused for exactly what the mirror would refuse, so the
+     button and the fields never disagree -->
 <form class="editor" onsubmit={save}>
   <div class="hd">
     <h2 class="ttl">{isNew ? t('servers.new') : t('se.edit', { id: f.server_id })}</h2>
     <div class="spacer"></div>
     <button type="button" onclick={onCancel}>{t('dialog.cancel')}</button>
-    <button class="primary" type="submit" disabled={busy || !f.server_id || !f.pack_id}>
+    <button class="primary" type="submit" disabled={busy || invalid}>
       {busy ? t('se.saving') : isNew ? t('se.create') : t('se.save')}
     </button>
   </div>
 
   <Section title={t('pe.basics')}>
     <div class="grid">
-      <Field label={t('se.serverId')} hint={t('se.serverIdHint')}>
+      <Field label={t('se.serverId')} hint={t('se.serverIdHint')} error={say(idError(f.server_id))}>
         <input bind:value={f.server_id} disabled={!isNew} placeholder="main" />
       </Field>
-      <Field label={t('packs.col.pack')}>
+      <Field label={t('packs.col.pack')} error={say(requiredError(f.pack_id))}>
         <input bind:value={f.pack_id} list="packids" placeholder="Industrial" />
         <datalist id="packids">{#each packIds as p}<option value={p}></option>{/each}</datalist>
       </Field>
@@ -112,7 +126,7 @@
       <Field label={t('pe.tagline')} wide>
         <input bind:value={f.tagline} />
       </Field>
-      <Field label={t('se.banner')} wide>
+      <Field label={t('se.banner')} wide error={say(urlError(f.banner_url ?? ''))}>
         <input bind:value={f.banner_url} placeholder="https://..." />
       </Field>
       <Field label={t('pe.tags')} hint={t('pe.tagsHint')} wide>
@@ -126,10 +140,10 @@
 
   <Section title={t('se.links')}>
     <div class="grid">
-      <Field label={t('se.discord')}>
+      <Field label={t('se.discord')} error={say(urlError(f.discord_url ?? ''))}>
         <input bind:value={f.discord_url} placeholder="https://discord.gg/..." />
       </Field>
-      <Field label={t('se.website')}>
+      <Field label={t('se.website')} error={say(urlError(f.website_url ?? ''))}>
         <input bind:value={f.website_url} placeholder="https://..." />
       </Field>
     </div>

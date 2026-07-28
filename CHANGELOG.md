@@ -147,6 +147,20 @@ version section when a release is tagged.
 
 ### Fixed
 
+- A bad value is reported at the field, while it is being typed. Around ten
+  error signals existed across every view, so a wrong value surfaced as a notice
+  after saving: you learned it was wrong after trying to use it. Every rule the
+  panel now checks mirrors one the server actually enforces and names it in the
+  source -- a stricter client rule would reject values the mirror accepts, a
+  looser one would promise a save that fails. A labelled field says the sentence
+  under the control and points the control at it, so it reaches a screen reader
+  and not only the eye; a row too dense for a caption marks the control and puts
+  the sentence in its title. The server editor's submit is refused for exactly
+  what the mirror would refuse, so a disabled button always has a field
+  explaining itself.
+
+### Fixed
+
 - The panel and every curated pack asset are served again. The axum 0.8 route
   migration wrote the two wildcard routes with escaped braces (`{{*path}}`),
   which matches a literal path rather than any real request: every panel asset
