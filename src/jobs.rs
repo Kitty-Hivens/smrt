@@ -330,7 +330,7 @@ async fn run_build(
     };
 
     job.line("resolving sources (Modrinth lookups + cache reads)");
-    let manifest = build_manifest(
+    let built = build_manifest(
         &cfg,
         storage.root(),
         pack_version.as_deref(),
@@ -338,9 +338,22 @@ async fn run_build(
         changelog,
         &config.mirror_base,
         &classifications,
+        registry,
     )
     .await
     .map_err(|e| format!("resolve failed: {e}"))?;
+    let manifest = built.manifest;
+    let fell_back = built.resolved_from_registry;
+    // A build that could not reach Modrinth and answered from the registry is
+    // not the same event as one that reached it. It succeeds either way, but it
+    // says which it was.
+    if !fell_back.is_empty() {
+        job.line(format!(
+            "Modrinth unreachable for {} mod(s); resolved from the registry: {}",
+            fell_back.len(),
+            fell_back.join(", ")
+        ));
+    }
     let summary = make_pack_summary(&cfg, &manifest.pack_version);
 
     if dry_run {

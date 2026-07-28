@@ -501,7 +501,7 @@ async fn run_build(
     // side/policy classification through the registry decision layer
     let registry = Registry::open(storage.join("registry.db"))?;
     let classifications = registry.with_conn(|c| authoring::resolve::classify_pack(c, &cfg))?;
-    let manifest = authoring::build_manifest(
+    let built = authoring::build_manifest(
         &cfg,
         storage,
         pack_version,
@@ -509,8 +509,17 @@ async fn run_build(
         changelog,
         mirror_base,
         &classifications,
+        &registry,
     )
     .await?;
+    let manifest = built.manifest;
+    let fell_back = built.resolved_from_registry;
+    if !fell_back.is_empty() {
+        warn!(
+            mods = %fell_back.join(", "),
+            "Modrinth unreachable; resolved these from the registry"
+        );
+    }
     let summary = authoring::make_pack_summary(&cfg, &manifest.pack_version);
 
     let store = Storage::new(storage.to_path_buf());
