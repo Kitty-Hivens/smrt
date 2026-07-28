@@ -57,6 +57,19 @@ version section when a release is tagged.
 
 ### Added
 
+- One picker for adding a mod, on that search. "From the mirror" and "From
+  Modrinth" were a decision about provenance taken before the decision about
+  which mod, and it cannot be made correctly without already knowing whether the
+  mirror carries the thing you have not found. One entry point now: a row says
+  whether the mirror holds the bytes, and picking a build offers the cache
+  source when it does and the Modrinth pin when it does not. What does not fit
+  the pack's loader is ranked down and labelled rather than hidden -- a mod
+  riding a bridge the pack ships reads differently from one that would need the
+  bridge added. Copying a whole build's mod set and picking a raw jar by hash
+  are different questions and keep their own picker.
+
+### Added
+
 - One search over both places a mod can come from
   (`GET /v1/search/mods?q=&mc=&loader=&pack=`). Adding a mod started with a
   question nobody can answer yet -- from the mirror, or from Modrinth? -- since
