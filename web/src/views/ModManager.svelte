@@ -3,7 +3,7 @@
   import { stagger } from '../lib/motion.svelte';
   import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
-  import { route } from '../lib/route.svelte';
+  import { href, plainClick, route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
   import { reload } from '../lib/reload.svelte';
   import { isDebug, isOperator } from '../lib/roles';
@@ -371,12 +371,15 @@
           <ModIcon name={m.name} source={iconSource(m)} sha1={m.icon_sha1 ?? null} size={32} mono />
           <div class="minfo">
             <div class="mname">
-              <button
+              <a
                 class="namelink"
+                href={href.mod(m.mod_id)}
                 onclick={(e) => {
                   e.stopPropagation();
+                  if (!plainClick(e)) return;
+                  e.preventDefault();
                   route.openMod(m.mod_id);
-                }}>{m.name}</button>{#if m.author}<span class="mby">{t('mm.by', { author: m.author })}</span>{/if}
+                }}>{m.name}</a>{#if m.author}<span class="mby">{t('mm.by', { author: m.author })}</span>{/if}
             </div>
             {#if m.loaders.length || m.mc_versions.length}
               <div class="mtags">
@@ -624,6 +627,8 @@
     font-weight: 600;
   }
   .namelink {
+    color: inherit;
+    text-decoration: none;
     background: transparent;
     border: none;
     border-radius: 0;

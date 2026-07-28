@@ -211,6 +211,18 @@ code,
 
 /* controls */
 
+/* A destination styled as a control. A link is the right element whenever the
+   thing on the other side has an address -- the browser can then open it in a
+   tab, copy it, and announce it as a place -- but it should still look like the
+   button it replaced. */
+a.btnlike {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+a.btnlike,
 button {
   font-family: var(--sans);
   font-size: var(--fs-md);
@@ -232,14 +244,17 @@ button {
     background var(--dur-state) var(--ease-out),
     color var(--dur-state) var(--ease-out);
 }
+a.btnlike:hover,
 button:hover {
   background: var(--panel-3);
 }
 /* A press should land, not just recolour: one pixel down, gone in 90ms. This is
    the only movement most controls in the panel will ever make. */
+a.btnlike:active,
 button:active:not(:disabled) {
   transform: translateY(1px);
 }
+a.btnlike:focus-visible,
 button:focus-visible {
   outline: none;
   box-shadow: var(--ring);
