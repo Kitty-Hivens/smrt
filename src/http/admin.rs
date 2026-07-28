@@ -62,7 +62,10 @@ fn authoring_router(state: AppState) -> Router {
             "/v1/authoring/packs/{pack_id}/static/{*rel_path}",
             put(put_pack_static).delete(delete_pack_static),
         )
-        .route("/v1/authoring/packs/{pack_id}/static", get(list_pack_static))
+        .route(
+            "/v1/authoring/packs/{pack_id}/static",
+            get(list_pack_static),
+        )
         .route(
             "/v1/authoring/packs/{pack_id}/config",
             get(get_pack_config).put(put_pack_config),
@@ -80,7 +83,10 @@ fn authoring_router(state: AppState) -> Router {
             "/v1/authoring/packs/{pack_id}/duplicate",
             post(duplicate_pack),
         )
-        .route("/v1/authoring/packs/{pack_id}/validate", post(validate_pack))
+        .route(
+            "/v1/authoring/packs/{pack_id}/validate",
+            post(validate_pack),
+        )
         .route("/v1/authoring/packs/{pack_id}/resolve", get(pack_resolve))
         .route("/v1/authoring/packs/{pack_id}/graph", get(pack_graph_view))
         .route("/v1/modrinth/search", get(modrinth_search))
