@@ -21,7 +21,7 @@
   // server create/edit: 'new' = creating, ServerEntry = editing, null = closed
   let serverEdit = $state<ServerEntry | 'new' | null>(null);
   // pack editor: pack_id being edited, null = closed
-  let packEdit = $state<string | null>(null);
+  // the open editor is a location now (route.pack), not local state -- see #54
 
   let packs = $state<PackSummary[]>([]);
   let servers = $state<ServerEntry[]>([]);
@@ -65,6 +65,16 @@
   // the shell's top-bar refresh bumps reload.count; reload when it does
   $effect(() => {
     if (reload.count > 0) loadAll();
+  });
+
+  // The list behind the editor is stale the moment editing ends, and editing now
+  // ends in more ways than one button -- back and the trackpad gesture close it
+  // too. Refresh on the close itself rather than from whatever triggered it.
+  let editorWasOpen = false;
+  $effect(() => {
+    const open = route.pack !== null;
+    if (editorWasOpen && !open) loadAll();
+    editorWasOpen = open;
   });
 
   async function delServer(id: string) {
@@ -181,7 +191,7 @@
     const id = (
       await dialogs.prompt(t('packs.newPrompt'), { title: t('packs.new') })
     )?.trim();
-    if (id) packEdit = id;
+    if (id) route.openPack(id);
   }
 </script>
 
@@ -229,13 +239,13 @@
                 tabindex="0"
                 onclick={() => {
                   route.go('packs');
-                  packEdit = id;
+                  route.openPack(id);
                 }}
                 onkeydown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
                     route.go('packs');
-                    packEdit = id;
+                    route.openPack(id);
                   }
                 }}
               >
@@ -279,15 +289,12 @@
         </div>
       </section>
     {:else if route.section === 'packs'}
-      {#if packEdit !== null}
-        {#key packEdit}
+      {#if route.pack !== null}
+        {#key route.pack}
           <PackEditor
-            packId={packEdit}
+            packId={route.pack}
             {me}
-            onClose={() => {
-              packEdit = null;
-              loadAll();
-            }}
+            onClose={() => route.closePack()}
           />
         {/key}
       {:else}
@@ -303,12 +310,12 @@
             class="clickable"
             role="button"
             tabindex="0"
-            onclick={() => (packEdit = r.id)}
+            onclick={() => route.openPack(r.id)}
             onkeydown={(e) => {
               if (e.target !== e.currentTarget) return;
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                packEdit = r.id;
+                route.openPack(r.id);
               }
             }}
           >

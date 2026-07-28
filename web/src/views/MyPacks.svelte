@@ -5,6 +5,7 @@
   import { t } from '../lib/i18n.svelte';
   import { reload } from '../lib/reload.svelte';
   import { terms } from '../lib/terms.svelte';
+  import { route } from '../lib/route.svelte';
   import type { PackSummary, UploadRow } from '../lib/types';
   import PackEditor from './PackEditor.svelte';
 
@@ -19,7 +20,6 @@
   let summaries = $state<PackSummary[]>([]);
   let authoring = $state<string[]>([]);
   let uploads = $state<UploadRow[]>([]);
-  let packEdit = $state<string | null>(null);
   let loading = $state(true);
 
   async function load() {
@@ -56,7 +56,7 @@
       await dialogs.prompt(t('mypacks.newPrompt'), { title: t('mypacks.new') })
     )?.trim();
     if (!name) return;
-    packEdit = `u/${me.uid}/${name}`;
+    route.openPack(`u/${me.uid}/${name}`);
   }
 
   // publish/unpublish a built pack: a member's pack starts as a draft, off the
@@ -76,18 +76,20 @@
   $effect(() => {
     if (reload.count > 0) load();
   });
+
+  // the list behind the editor is stale once editing ends, whichever way it was
+  // left -- the Close button, back, or the trackpad gesture
+  let editorWasOpen = false;
+  $effect(() => {
+    const open = route.pack !== null;
+    if (editorWasOpen && !open) load();
+    editorWasOpen = open;
+  });
 </script>
 
-{#if packEdit !== null}
-  {#key packEdit}
-    <PackEditor
-      packId={packEdit}
-      {me}
-      onClose={() => {
-        packEdit = null;
-        load();
-      }}
-    />
+{#if route.pack !== null}
+  {#key route.pack}
+    <PackEditor packId={route.pack} {me} onClose={() => route.closePack()} />
   {/key}
 {:else}
   <div class="view">
@@ -101,11 +103,11 @@
           class="row"
           role="button"
           tabindex="0"
-          onclick={() => (packEdit = id)}
+          onclick={() => route.openPack(id)}
           onkeydown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
-              packEdit = id;
+              route.openPack(id);
             }
           }}
         >
