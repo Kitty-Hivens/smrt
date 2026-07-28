@@ -329,7 +329,13 @@
           <button class="sechead" class:open={configsOpen} onclick={() => (configsOpen = !configsOpen)}>
             <span class="caret"></span>{t('prev.configs')} <span class="faint">({buckets.configs.length})</span>
           </button>
-          {#if configsOpen}{@render assetList(buckets.configs)}{/if}
+          <!-- the wrapper exists because the list is a snippet three
+               always-visible sections share, so the transition cannot go on
+               its own root. Measured layout-neutral: with and without it the
+               section and every row keep the same box. -->
+          {#if configsOpen}
+            <div transition:unroll>{@render assetList(buckets.configs)}</div>
+          {/if}
         </section>
       {/if}
       {#if buckets.other.length}
