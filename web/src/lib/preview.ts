@@ -40,58 +40,6 @@ export function letterAvatar(name: string): Avatar {
   return { initials, color };
 }
 
-// ── ModRoleGrouper ──────────────────────────────────────────────────────────
-
-const ROLE_LABELS: Record<string, string> = {
-  recipe_viewer: 'Recipe viewer',
-  minimap: 'Minimap',
-  waila: 'Block info',
-  block_info: 'Block info',
-  optimisation: 'Performance',
-  performance: 'Performance',
-  inventory_search: 'Inventory search',
-};
-
-/** Localised label for a role key; unknown keys title-case the raw key. */
-export function roleLabel(role: string): string {
-  const known = ROLE_LABELS[role];
-  if (known) return known;
-  const spaced = role.replace(/_/g, ' ').trim();
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-}
-
-export interface RoleGroup {
-  role: string;
-  label: string;
-  members: ModEntry[];
-}
-
-export interface Grouping {
-  byRole: RoleGroup[];
-  ungrouped: ModEntry[];
-}
-
-/** Group mods by `display.role` (trimmed + lowercased); blank/absent -> ungrouped.
- *  Insertion order of first appearance is preserved, as the launcher does. */
-export function groupByRole(mods: ModEntry[]): Grouping {
-  const byRole = new Map<string, ModEntry[]>();
-  const ungrouped: ModEntry[] = [];
-  for (const m of mods) {
-    const role = (m.display?.role ?? '').trim().toLowerCase();
-    if (!role) {
-      ungrouped.push(m);
-      continue;
-    }
-    const bucket = byRole.get(role);
-    if (bucket) bucket.push(m);
-    else byRole.set(role, [m]);
-  }
-  return {
-    byRole: [...byRole.entries()].map(([role, members]) => ({ role, label: roleLabel(role), members })),
-    ungrouped,
-  };
-}
-
 // ── DepGraphResolver ─────────────────────────────────────────────────────────
 
 export interface DepEdge {

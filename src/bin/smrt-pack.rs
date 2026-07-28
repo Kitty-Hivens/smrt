@@ -1,8 +1,7 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use smrt::authoring::{
-    self, BootstrapArgs, Modrinth, apply_role_table as enrich_apply_role_table,
-    enrich_from_mcmod_info, gate, infer_requires_from_mcmod_info, load_role_table,
+    self, BootstrapArgs, Modrinth, enrich_from_mcmod_info, gate, infer_requires_from_mcmod_info,
 };
 use smrt::domain::{LoaderSpec, PackConfig, PackManifest, PackSummary, VersionChannel};
 use smrt::registry::Registry;
@@ -102,18 +101,6 @@ enum Cmd {
         out: PathBuf,
         #[arg(long, default_value = "/var/lib/smrt")]
         storage: PathBuf,
-    },
-
-    /// Apply a TOML role table (filename -> role) to `display.role`
-    /// across the pack config. Existing values win; unmatched table entries
-    /// are reported so typos can be spotted.
-    ApplyRoleTable {
-        #[arg(long)]
-        config: PathBuf,
-        #[arg(long)]
-        table: PathBuf,
-        #[arg(long)]
-        out: PathBuf,
     },
 
     /// Walk each mod's `mcmod.info.dependencies`, resolve modids
@@ -311,7 +298,6 @@ async fn main() -> Result<()> {
             out,
             storage,
         } => run_enrich_mcmod(&config, &out, &storage),
-        Cmd::ApplyRoleTable { config, table, out } => run_apply_role_table(&config, &table, &out),
         Cmd::InferRequires {
             config,
             out,
@@ -593,20 +579,6 @@ async fn run_depfill(config_path: &Path, out_path: &Path, storage: &Path) -> Res
 fn run_enrich_mcmod(config_path: &Path, out_path: &Path, storage: &Path) -> Result<()> {
     let mut cfg: PackConfig = read_json(config_path)?;
     enrich_from_mcmod_info(&mut cfg, storage)?;
-    write_pack_config(&cfg, out_path)
-}
-
-fn run_apply_role_table(config_path: &Path, table_path: &Path, out_path: &Path) -> Result<()> {
-    let mut cfg: PackConfig = read_json(config_path)?;
-    let table = load_role_table(table_path)?;
-    let report = enrich_apply_role_table(&mut cfg, &table)?;
-    if !report.unmatched_in_table.is_empty() {
-        warn!(
-            "role table contains {} filename(s) with no match in the pack -- check for typos: {:?}",
-            report.unmatched_in_table.len(),
-            report.unmatched_in_table,
-        );
-    }
     write_pack_config(&cfg, out_path)
 }
 

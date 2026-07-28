@@ -180,10 +180,16 @@ pub struct AssetEntry {
 /// version stays at 2. Clients that don't recognise the block fall back
 /// to defaults derived from `filename` / `dest`.
 ///
-/// `icon_url`, `role`, and `requires` are additive launcher-side richer
-/// UX hooks (per-item icons, role-grouped pickers, dependency graph
-/// rendering). All three optional; manifests without them parse cleanly
-/// on every client that reached the v2 schema.
+/// `icon_url` and `requires` are additive launcher-side richer UX hooks
+/// (per-item icons, dependency graph rendering). Both optional; manifests
+/// without them parse cleanly on every client that reached the v2 schema.
+///
+/// A `role` field once grouped interchangeable mods into one selectable slot.
+/// It was only ever settable through a hand-written TOML table and a CLI pass,
+/// which is more curation than the grouping was worth; a mod that must not run
+/// beside another says so through `incompatible_with`, which is the part that
+/// protects an install. A manifest still carrying the key parses -- an unknown
+/// field is ignored -- and a rebuild drops it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct Display {
@@ -218,13 +224,6 @@ pub struct Display {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub icon_url: Option<String>,
-    /// Short tag for grouping interchangeable mods. Launcher renders all
-    /// mods with the same role as a single selectable slot ("Recipe
-    /// viewer: JEI [v]" with REI / JER / EMI alternatives). Canonical
-    /// values are mirror-curated; the launcher does not enumerate them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub role: Option<String>,
     /// Same-manifest dependency declarations. Each entry's `filename`
     /// points at another mod in this pack's `mods[]`. Resolver
     /// validates the reference at install time; missing references
@@ -341,9 +340,11 @@ mod tests {
 
     #[test]
     fn mod_entry_round_trips_rich_display_block() {
-        // icon_url + role + requires together. Wire format is what the
+        // icon_url + requires together. Wire format is what the
         // 2026-05-25 launcher spec extension expects; this test fails
-        // loud if a field name drifts.
+        // loud if a field name drifts. The `role` key rides along as a
+        // field no reader knows any more: an old manifest carrying it must
+        // still parse, which is what "ignore unknown fields" is for.
         let json = r#"{
             "filename": "appleskin.jar",
             "sha1": "abc",
@@ -366,11 +367,30 @@ mod tests {
             d.icon_url.as_deref(),
             Some("https://cdn.modrinth.com/data/EsAfCjCV/icon.png")
         );
-        assert_eq!(d.role.as_deref(), Some("info_overlay"));
         assert_eq!(d.requires.len(), 1);
         assert_eq!(d.requires[0].filename, "Mixinbooter.jar");
         assert_eq!(d.requires[0].version_range.as_deref(), Some(">=10.0"));
         assert!(!d.requires[0].optional);
+    }
+
+    // Every published manifest and pack config written before the role field
+    // was dropped still carries `"role": "..."`. Nothing may reject it: an
+    // unknown field is ignored, and a rebuild simply stops emitting it.
+    #[test]
+    fn a_manifest_carrying_the_dropped_role_key_still_parses() {
+        let json = r#"{
+            "filename": "JEI.jar",
+            "sha1": "abc",
+            "size_bytes": 1,
+            "required": false,
+            "source": {"type": "smrt_cache", "url": "u"},
+            "display": {"name": "JEI", "role": "recipe_viewer", "category": "utility"}
+        }"#;
+        let m: ModEntry = serde_json::from_str(json).unwrap();
+        let d = m.display.expect("display parsed");
+        assert_eq!(d.category.as_deref(), Some("utility"));
+        let s = serde_json::to_string(&d).unwrap();
+        assert!(!s.contains("role"), "and a rebuild drops it: {s}");
     }
 
     #[test]

@@ -1,8 +1,7 @@
 //! Jar metadata extraction + the build enrichment passes that mutate a
 //! [`PackConfig`] in place. Each pass is a separate function so `smrt-pack`
 //! can run them from its own subcommand and inspect the result between steps
-//! -- e.g. fill name/description from mcmod.info, apply a role-table, then
-//! infer requires.
+//! -- e.g. fill name/description from mcmod.info, then infer requires.
 //!
 //! All passes are idempotent: re-running with the same inputs yields the same
 //! output. Passes that fill optional fields prefer existing data over derived
@@ -13,7 +12,7 @@ use super::sources::cache_jar_path;
 use crate::domain::PackConfig;
 use crate::domain::SourceDecl;
 use crate::domain::{Display, Requirement};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -344,67 +343,6 @@ pub fn enrich_from_mcmod_info(
     Ok(report)
 }
 
-// ── Pass 2: apply role-table ──────────────────────────────────────────────
-
-/// Authored mapping of mod filename to role string.
-/// Loaded from a TOML file via [`load_role_table`].
-#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "bindings/")]
-pub struct RoleTable {
-    #[serde(default)]
-    pub roles: HashMap<String, String>,
-}
-
-pub fn load_role_table(path: &Path) -> Result<RoleTable> {
-    let raw = fs::read_to_string(path)
-        .with_context(|| format!("reading role table {}", path.display()))?;
-    toml::from_str(&raw).with_context(|| format!("parsing role table {}", path.display()))
-}
-
-#[derive(Debug, Default)]
-pub struct RoleApplyReport {
-    pub applied: u32,
-    pub skipped_already_set: u32,
-    pub unmatched_in_table: Vec<String>,
-}
-
-/// Writes `display.role` on every mod whose filename matches an entry
-/// in the role-table. Existing `display.role` wins -- the table never
-/// overrides a manually-set value. Returns the list of table entries
-/// that did not match any mod so typos can be spotted.
-pub fn apply_role_table(config: &mut PackConfig, table: &RoleTable) -> Result<RoleApplyReport> {
-    let mut report = RoleApplyReport::default();
-    let filenames: std::collections::HashSet<&str> =
-        config.mods.iter().map(|m| m.filename.as_str()).collect();
-
-    for fname in table.roles.keys() {
-        if !filenames.contains(fname.as_str()) {
-            report.unmatched_in_table.push(fname.clone());
-        }
-    }
-    report.unmatched_in_table.sort();
-
-    for m in config.mods.iter_mut() {
-        let Some(role) = table.roles.get(&m.filename) else {
-            continue;
-        };
-        let display = m.display.get_or_insert_with(default_display);
-        if display.role.is_some() {
-            report.skipped_already_set += 1;
-            continue;
-        }
-        display.role = Some(role.clone());
-        report.applied += 1;
-    }
-    info!(
-        applied = report.applied,
-        skipped = report.skipped_already_set,
-        unmatched = report.unmatched_in_table.len(),
-        "apply-role-table complete"
-    );
-    Ok(report)
-}
-
 // ── Pass 3: infer requires from mcmod.info dependencies ───────────────────
 
 #[derive(Debug, Default)]
@@ -650,54 +588,6 @@ mod tests {
         assert_eq!(d.name.as_deref(), Some("CuratorName"), "curator wins");
         assert_eq!(d.description.as_deref(), Some("FromJarDesc"));
         assert_eq!(d.url.as_deref(), Some("https://fromjar"));
-    }
-
-    #[test]
-    fn role_table_applies_and_reports_unmatched() {
-        let mut cfg = empty_config();
-        for fname in ["JEI.jar", "Xaero.jar", "AlreadyHasRole.jar"] {
-            cfg.mods.push(DeclaredMod {
-                filename: fname.into(),
-                default_enabled: true,
-                source: SourceDecl::SmrtCache {
-                    sha1: "a".repeat(40),
-                },
-                display: if fname == "AlreadyHasRole.jar" {
-                    Some(Display {
-                        role: Some("custom".into()),
-                        ..Display::default()
-                    })
-                } else {
-                    None
-                },
-                slug: None,
-                pulled: false,
-            });
-        }
-        let mut table = RoleTable::default();
-        table.roles.insert("JEI.jar".into(), "recipe_viewer".into());
-        table.roles.insert("Xaero.jar".into(), "minimap".into());
-        table
-            .roles
-            .insert("AlreadyHasRole.jar".into(), "overridden".into());
-        table.roles.insert("Typo.jar".into(), "ignored".into());
-
-        let r = apply_role_table(&mut cfg, &table).unwrap();
-        assert_eq!(r.applied, 2);
-        assert_eq!(r.skipped_already_set, 1);
-        assert_eq!(r.unmatched_in_table, vec!["Typo.jar".to_string()]);
-        assert_eq!(
-            cfg.mods[0].display.as_ref().unwrap().role.as_deref(),
-            Some("recipe_viewer")
-        );
-        assert_eq!(
-            cfg.mods[1].display.as_ref().unwrap().role.as_deref(),
-            Some("minimap")
-        );
-        assert_eq!(
-            cfg.mods[2].display.as_ref().unwrap().role.as_deref(),
-            Some("custom")
-        );
     }
 
     #[test]
