@@ -9,6 +9,8 @@ export type Locale = 'ru' | 'en';
 export const LOCALES: Locale[] = ['ru', 'en'];
 
 const dicts: Record<Locale, Dict> = { ru, en };
+import { withTransition } from './transition.svelte';
+
 const STORAGE_KEY = 'smrt.locale';
 
 function initialLocale(): Locale {
@@ -30,13 +32,18 @@ export const i18n = {
     return current;
   },
   set(loc: Locale) {
-    current = loc;
-    try {
-      localStorage.setItem(STORAGE_KEY, loc);
-    } catch {
-      // ignore -- in-memory locale still works for the session
-    }
-    if (typeof document !== 'undefined') document.documentElement.lang = loc;
+    // The text of the whole panel changes at once. Crossfaded, that reads as one
+    // act; unfaded it is a flicker across every word on screen, which is the one
+    // change in this product where the eye has nothing to hold onto.
+    withTransition('locale', () => {
+      current = loc;
+      try {
+        localStorage.setItem(STORAGE_KEY, loc);
+      } catch {
+        // ignore -- in-memory locale still works for the session
+      }
+      if (typeof document !== 'undefined') document.documentElement.lang = loc;
+    });
   },
   toggle() {
     this.set(current === 'ru' ? 'en' : 'ru');

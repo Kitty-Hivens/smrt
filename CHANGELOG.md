@@ -57,6 +57,23 @@ version section when a release is tagged.
 
 ### Added
 
+- Switching the theme or the language no longer happens in one frame. Both
+  change more at once than anything else in the panel -- every token, or every
+  word on screen -- and both were instant, which reads as a flicker with nothing
+  for the eye to hold onto. They are crossfaded now through a view transition:
+  one snapshot before, one after, at no per-element cost, where a CSS transition
+  on colour and background would have animated the whole page on every repaint.
+  The two do not read the same, because they are not the same act -- a substrate
+  swap keeps every shape in place and only moves colour, so it is quick, while a
+  rewrite of the text replaces the content and is drawn in over about twice as
+  long. Both are absent under `prefers-reduced-motion`: the helper that starts
+  them asks the same question the duration tokens answer, so the product keeps
+  one motion switch rather than growing a second. Neither pretends to be
+  loading -- nothing is; a placeholder saying otherwise would buy a moment of
+  calm with the credibility of every real loading indicator.
+
+### Added
+
 - A pack says who is in it and what is happening to it, live
   (`GET /v1/authoring/packs/{id}/events`, server-sent). The revision check
   refuses a save that would overwrite someone else's, which stops the loss and
