@@ -3,6 +3,7 @@
   import { flip } from 'svelte/animate';
   import { api, ApiError } from '../lib/api';
   import { dialogs } from '../lib/dialogs.svelte';
+  import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
   import { stagger } from '../lib/motion.svelte';
   import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
@@ -288,11 +289,15 @@
     return () => window.removeEventListener('beforeunload', guard);
   });
 
-  // Closing the editor with an unsaved rejection is the other way to lose them.
-  async function closeGuarded() {
-    if (unsaved && !(await dialogs.confirm(t('pe.unsavedLeave'), { danger: true }))) return;
-    onClose();
-  }
+  // Leaving is no longer one button: the editor is a location, so back, the
+  // trackpad gesture and the rail all close it. The question therefore lives on
+  // the route, which asks it whichever way the exit came -- rather than on the
+  // Close handler, which a gesture would walk straight past.
+  $effect(() => {
+    if (!unsaved) return;
+    route.setLeaveGuard(() => dialogs.confirm(t('pe.unsavedLeave'), { danger: true }));
+    return () => route.setLeaveGuard(null);
+  });
 
   // debounced autosave: deep-reads cfg + tags + gallery, persists once they settle
   $effect(() => {
@@ -770,7 +775,7 @@
       {previewOpen ? t('pe.hidePreview') : t('pe.preview')}
     </button>
   {/if}
-  <button onclick={closeGuarded}>{t('common.close')}</button>
+  <button onclick={onClose}>{t('common.close')}</button>
 </div>
 
 

@@ -85,6 +85,14 @@ function modFromPath(path: string): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+/// The pack being edited, out of `/packs/<id>` (operator) or `/mypacks/<id>`
+/// (member). A community id carries slashes (`u/<uid>/<pack>`), so it rides
+/// percent-encoded in the one segment.
+function packFromPath(path: string): string | null {
+  const m = path.match(/^\/(?:packs|mypacks)\/(.+)$/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 function initial(): Section {
   return sectionFromPath(location.pathname) ?? storedSection();
 }
@@ -98,6 +106,27 @@ let section = $state<Section>(initial());
 // The value is a mod ref the API accepts: a numeric id (graph / registry) or
 // `sha1:<hash>` (a pack's mod list has the jar's sha1, not the id).
 let focusMod = $state<string | null>(modFromPath(location.pathname));
+// The open pack editor, held here rather than in the view that mounts it: it is
+// the deepest surface in the panel and it used to be pure local state, so
+// nothing about opening it entered history and back could not close it (#54).
+// As a location it closes on back, survives a reload and can be linked to.
+let editPack = $state<string | null>(packFromPath(location.pathname));
+
+// What the editor wants asked before it is left with edits the server has not
+// accepted. It lives on the route rather than on the Close button, because
+// leaving is now something back, a trackpad gesture and the rail can all do --
+// each of them would otherwise skip the very check the button exists for.
+let leaveGuard: (() => Promise<boolean>) | null = null;
+
+/// Run the pending guard, if leaving would abandon an open editor. `true` means
+/// go ahead; a guard that answers once is spent, so the same question is not
+/// asked twice on the way out.
+async function mayLeaveEditor(): Promise<boolean> {
+  if (!leaveGuard || editPack === null) return true;
+  if (!(await leaveGuard())) return false;
+  leaveGuard = null;
+  return true;
+}
 
 /// Push a URL for a state the user navigated to, so it becomes a history entry
 /// they can come back from. Replacing (rather than pushing) the very first
@@ -118,7 +147,16 @@ function remember(s: Section) {
 // The URL is the truth on the way back: whatever the browser restores, the
 // store follows -- without pushing, or every back press would leave a new entry.
 if (typeof window !== 'undefined') {
-  window.addEventListener('popstate', () => {
+  window.addEventListener('popstate', async () => {
+    const pack = packFromPath(location.pathname);
+    // History has already moved by the time this fires, so a refused leave has
+    // to put the editor's entry back. `forward()` walks to the entry we just
+    // left instead of pushing a new one, so declining does not pile up steps.
+    if (pack === null && !(await mayLeaveEditor())) {
+      history.forward();
+      return;
+    }
+    editPack = pack;
     const mod = modFromPath(location.pathname);
     focusMod = mod;
     if (!mod) {
@@ -143,13 +181,40 @@ export const route = {
   get mod(): string | null {
     return focusMod;
   },
+  /// The pack whose editor is open, or null. Driven by the URL, so back closes
+  /// the editor and a link reopens it.
+  get pack(): string | null {
+    return editPack;
+  },
   /// `replace` is for a correction rather than a navigation -- landing on a
   /// section your role cannot see should not leave a step to go back to.
-  go(s: Section, replace = false) {
+  async go(s: Section, replace = false) {
+    if (!(await mayLeaveEditor())) return;
     focusMod = null; // picking a section leaves any open mod page
+    editPack = null;
     section = s;
     remember(s);
     pushPath(`/${s}`, replace);
+  },
+  /// Open a pack's editor as a location under the section it was opened from,
+  /// so back closes it and the URL can be shared.
+  openPack(id: string) {
+    editPack = id;
+    pushPath(`/${section}/${encodeURIComponent(id)}`);
+  },
+  /// Close the editor the same way the back button does, so both routes through
+  /// the unsaved-changes guard are the one route.
+  closePack() {
+    if (packFromPath(location.pathname)) {
+      history.back();
+      return;
+    }
+    editPack = null;
+  },
+  /// Register what to ask before an open editor is left; `null` clears it. The
+  /// editor sets this while it holds edits the server has not accepted.
+  setLeaveGuard(fn: (() => Promise<boolean>) | null) {
+    leaveGuard = fn;
   },
   // Open a mod's page over the current section; `closeMod` returns to it. `ref`
   // is a numeric mod id or a `sha1:<hash>` artifact reference.

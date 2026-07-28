@@ -66,6 +66,15 @@ version section when a release is tagged.
   every `/v1/packs/{id}/static/...` file -- pack icons, banners, and any
   `smrt_static` source a manifest points at -- answered 404. Both routes are
   pinned by tests that assert the request reaches its handler.
+- The pack editor can be left with the back button. It opened from local state
+  while the URL stayed on the section, so nothing about opening it entered
+  history: back walked out of the editor's own view or out of the panel
+  entirely, and a reload lost the pack you had open. The open editor is a
+  location now (`/packs/<id>`, `/mypacks/<id>`), so back and the trackpad
+  gesture close it and a link reopens it. The unsaved-changes guard moved with
+  it: it lives on the route rather than on the Close button, so every way out
+  asks -- declining walks back to the editor rather than stacking a history
+  step.
 - Two accounts editing one pack no longer lose each other's work. The config
   read answers with an `ETag` of its authored content and a save may carry it
   as `If-Match`; a save whose base has moved on is refused with 409 instead of
