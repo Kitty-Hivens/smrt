@@ -311,9 +311,9 @@ async fn run_build(
     // metadata from each cache jar's mcmod.info, then infer the requires graph.
     job.line("running enrichment passes (enrich-mcmod / infer-requires)");
     enrich_from_mcmod_info(&mut cfg, storage.root())
-        .map_err(|e| format!("enrich-mcmod failed: {e}"))?;
+        .map_err(|e| format!("enrich-mcmod failed: {e:#}"))?;
     infer_requires_from_mcmod_info(&mut cfg, storage.root())
-        .map_err(|e| format!("infer-requires failed: {e}"))?;
+        .map_err(|e| format!("infer-requires failed: {e:#}"))?;
 
     // side/policy classification through the registry decision layer: the
     // required-ness seeds and the side invariants ride on it
@@ -326,7 +326,7 @@ async fn run_build(
         })
         .await
         .map_err(|e| format!("classify task: {e}"))?
-        .map_err(|e| format!("classify failed: {e}"))?
+        .map_err(|e| format!("classify failed: {e:#}"))?
     };
 
     job.line("resolving sources (Modrinth lookups + cache reads)");
@@ -341,7 +341,7 @@ async fn run_build(
         registry,
     )
     .await
-    .map_err(|e| format!("resolve failed: {e}"))?;
+    .map_err(|e| format!("resolve failed: {e:#}"))?;
     let manifest = built.manifest;
     let fell_back = built.resolved_from_registry;
     // A build that could not reach Modrinth and answered from the registry is

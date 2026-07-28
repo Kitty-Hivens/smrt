@@ -193,6 +193,18 @@ version section when a release is tagged.
 
 ### Fixed
 
+- A failed build reports every broken source at once, and says why each broke.
+  Resolution stopped at the first source it could not resolve, so a config with
+  three dead pins cost one build per pin to discover: you fixed one, rebuilt,
+  and met the next. Every source is tried now and the failure lists all of them,
+  with how much of the pack it got through. Each entry carries its whole cause
+  chain rather than only the outermost line -- the outer line names the mod, and
+  the cause underneath is the half that says whether upstream was unreachable,
+  the version ships no jar, or the pin is gone. The job log's other steps carry
+  their chains too, for the same reason.
+
+### Fixed
+
 - The registry view opens more than one mod at a time, shows an icon on every
   build, and stops leaving a band of empty space when a mod is expanded.
   Comparing two mods' builds is the reason to open them at all, and a single

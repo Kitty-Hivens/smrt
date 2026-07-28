@@ -27,6 +27,7 @@ use tracing::info;
 /// for and the registry did. A build that reached upstream and one that did not
 /// are different events, and the caller says so in its log rather than the two
 /// looking identical (#57).
+#[derive(Debug)]
 pub struct Built {
     pub manifest: PackManifest,
     pub resolved_from_registry: Vec<String>,
@@ -64,39 +65,61 @@ pub async fn build_manifest(
     let modrinth = Modrinth::new()?;
     let modrinth_cache = ModrinthCache::default();
 
+    // Every source is resolved before anything is reported. Stopping at the
+    // first failure meant a config with three dead pins reported one, you fixed
+    // it, rebuilt, and met the second -- so the cost of a broken pack was one
+    // build per broken source (#107). Each failure carries its whole chain: the
+    // outermost context names the mod, and the cause underneath it is the half
+    // that says whether upstream was down, the version ships no jar, or the pin
+    // is gone.
     let mut fell_back: Vec<String> = Vec::new();
+    let mut failures: Vec<String> = Vec::new();
     let mut mod_entries = Vec::with_capacity(cfg.mods.len());
     for m in &cfg.mods {
-        mod_entries.push(
-            resolve_mod(
-                m,
-                storage,
-                mirror_base,
-                &modrinth,
-                &modrinth_cache,
-                registry,
-                &mut fell_back,
-            )
-            .await?,
-        );
+        match resolve_mod(
+            m,
+            storage,
+            mirror_base,
+            &modrinth,
+            &modrinth_cache,
+            registry,
+            &mut fell_back,
+        )
+        .await
+        {
+            Ok(entry) => mod_entries.push(entry),
+            Err(e) => failures.push(format!("{}: {e:#}", m.filename)),
+        }
     }
-    mod_entries.sort_by(|a, b| a.filename.cmp(&b.filename));
-    derive_required(&mut mod_entries, classifications)?;
 
     let mut asset_entries = Vec::with_capacity(cfg.assets.len());
     for a in &cfg.assets {
-        asset_entries.push(
-            resolve_asset(
-                a,
-                &cfg.pack_id,
-                storage,
-                mirror_base,
-                &modrinth,
-                &modrinth_cache,
-            )
-            .await?,
+        match resolve_asset(
+            a,
+            &cfg.pack_id,
+            storage,
+            mirror_base,
+            &modrinth,
+            &modrinth_cache,
+        )
+        .await
+        {
+            Ok(entry) => asset_entries.push(entry),
+            Err(e) => failures.push(format!("{}: {e:#}", a.dest)),
+        }
+    }
+
+    if !failures.is_empty() {
+        bail!(
+            "{} of {} sources could not be resolved:\n  {}",
+            failures.len(),
+            cfg.mods.len() + cfg.assets.len(),
+            failures.join("\n  ")
         );
     }
+
+    mod_entries.sort_by(|a, b| a.filename.cmp(&b.filename));
+    derive_required(&mut mod_entries, classifications)?;
     asset_entries.sort_by(|a, b| a.dest.cmp(&b.dest));
 
     let minecraft = MinecraftSpec {
@@ -438,6 +461,82 @@ fn validate_pack_version(v: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A build used to stop at the first source it could not resolve, so a config
+    // with several dead pins cost one build per pin to discover. Every source is
+    // tried, and the failure names all of them -- with the cause under each,
+    // since "resolving mod X" without the reason is the half that does not help.
+    #[tokio::test]
+    async fn every_broken_source_is_reported_at_once_with_its_cause() {
+        use crate::domain::pack::{default_owner, default_tier, default_visibility};
+        use crate::domain::{DeclaredMod, PackConfig, SourceDecl};
+
+        let dir = tempfile::tempdir().unwrap();
+        let cache_mod = |filename: &str, sha: &str| DeclaredMod {
+            filename: filename.into(),
+            default_enabled: true,
+            source: SourceDecl::SmrtCache { sha1: sha.into() },
+            display: None,
+            slug: None,
+            pulled: false,
+        };
+        let cfg = PackConfig {
+            pack_id: "Test".into(),
+            display_name: "Test".into(),
+            tagline: String::new(),
+            minecraft_version: "1.12.2".into(),
+            loader: LoaderSpec {
+                name: "forge".into(),
+                version: "14.23.5.2922".into(),
+            },
+            java_major: 8,
+            version: None,
+            tags: vec![],
+            featured: false,
+            // neither jar is in the cache, so both fail -- and a third, valid
+            // entry would not save the build either way
+            mods: vec![
+                cache_mod("alpha.jar", &"a".repeat(40)),
+                cache_mod("beta.jar", &"b".repeat(40)),
+            ],
+            assets: vec![],
+            auth: None,
+            pack_meta: Default::default(),
+            owner: default_owner(),
+            tier: default_tier(),
+            visibility: default_visibility(),
+            fork_of: None,
+        };
+
+        let registry = Registry::open_in_memory().unwrap();
+        let err = build_manifest(
+            &cfg,
+            dir.path(),
+            Some("0.0.0"),
+            VersionChannel::Beta,
+            None,
+            "https://mirror.example",
+            &HashMap::new(),
+            &registry,
+        )
+        .await
+        .expect_err("neither jar exists");
+
+        let msg = format!("{err:#}");
+        assert!(msg.contains("alpha.jar"), "names the first: {msg}");
+        assert!(
+            msg.contains("beta.jar"),
+            "and the second, rather than stopping at the first: {msg}"
+        );
+        assert!(
+            msg.contains("2 of 2"),
+            "says how much of the pack it got through: {msg}"
+        );
+        assert!(
+            msg.contains("not found"),
+            "carries the cause, not just the mod: {msg}"
+        );
+    }
 
     #[test]
     fn pack_version_accepts_legacy_and_snapshot_forms() {
