@@ -58,6 +58,7 @@
     type="file"
     {accept}
     {multiple}
+    aria-label={label}
     hidden
     onchange={(e) => {
       emit((e.target as HTMLInputElement).files);

@@ -47,6 +47,7 @@
     type="checkbox"
     checked={enabled}
     disabled={locked}
+    aria-label={modName(mod)}
     title={locked ? t('mr.lockedHint') : t('mr.optionalHint')}
     onchange={(e) => onToggle(e.currentTarget.checked)}
   />

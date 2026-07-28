@@ -66,6 +66,16 @@ version section when a release is tagged.
   every `/v1/packs/{id}/static/...` file -- pack icons, banners, and any
   `smrt_static` source a manifest points at -- answered 404. Both routes are
   pinned by tests that assert the request reaches its handler.
+- Form fields say what they are. The visible caption a `Field` draws was a
+  plain span with nothing tying it to the control, so a screen reader on the
+  input heard silence -- and where an `aria-label` existed it repeated the
+  placeholder, naming the example ("main", "https://...") instead of the field
+  and overriding the caption that was right there. The caption is now named and
+  the control points at it, in the one component every labelled field goes
+  through; the example-echoing labels are gone, and controls too dense for a
+  caption (mod rows, the asset table, the drop zones) carry a real field name
+  instead. Measured on a running panel: the pack editor and the server editor
+  have no unnamed control and none named by its own example.
 - The pack editor can be left with the back button. It opened from local state
   while the URL stayed on the section, so nothing about opening it entered
   history: back walked out of the editor's own view or out of the panel

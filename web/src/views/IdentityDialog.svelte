@@ -121,7 +121,7 @@
     {#if modMode === 'new'}
       <label class="fld">
         <span class="lbl">{t('id.modName')}</span>
-        <input bind:value={modName} placeholder="JourneyMap" aria-label="JourneyMap" />
+        <input bind:value={modName} placeholder="JourneyMap" />
       </label>
     {:else}
       <div class="fld">
@@ -140,7 +140,7 @@
     <div class="row2">
       <label class="fld">
         <span class="lbl">{t('id.version')}</span>
-        <input bind:value={version} placeholder="1.7.10-5.1.4" aria-label="1.7.10-5.1.4" />
+        <input bind:value={version} placeholder="1.7.10-5.1.4" />
       </label>
       <div class="fld">
         <span class="lbl">{t('id.channel')}</span>
@@ -151,19 +151,19 @@
     <div class="row2">
       <label class="fld">
         <span class="lbl">{t('id.loaders')}</span>
-        <input bind:value={loaders} placeholder="forge" aria-label="forge" />
+        <input bind:value={loaders} placeholder="forge" />
         <span class="hint faint">{t('id.loadersHint')}</span>
       </label>
       <label class="fld">
         <span class="lbl">{t('id.mc')}</span>
-        <input bind:value={mc} placeholder="1.7.10" aria-label="1.7.10" />
+        <input bind:value={mc} placeholder="1.7.10" />
         <span class="hint faint">{t('id.mcHint')}</span>
       </label>
     </div>
 
     <label class="fld">
       <span class="lbl">{t('id.filename')}</span>
-      <input bind:value={filename} placeholder="journeymap-1.7.10-5.1.4.jar" aria-label="journeymap-1.7.10-5.1.4.jar" />
+      <input bind:value={filename} placeholder="journeymap-1.7.10-5.1.4.jar" />
     </label>
 
     {#if err}<div class="err mono">{err}</div>{/if}

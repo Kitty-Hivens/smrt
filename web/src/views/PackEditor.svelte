@@ -795,8 +795,8 @@
           {#if bootstrapMode}
             <div class="bootform">
               <div class="brow">
-                <Field label={t('pe.mcVersion')}><input bind:value={bootMc} placeholder="1.12.2" aria-label="1.12.2" /></Field>
-                <Field label={t('pe.loaderVersion')}><input bind:value={bootLoader} placeholder="14.23.5.2922" aria-label="14.23.5.2922" /></Field>
+                <Field label={t('pe.mcVersion')}><input bind:value={bootMc} placeholder="1.12.2" /></Field>
+                <Field label={t('pe.loaderVersion')}><input bind:value={bootLoader} placeholder="14.23.5.2922" /></Field>
                 <Field label={t('pe.displayName')}><input bind:value={bootName} placeholder={packId} aria-label={packId} /></Field>
               </div>
               <label class="upbtn">
@@ -896,7 +896,7 @@
                     <button class="sm" onclick={() => (pick = { src: 'modrinth', row: i })}>{t('pe.choose')}</button>
                     <span class="refval mono faint">{m.source.project_id || t('pe.unset')}</span>
                   {:else}
-                    <input class="mono" bind:value={m.source.rel_path} placeholder="rel_path" aria-label="rel_path" />
+                    <input class="mono" bind:value={m.source.rel_path} placeholder="rel_path" aria-label={t('pe.relPath')} />
                   {/if}
                 </div>
                 <label class="ck" title={t('pe.defHint')}><input type="checkbox" bind:checked={m.default_enabled} /> {t('pe.def')}</label>
@@ -942,7 +942,7 @@
               <tbody>
                 {#each cfg.assets ?? [] as a, i}
                   <tr>
-                    <td><input class="mono" bind:value={a.dest} /></td>
+                    <td><input class="mono" bind:value={a.dest} aria-label={t('pe.dest')} /></td>
                     <td>
                       <Select
                         compact
@@ -955,15 +955,15 @@
                     </td>
                     <td>
                       {#if a.source.type === 'modrinth'}
-                        <input class="mono" bind:value={a.source.project_id} placeholder="project_id" aria-label="project_id" />
-                        <input class="mono" bind:value={a.source.version_id} placeholder="version_id" aria-label="version_id" />
+                        <input class="mono" bind:value={a.source.project_id} placeholder="project_id" aria-label={t('pe.projectId')} />
+                        <input class="mono" bind:value={a.source.version_id} placeholder="version_id" aria-label={t('pe.versionId')} />
                       {:else if a.source.type === 'smrt_cache'}
-                        <input class="mono" bind:value={a.source.sha1} placeholder="sha1" aria-label="sha1" />
+                        <input class="mono" bind:value={a.source.sha1} placeholder="sha1" aria-label={t('pe.sha1')} />
                       {:else}
-                        <input class="mono" bind:value={a.source.rel_path} placeholder="rel_path" aria-label="rel_path" />
+                        <input class="mono" bind:value={a.source.rel_path} placeholder="rel_path" aria-label={t('pe.relPath')} />
                       {/if}
                     </td>
-                    <td class="ctr"><input type="checkbox" bind:checked={a.required} /></td>
+                    <td class="ctr"><input type="checkbox" bind:checked={a.required} aria-label={t('pe.reqLabel')} /></td>
                     <td class="ctr"><button class="danger sm" onclick={() => removeAsset(i)} aria-label={t('common.delete')}>x</button></td>
                   </tr>
                 {/each}
@@ -977,8 +977,8 @@
 
         <Section title={t('pe.card.title')}>
           <div class="card">
-            <Field label={t('pe.card.icon')} wide><input class="mono" bind:value={cfg.pack_meta.icon_url} placeholder="https://.../icon.png" aria-label="https://.../icon.png" /></Field>
-            <Field label={t('pe.card.banner')} wide><input class="mono" bind:value={cfg.pack_meta.banner_url} placeholder="https://.../banner.png" aria-label="https://.../banner.png" /></Field>
+            <Field label={t('pe.card.icon')} wide><input class="mono" bind:value={cfg.pack_meta.icon_url} placeholder="https://.../icon.png" /></Field>
+            <Field label={t('pe.card.banner')} wide><input class="mono" bind:value={cfg.pack_meta.banner_url} placeholder="https://.../banner.png" /></Field>
             <Field label={t('pe.card.gallery')} wide><textarea class="mono" rows="3" bind:value={cardGalleryStr}></textarea></Field>
             <Field label={t('pe.card.description')} wide><textarea class="mono" rows="5" bind:value={cfg.pack_meta.description_md}></textarea></Field>
           </div>
