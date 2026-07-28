@@ -42,6 +42,12 @@ pub struct PackManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub fingerprint: Option<String>,
+    /// What the mirror knew about this build when it published it. Absent when
+    /// the pre-publish check found nothing to say (and on every manifest built
+    /// before the check landed), so the schema version stays at 2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub checks: Option<BuildChecks>,
     pub minecraft: MinecraftSpec,
     pub loader: LoaderSpec,
     pub java: JavaSpec,
@@ -52,6 +58,43 @@ pub struct PackManifest {
     pub mods: Vec<ModEntry>,
     #[serde(default)]
     pub assets: Vec<AssetEntry>,
+}
+
+/// The pre-publish check, as the published build records it.
+///
+/// A build is resolved against the registry graph before it is written. Two
+/// findings mean the pack cannot start -- a declared hard dependency nothing
+/// satisfies, and an artifact no loader in the pack can run -- and those stop
+/// the publish. The rest are recorded rather than enforced: an active conflict may be
+/// deliberate, a version outside a declared window usually runs anyway, and an
+/// unidentified jar means the check was partial rather than clean.
+///
+/// Recorded on the manifest because that is the artifact of a build; a job log
+/// is in memory and its snapshot outlives nothing. Advisory to a launcher --
+/// nothing here changes what gets installed.
+///
+/// On a published manifest, a non-empty `blocking` means the build went out
+/// over the gate, and `overridden` says so explicitly; a preview manifest
+/// carries the same findings unoverridden, since nothing was published. Who
+/// overrode it is not here: the actor lives in the job log and the audit trail,
+/// which are behind the panel, and this file is public.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export, export_to = "bindings/")]
+pub struct BuildChecks {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocking: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub advisory: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub overridden: bool,
+}
+
+impl BuildChecks {
+    /// Nothing worth recording -- the manifest omits the block entirely rather
+    /// than carrying an empty one.
+    pub fn is_empty(&self) -> bool {
+        self.blocking.is_empty() && self.advisory.is_empty()
+    }
 }
 
 /// Auth precondition the launcher enforces before spawning the game: which
@@ -241,6 +284,11 @@ fn default_true() -> bool {
 /// by omitting the field when it holds its default (e.g. `default_enabled`).
 fn is_true(value: &bool) -> bool {
     *value
+}
+
+/// `skip_serializing_if` for bool-default-false fields.
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[cfg(test)]

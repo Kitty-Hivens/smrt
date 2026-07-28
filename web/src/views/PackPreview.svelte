@@ -144,6 +144,26 @@
   {/if}
 
   {#if manifest && summary}
+    <!-- What the pre-publish check found. The preview hides the job log once
+         the manifest is in, so the verdict rides on the manifest instead of
+         scrolling away with it. -->
+    {#if manifest.checks}
+      <div class="checks" class:bad={(manifest.checks.blocking ?? []).length > 0}>
+        {#if (manifest.checks.blocking ?? []).length}
+          <strong>{t('prev.wouldNotStart')}</strong>
+          <ul>
+            {#each manifest.checks.blocking ?? [] as line (line)}<li>{line}</li>{/each}
+          </ul>
+        {/if}
+        {#if (manifest.checks.advisory ?? []).length}
+          <span class="faint">{t('prev.noted')}</span>
+          <ul class="faint">
+            {#each manifest.checks.advisory ?? [] as line (line)}<li>{line}</li>{/each}
+          </ul>
+        {/if}
+      </div>
+    {/if}
+
     <!-- version diff vs published -->
     {#if diff}
       <div class="diff" class:clean={diffIsEmpty(diff)}>
@@ -436,6 +456,29 @@
     100% {
       background-position: 0 0;
     }
+  }
+  .checks {
+    margin: 14px 16px 0;
+    padding: 10px 14px;
+    border: 1px solid var(--p-outline);
+    border-radius: 8px;
+    background: var(--p-surface);
+    font-size: var(--fs-sm);
+    line-height: 1.6;
+  }
+  .checks.bad {
+    border-color: color-mix(in srgb, var(--p-danger) 55%, transparent);
+  }
+  .checks strong {
+    color: var(--p-danger);
+  }
+  .checks ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
+  }
+  .checks ul + span {
+    display: inline-block;
+    margin-top: 10px;
   }
   .diff {
     display: flex;

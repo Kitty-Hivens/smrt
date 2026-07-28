@@ -71,6 +71,7 @@ a launcher consumes. Everything between them is derived and rebuildable.
 config.json --(save/PUT)--> depfill (pull missing hard deps from Modrinth/cache)
 config.json --(build)-----> enrichment (mcmod display, inferred requires)
                             classification (registry decision layer: side/policy)
+                            pre-publish check (resolve against the graph)
                             source resolution (Modrinth lookups, cache reads)
                             derive_required (seeds + hard-dep walk + invariants)
                             manifest <version>.json + summary.json + latest
@@ -80,6 +81,18 @@ A build is a *pure function of the config and the registry* plus network
 lookups; it writes nothing until the manifest is complete. Real builds of the
 same pack are serialized; dry runs (`?dry_run=true`) resolve everything and
 publish nothing.
+
+The pre-publish check (`authoring/gate.rs`) judges the resolve report. Two
+findings stop a publish, because they mean the pack cannot start: a declared
+hard dependency nothing satisfies (a bytecode-inferred one is recorded, not
+enforced), and an artifact built for a loader the pack does not run with nothing
+present to bridge it. The rest -- active conflicts,
+versions outside a declared window, jars the registry cannot identify -- are
+recorded on the built manifest under `checks` rather than enforced. A publish
+over a blocking finding needs `?override_checks=true` (`--force` on the CLI) and
+is recorded three ways: the job log, the audit trail (`build.override_checks`,
+with the actor), and `checks.overridden` on the manifest itself. A dry run
+reports the same verdict and is never stopped by it.
 
 ### Harvest cycle
 

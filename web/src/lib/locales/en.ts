@@ -369,6 +369,10 @@ export const en = {
   'bld.channel': 'Channel',
   'bld.changelog': 'Release notes',
   'bld.changelogPlaceholder': 'What changed and why (CommonMark, optional)',
+  'bld.blocked': 'Not published: this pack would not start',
+  'bld.overrideHint':
+    'Publishing anyway is recorded on the build itself, in this log, and in the audit trail.',
+  'bld.override': 'Publish anyway',
   'bld.hint':
     "Loads the pack's config, runs the enrichment passes (mcmod.info display + requires), resolves sources, and publishes the manifest. Runs on the mirror; the log is live. Leave the version blank to auto-number from the config's version base; the channel is stored on the manifest (release is an explicit act).",
 
@@ -377,6 +381,8 @@ export const en = {
   'job.failed': 'failed',
   'job.interrupted': '(log stream interrupted)',
 
+  'prev.wouldNotStart': 'This pack would not start:',
+  'prev.noted': 'Also noted:',
   'prev.noResult': 'The preview finished without producing a manifest.',
   'prev.rebuild': 'Rebuild',
   'prev.title': 'Preview',

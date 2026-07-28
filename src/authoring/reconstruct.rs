@@ -111,6 +111,7 @@ mod tests {
             pack_version: "2026.05.30.1".into(),
             generated_at: "now".into(),
             fingerprint: None,
+            checks: None,
             minecraft: MinecraftSpec {
                 version: "1.12.2".into(),
             },
