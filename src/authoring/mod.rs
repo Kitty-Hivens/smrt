@@ -20,6 +20,7 @@ pub mod modmeta;
 pub mod modrinth;
 pub mod reconstruct;
 pub mod resolve;
+pub mod search;
 pub mod validate;
 
 pub use bootstrap::{BootstrapArgs, bootstrap};
@@ -33,4 +34,5 @@ pub use jardiff::{JarDiff, diff_jars};
 pub use modrinth::*;
 pub use reconstruct::reconstruct_config;
 pub use resolve::{ResolveReport, pack_graph, resolve_pack};
+pub use search::{ModHit, PackContext, search_mods};
 pub use validate::{ValidateReport, validate};

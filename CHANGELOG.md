@@ -57,6 +57,25 @@ version section when a release is tagged.
 
 ### Added
 
+- One search over both places a mod can come from
+  (`GET /v1/search/mods?q=&mc=&loader=&pack=`). Adding a mod started with a
+  question nobody can answer yet -- from the mirror, or from Modrinth? -- since
+  choosing the door correctly means already knowing whether the mirror carries
+  the thing you have not found. Both are searched and merged: a project the
+  mirror has harvested is one row carrying what it knows exactly, filled in with
+  Modrinth's description and icon, rather than two rows of differing confidence.
+  Each hit says whether the mirror holds the bytes.
+  The pack's loader ranks rather than filters, because the registry models four
+  different answers and flattening them would either hide working mods or
+  promise ones that cannot load: native (including a loader the pack's inherits
+  from, and loader-agnostic jars), carried by a bridge the pack already ships,
+  carried by a bridge it would have to add, and foreign. Foreign is last rather
+  than absent -- it was searched for, and "this will not load here" is an answer.
+  A Modrinth outage narrows the results to what the mirror knows instead of
+  failing the search.
+
+### Added
+
 - A settings surface, and a light theme to put in it. The panel had nowhere for
   a preference to live -- the locale switch sat in the top bar because there was
   no other place -- and the theme could not exist at all: the tokens were

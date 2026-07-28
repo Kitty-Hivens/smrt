@@ -268,6 +268,29 @@ pub fn bridged_loader_for_project(conn: &Connection, project_id: &str) -> Result
         .optional()?)
 }
 
+/// Every known bridge, as `project_id -> the loader it carries`. The search uses
+/// it twice: to tell a foreign-loader mod that something *could* carry it from
+/// one nothing can, and to tell whether the pack in hand already ships that
+/// something.
+pub fn loader_bridges(conn: &Connection) -> Result<HashMap<String, String>> {
+    let mut stmt = conn.prepare("SELECT project_id, loader_id FROM loader_bridge")?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+    Ok(rows.collect::<rusqlite::Result<HashMap<_, _>>>()?)
+}
+
+/// Artifact hashes per mod, for answering "does the mirror hold bytes for this
+/// one" against the cache inventory. Folded in Rust over the whole table like
+/// the facet maps above: the registry is single-operator-sized.
+pub fn sha1s_by_mod(conn: &Connection) -> Result<HashMap<i64, Vec<String>>> {
+    let mut stmt = conn.prepare("SELECT mod_id, sha1 FROM mod_version")?;
+    let mut rows = stmt.query([])?;
+    let mut out: HashMap<i64, Vec<String>> = HashMap::new();
+    while let Some(r) = rows.next()? {
+        out.entry(r.get(0)?).or_default().push(r.get(1)?);
+    }
+    Ok(out)
+}
+
 /// Mod capabilities the loader ships natively -- dependency selectors a pack's
 /// mod may require that the loader itself answers, so removing the redundant
 /// Forge mod does not leave the dependency unsatisfied (see the 0018 seed). The
