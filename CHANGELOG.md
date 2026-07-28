@@ -55,6 +55,25 @@ version section when a release is tagged.
   values (operator uid, public base URL) moved to the environment; the
   SmartyCraft/Nexira setup is the reference deployment, not the definition.
 
+### Added
+
+- Opening travels. A mod's builds unroll under the mod and roll back up, so the
+  rows below are pushed rather than covered and the list stays one surface; the
+  pack editor rises the last few pixels into place instead of being present.
+  Both take their duration from the stylesheet's own tokens, read at the moment
+  the transition starts -- so the one `prefers-reduced-motion` rule that zeroes
+  those tokens disarms these too, and the product keeps a single motion switch
+  rather than growing a second one in JavaScript. The easing is read from the
+  same place: `--ease-out` is parsed into a curve, so a sliding panel and a
+  counting digit trace the same deceleration.
+  Measured rather than assumed, since the previous attempt at this concluded the
+  opposite from a bad probe: `element.animate` never writes inline styles, so
+  reading `element.style` shows a working transition as a dead one. Sampling the
+  running animations and the computed style shows the builds' height climbing
+  0 -> 41 -> 71 -> 84 -> 98px across a 150ms declared duration, and the editor's
+  opacity climbing over 240ms; under `prefers-reduced-motion` both report zero
+  animations and arrive already finished on the first frame.
+
 ### Removed
 
 - Mod roles. A role grouped interchangeable mods into one selectable slot in a

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api';
-  import { stagger } from '../lib/motion.svelte';
+  import { stagger, unroll } from '../lib/motion.svelte';
   import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
   import { href, plainClick, route } from '../lib/route.svelte';
@@ -425,7 +425,10 @@
         </div>
 
         {#if isOpen(m.mod_id)}
-          <div class="rels">
+          <!-- the builds unroll under their mod and roll back up: the rows
+               below are pushed rather than covered, so the list stays one
+               surface instead of becoming a stack of layers -->
+          <div class="rels" transition:unroll>
             {#if loadingIds.includes(m.mod_id)}
               <div class="muted s">{t('common.loading')}</div>
             {/if}
