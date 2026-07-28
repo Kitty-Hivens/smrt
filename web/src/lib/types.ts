@@ -109,5 +109,9 @@ export interface JobResult {
   pack_id: string;
   status: JobStatus;
   log: string[];
+  // What the pre-publish check would stop this build on. Absent when it found
+  // nothing; present on a preview too, where it is a warning rather than a
+  // refusal.
+  blocked?: string[];
   result?: DryRun | null;
 }

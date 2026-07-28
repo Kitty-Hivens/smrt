@@ -6,7 +6,7 @@ use super::ApiError;
 use crate::accounts::Identity;
 use crate::authoring::BootstrapArgs;
 use crate::domain::{LoaderSpec, VersionChannel};
-use crate::jobs::{DryRun, Status};
+use crate::jobs::{BuildDeps, BuildRequest, DryRun, Status};
 use crate::state::AppState;
 use axum::Extension;
 use axum::Json;
@@ -73,6 +73,13 @@ struct BuildParams {
     /// Release channel stored on the built manifest: `release` | `beta` |
     /// `alpha`. Defaults to `beta` -- publishing a release is an explicit act.
     channel: Option<String>,
+    /// Publish even though the pre-publish check found something that means the
+    /// pack cannot start (#108). The build says so in its log, the audit trail
+    /// records who asked, and the manifest carries what it was published over.
+    /// Same permission as building: it is the author's own pack, and the point
+    /// of the flag is that the decision is recorded rather than prevented.
+    #[serde(default)]
+    override_checks: bool,
 }
 
 #[derive(Deserialize, Default)]
@@ -105,14 +112,21 @@ async fn build_pack(
         .filter(|s| !s.is_empty());
     let job = state.jobs.spawn_build(
         pack_id,
-        state.storage.clone(),
-        state.config.clone(),
-        state.registry.clone(),
-        p.dry_run,
-        pack_version,
-        channel,
-        changelog,
-        Some(state.harvest.clone()),
+        BuildDeps {
+            storage: state.storage.clone(),
+            config: state.config.clone(),
+            registry: state.registry.clone(),
+            accounts: state.accounts.clone(),
+            harvest: Some(state.harvest.clone()),
+        },
+        BuildRequest {
+            dry_run: p.dry_run,
+            pack_version,
+            channel,
+            changelog,
+            override_checks: p.override_checks,
+            actor: Some(identity),
+        },
     );
     Ok(Json(JobRef {
         job_id: job.id.clone(),
@@ -167,6 +181,12 @@ struct JobStatusResp {
     pack_id: String,
     status: Status,
     log: Vec<String>,
+    /// What the pre-publish check would stop this build on (#108). Present on a
+    /// dry run too, where it is a warning rather than a refusal. The panel reads
+    /// it to tell "the gate said no" -- which an override answers -- from a
+    /// failure no override can help.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    blocked: Vec<String>,
     /// Present only for a finished dry-run (preview) build.
     #[serde(skip_serializing_if = "Option::is_none")]
     result: Option<DryRun>,
@@ -184,6 +204,7 @@ async fn job_status(
             pack_id: job.pack_id.clone(),
             status,
             log,
+            blocked: job.blocked(),
             result: job.result(),
         }));
     }
@@ -201,6 +222,9 @@ async fn job_status(
         pack_id: snap.pack_id,
         status: snap.status,
         log: snap.log,
+        // memory-only, like the dry-run result: a job answered from its
+        // snapshot is one nobody is going to override any more
+        blocked: Vec::new(),
         result: None,
     }))
 }

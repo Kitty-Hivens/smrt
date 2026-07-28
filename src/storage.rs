@@ -1195,6 +1195,7 @@ mod tests {
             changelog: None,
             generated_at: generated_at.into(),
             fingerprint: Some(format!("fp-{version}")),
+            checks: None,
             minecraft: MinecraftSpec {
                 version: "1.12.2".into(),
             },

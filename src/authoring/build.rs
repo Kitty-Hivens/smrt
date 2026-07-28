@@ -139,6 +139,9 @@ pub async fn build_manifest(
             pack_version,
             channel: Some(channel),
             changelog,
+            // the pre-publish check is the caller's to record: it decides whether
+            // a finding stops the publish, and a dry run never gates at all
+            checks: None,
             generated_at: now_rfc3339(),
             fingerprint: Some(fingerprint),
             minecraft,

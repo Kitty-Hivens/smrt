@@ -279,10 +279,14 @@ export const api = {
       packVersion?: string;
       channel?: 'release' | 'beta' | 'alpha';
       changelog?: string;
+      // publish over a pre-publish check that says the pack cannot start;
+      // recorded on the build, in the job log and in the audit trail
+      overrideChecks?: boolean;
     },
   ): Promise<{ job_id: string }> {
     const q = new URLSearchParams();
     if (opts?.dryRun) q.set('dry_run', 'true');
+    if (opts?.overrideChecks) q.set('override_checks', 'true');
     if (opts?.packVersion) q.set('pack_version', opts.packVersion);
     if (opts?.channel) q.set('channel', opts.channel);
     const qs = q.toString();

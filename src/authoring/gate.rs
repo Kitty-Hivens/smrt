@@ -1,0 +1,307 @@
+//! What a build is allowed to publish.
+//!
+//! A real build wrote the manifest, moved the `latest` pointer and rewrote the
+//! summary card without anything asking whether the result held together (#108).
+//! The launcher reads that pointer the moment it moves, so the first thing that
+//! checked a broken pack was a player's crash log -- while the mirror already
+//! knew: `resolve_pack` reads the same registry graph and reports exactly these
+//! problems, but only when a curator pressed the button in the editor.
+//!
+//! This turns that report into a verdict. The cut is deliberate and narrow:
+//! block on the two findings that mean *this pack cannot start*, record the rest
+//! onto the build.
+//!
+//! - An unmet hard dependency is a crash on launch -- when something actually
+//!   declared it. A bytecode-inferred edge is class-granularity evidence and
+//!   cannot tell a hard dependency from an optional integration that merely
+//!   references a foreign type, so an inferred-only miss is recorded, not
+//!   enforced. Refusing a publish on a guess is how a gate loses its authority.
+//! - An artifact built for a loader the pack does not run, with nothing present
+//!   to bridge it, does not load at all -- and whatever needed it then breaks.
+//!
+//! Everything else is real information and not a verdict. An active conflict may
+//! be exactly what the curator intends (two mods that overlap, one of them
+//! shipped off by default at the launcher's discretion); a dependency outside a
+//! declared version window usually runs, because those windows are authored
+//! optimistically; an unidentified jar means the check was partial, not that the
+//! pack is broken. Blocking on all of them would make the gate something
+//! operators route around, which is worse than not having one.
+//!
+//! The override exists for the same reason: a curator who knows better than the
+//! graph must be able to publish, and the mirror's job is then to say plainly
+//! that it happened -- in the job log, in the audit trail, and on the manifest
+//! itself.
+
+use super::resolve::ResolveReport;
+use crate::domain::BuildChecks;
+
+/// Did something actually say this edge exists, or did the mirror derive it?
+/// The declared tiers are a jar's own metadata, Modrinth, and anything a human
+/// authored; `inferred` and `harvested` are the mirror's own reading of the
+/// bytecode, which is evidence and not a declaration.
+fn declared(source: &str) -> bool {
+    !matches!(source, "inferred" | "harvested")
+}
+
+/// Judge a resolved pack. Lines are human sentences: nothing downstream parses
+/// them, and the audience is whoever is reading the log or the manifest.
+pub fn check(report: &ResolveReport) -> BuildChecks {
+    let mut blocking = Vec::new();
+    let mut advisory = Vec::new();
+
+    for m in &report.missing {
+        let window = m
+            .version_range
+            .as_deref()
+            .map(|r| format!(" {r}"))
+            .unwrap_or_default();
+        let reason = match m.reason.as_deref() {
+            Some("external") => " (it lives outside both Modrinth and the mirror)",
+            _ => "",
+        };
+        let line = format!(
+            "unmet hard dependency: {}{window} -- required by {} ({}){reason}",
+            m.target,
+            m.needed_by.join(", "),
+            m.source,
+        );
+        if declared(&m.source) {
+            blocking.push(line);
+        } else {
+            advisory.push(format!("{line}; derived from bytecode, so it may be an optional integration rather than a dependency"));
+        }
+    }
+
+    for l in &report.loader_mismatch {
+        blocking.push(format!(
+            "{} is built for {} -- this pack runs {} and nothing present bridges it",
+            l.filename,
+            l.artifact_loaders.join("/"),
+            l.pack_loader,
+        ));
+    }
+
+    for c in &report.conflicts {
+        advisory.push(format!(
+            "{} and {} are marked {} ({}), and both are enabled by default",
+            c.a,
+            c.b,
+            if c.breaks { "breaking" } else { "conflicting" },
+            c.source,
+        ));
+    }
+    for c in &report.optional_conflicts {
+        advisory.push(format!(
+            "{} and {} are marked {} ({}); one ships opted out, so it only bites if that one is enabled",
+            c.a,
+            c.b,
+            if c.breaks { "breaking" } else { "conflicting" },
+            c.source,
+        ));
+    }
+    for v in &report.version_issues {
+        advisory.push(format!(
+            "{} ships {} for {}, outside the {} that {} declares",
+            v.filename,
+            v.present_version,
+            v.target,
+            v.required_range,
+            v.needed_by.join(", "),
+        ));
+    }
+    for f in &report.forced_client_attempts {
+        advisory.push(format!(
+            "{} is client-side, and {} declares a hard dependency on it ({}) -- a client mod is never force-installed, so that dependency is not enforced",
+            f.filename,
+            f.needed_by.join(", "),
+            f.source,
+        ));
+    }
+    if !report.unresolved.is_empty() {
+        advisory.push(format!(
+            "not identified in the registry, so nothing above was checked for {}: {}",
+            report.unresolved.len(),
+            report.unresolved.join(", "),
+        ));
+    }
+
+    BuildChecks {
+        blocking,
+        advisory,
+        overridden: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::authoring::resolve::{
+        ActiveConflict, ForcedClientEdge, LoaderMismatch, MissingDep, VersionIssue,
+    };
+
+    fn empty() -> ResolveReport {
+        ResolveReport {
+            declared_mods: 0,
+            resolved_mods: 0,
+            missing: vec![],
+            conflicts: vec![],
+            optional_conflicts: vec![],
+            overlaps: vec![],
+            version_issues: vec![],
+            loader_mismatch: vec![],
+            loader_bridged: vec![],
+            unresolved: vec![],
+            version_windows_unchecked: 0,
+            coremods: vec![],
+            unclassified: vec![],
+            side_disagreements: vec![],
+            forced_client_attempts: vec![],
+            server_side: vec![],
+            suggestions: vec![],
+        }
+    }
+
+    // A clean pack carries no block at all: an empty `checks` object on every
+    // manifest would be noise, and would make "nothing was found" look like
+    // "something was recorded".
+    #[test]
+    fn a_clean_pack_says_nothing() {
+        let checks = check(&empty());
+        assert!(checks.is_empty());
+        assert!(checks.blocking.is_empty() && checks.advisory.is_empty());
+    }
+
+    // The first of the two that mean "cannot start". The line names the
+    // requirer, because "something needs AE2" is not actionable.
+    #[test]
+    fn an_unmet_hard_dependency_blocks_and_names_who_needs_it() {
+        let checks = check(&ResolveReport {
+            missing: vec![MissingDep {
+                target: "appliedenergistics2".into(),
+                needed_by: vec!["ae2stuff.jar".into()],
+                version_range: Some(">=0.44".into()),
+                source: "jar-meta".into(),
+                reason: None,
+            }],
+            ..empty()
+        });
+        assert_eq!(checks.blocking.len(), 1);
+        let line = &checks.blocking[0];
+        assert!(line.contains("appliedenergistics2"), "{line}");
+        assert!(line.contains("ae2stuff.jar"), "names the requirer: {line}");
+        assert!(line.contains(">=0.44"), "and the window: {line}");
+        assert!(checks.advisory.is_empty());
+    }
+
+    // The second. A bridged foreign artifact loads, so it is not a finding at
+    // all -- not blocking, and not recorded either.
+    #[test]
+    fn an_unbridged_loader_mismatch_blocks_but_a_bridged_one_is_not_a_finding() {
+        let mismatch = LoaderMismatch {
+            filename: "fab.jar".into(),
+            artifact_loaders: vec!["fabric".into()],
+            pack_loader: "forge".into(),
+            bridged_by: None,
+        };
+        let checks = check(&ResolveReport {
+            loader_mismatch: vec![mismatch.clone()],
+            ..empty()
+        });
+        assert_eq!(checks.blocking.len(), 1);
+        assert!(checks.blocking[0].contains("fab.jar"));
+        assert!(checks.blocking[0].contains("fabric"));
+
+        let bridged = check(&ResolveReport {
+            loader_bridged: vec![LoaderMismatch {
+                bridged_by: Some("connector.jar".into()),
+                ..mismatch
+            }],
+            ..empty()
+        });
+        assert!(bridged.is_empty(), "a connector carries it: {bridged:?}");
+    }
+
+    // A hard edge the mirror derived from bytecode is evidence, not a
+    // declaration: it cannot tell a dependency from an optional integration
+    // that references a foreign type. Recorded, so the curator sees it; not
+    // enforced, because refusing a publish on a guess is how a gate loses the
+    // authority to refuse anything.
+    #[test]
+    fn an_inferred_miss_is_recorded_where_a_declared_one_blocks() {
+        let miss = |source: &str| MissingDep {
+            target: "somelib".into(),
+            needed_by: vec!["mod.jar".into()],
+            version_range: None,
+            source: source.into(),
+            reason: None,
+        };
+        for declared in ["jar-meta", "modrinth", "authored", "curator"] {
+            let checks = check(&ResolveReport {
+                missing: vec![miss(declared)],
+                ..empty()
+            });
+            assert_eq!(checks.blocking.len(), 1, "{declared} is a declaration");
+        }
+        let checks = check(&ResolveReport {
+            missing: vec![miss("inferred")],
+            ..empty()
+        });
+        assert!(
+            checks.blocking.is_empty(),
+            "a derived edge does not refuse a publish: {:?}",
+            checks.blocking
+        );
+        assert_eq!(checks.advisory.len(), 1);
+        assert!(checks.advisory[0].contains("somelib"));
+    }
+
+    // Everything else is recorded, never enforced -- a conflict the curator
+    // shipped on purpose must not need an override to publish.
+    #[test]
+    fn conflicts_versions_and_unidentified_jars_are_recorded_not_blocked() {
+        let checks = check(&ResolveReport {
+            conflicts: vec![ActiveConflict {
+                a: "VoxelMap.jar".into(),
+                b: "Xaeros.jar".into(),
+                breaks: false,
+                source: "authored".into(),
+            }],
+            optional_conflicts: vec![ActiveConflict {
+                a: "OptiFine.jar".into(),
+                b: "Angelica.jar".into(),
+                breaks: true,
+                source: "authored".into(),
+            }],
+            version_issues: vec![VersionIssue {
+                target: "jei".into(),
+                filename: "JEI.jar".into(),
+                present_version: "4.15.0".into(),
+                required_range: ">=4.16".into(),
+                needed_by: vec!["addon.jar".into()],
+            }],
+            forced_client_attempts: vec![ForcedClientEdge {
+                filename: "OptiFine.jar".into(),
+                needed_by: vec!["shaderpack.jar".into()],
+                source: "authored".into(),
+            }],
+            unresolved: vec!["mystery.jar".into(), "other.jar".into()],
+            ..empty()
+        });
+        assert!(
+            checks.blocking.is_empty(),
+            "none of these stop a publish: {:?}",
+            checks.blocking
+        );
+        assert_eq!(checks.advisory.len(), 5);
+        let all = checks.advisory.join("\n");
+        for expected in [
+            "VoxelMap.jar",
+            "Angelica.jar",
+            "4.15.0",
+            "OptiFine.jar",
+            "mystery.jar",
+        ] {
+            assert!(all.contains(expected), "missing {expected} in:\n{all}");
+        }
+    }
+}

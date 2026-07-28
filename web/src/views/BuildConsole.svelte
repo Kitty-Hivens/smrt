@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { api, ApiError } from '../lib/api';
+  import { api } from '../lib/api';
   import { notifyFail } from '../lib/toasts.svelte';
   import { t } from '../lib/i18n.svelte';
+  import type { JobStatus } from '../lib/types';
   import JobLog from './JobLog.svelte';
 
   let { packId }: { packId: string } = $props();
@@ -12,15 +13,21 @@
   // publishing a release is an explicit act; the everyday build is a beta
   let channel = $state<'release' | 'beta' | 'alpha'>('beta');
   let changelog = $state('');
+  // What the pre-publish check refused to publish over. Read from the job
+  // rather than scraped out of the log, so the offer below only appears for a
+  // refusal an override can actually answer.
+  let blocked = $state<string[]>([]);
 
-  async function build() {
+  async function build(overrideChecks = false) {
     busy = true;
     jobId = null;
+    blocked = [];
     try {
       const { job_id } = await api.buildPack(packId, {
         packVersion: packVersion.trim() || undefined,
         channel,
         changelog: changelog.trim() || undefined,
+        overrideChecks,
       });
       jobId = job_id;
     } catch (e) {
@@ -28,11 +35,21 @@
       busy = false;
     }
   }
+
+  async function finished(status: JobStatus) {
+    busy = false;
+    if (status !== 'failed' || !jobId) return;
+    try {
+      blocked = (await api.jobStatus(jobId)).blocked ?? [];
+    } catch {
+      // the log already carries the findings; the offer is the only casualty
+    }
+  }
 </script>
 
 <div class="bc">
   <div class="bar">
-    <button class="primary" onclick={build} disabled={busy}>
+    <button class="primary" onclick={() => build()} disabled={busy}>
       {busy ? t('bld.building') : t('bld.build')}
     </button>
     <label class="ver">
@@ -55,8 +72,20 @@
   <p class="muted hint">{t('bld.hint')}</p>
   {#if jobId}
     {#key jobId}
-      <JobLog {jobId} onDone={() => (busy = false)} />
+      <JobLog {jobId} onDone={finished} />
     {/key}
+  {/if}
+  {#if blocked.length}
+    <div class="gate">
+      <h4>{t('bld.blocked')}</h4>
+      <ul>
+        {#each blocked as line (line)}
+          <li>{line}</li>
+        {/each}
+      </ul>
+      <p class="muted">{t('bld.overrideHint')}</p>
+      <button onclick={() => build(true)} disabled={busy}>{t('bld.override')}</button>
+    </div>
   {/if}
 </div>
 
@@ -96,6 +125,28 @@
     font-size: var(--fs-sm);
     margin: 10px 0 14px;
     max-width: 640px;
+  }
+  .gate {
+    border: 1px solid var(--danger);
+    border-left-width: 3px;
+    padding: 12px 16px;
+    margin-top: 16px;
+    max-width: 640px;
+  }
+  .gate h4 {
+    margin: 0;
+    font-size: var(--fs-sm);
+    color: var(--danger);
+  }
+  .gate ul {
+    margin: 8px 0;
+    padding-left: 18px;
+    font-size: var(--fs-sm);
+    line-height: 1.6;
+  }
+  .gate p {
+    font-size: var(--fs-sm);
+    margin: 0 0 10px;
   }
   @container view (max-width: 560px) {
     .bar {

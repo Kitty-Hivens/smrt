@@ -57,6 +57,30 @@ version section when a release is tagged.
 
 ### Added
 
+- A build is checked before it publishes. Until now a real build wrote the
+  manifest, moved the `latest` pointer and rewrote the summary card with nothing
+  having asked whether the result held together -- and the launcher reads that
+  pointer the moment it moves, so the first thing to check a broken pack was a
+  player's crash log, while the mirror already knew. The pack is resolved
+  against the registry graph first, and two findings stop the publish because
+  they mean it cannot start: a declared hard dependency nothing satisfies, and
+  an artifact built for a loader the pack does not run with nothing present to
+  bridge it. A dependency the mirror inferred from bytecode is recorded instead
+  of enforced -- that reading cannot tell a dependency from an optional
+  integration, and refusing a publish on a guess is how a gate stops being
+  believed. Everything else is recorded rather than enforced -- an active
+  conflict may be deliberate, a version outside a declared window usually runs,
+  an unidentified jar means the check was partial -- because a gate that blocks
+  on all of it is one operators route around. What was found rides on the built
+  manifest, which is the artifact of a build; a job log lives in memory and its
+  snapshot outlives nothing. A curator who knows better than the graph can
+  publish anyway, and it is never quiet when they do: the job log says it, the
+  audit trail records who asked, and the manifest carries what it went out over.
+  The preview runs the same check and reports the same verdict without being
+  stopped by it, since it publishes nothing. `smrt-pack build` gates the same
+  way (`--force` to override) -- it writes into the same tree, so it cannot be
+  the way around.
+
 - Switching the theme or the language no longer happens in one frame. Both
   change more at once than anything else in the panel -- every token, or every
   word on screen -- and both were instant, which reads as a flicker with nothing

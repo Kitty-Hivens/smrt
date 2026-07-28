@@ -4,8 +4,9 @@
 //! A job is an in-memory log + status; `Notify` wakes SSE tailers on each new
 //! line.
 
+use crate::accounts::{Accounts, Identity};
 use crate::authoring::{
-    self, BootstrapArgs, HarvestScheduler, build_manifest, enrich_from_mcmod_info,
+    self, BootstrapArgs, HarvestScheduler, build_manifest, enrich_from_mcmod_info, gate,
     infer_requires_from_mcmod_info, make_pack_summary,
 };
 use crate::config::Config;
@@ -73,6 +74,40 @@ pub struct DryRun {
     pub summary: PackSummary,
 }
 
+/// The service handles a build reaches for. They all live on `AppState` and
+/// travel together, so they arrive together.
+#[derive(Clone)]
+pub struct BuildDeps {
+    pub storage: Arc<Storage>,
+    pub config: Arc<Config>,
+    pub registry: Arc<Registry>,
+    pub accounts: Arc<Accounts>,
+    /// The harvester to wait on (and poke afterwards), where one is running.
+    pub harvest: Option<Arc<HarvestScheduler>>,
+}
+
+/// What a build was asked to do. One request rather than a row of positional
+/// flags -- and the home of the override, which is a property of the request
+/// and never of the pack.
+pub struct BuildRequest {
+    /// Compute + stash the manifest without publishing. A dry run judges the
+    /// pack the same way and reports the verdict, but nothing it finds can stop
+    /// it: there is nothing to stop.
+    pub dry_run: bool,
+    /// Canonical `pack_version`; `None` takes the next auto-numbered one.
+    pub pack_version: Option<String>,
+    pub channel: VersionChannel,
+    pub changelog: Option<String>,
+    /// Publish over a blocking pre-publish finding (#108). Never quiet: the job
+    /// log says it, the audit trail records who asked, and the built manifest
+    /// carries the findings it was published over.
+    pub override_checks: bool,
+    /// Who asked for the build. `None` for a build with no session behind it
+    /// (tests, and any future non-HTTP trigger) -- an override then records an
+    /// unknown actor rather than borrowing someone's name.
+    pub actor: Option<Identity>,
+}
+
 pub struct Job {
     pub id: String,
     pub kind: &'static str,
@@ -85,6 +120,7 @@ struct Inner {
     log: Vec<String>,
     status: Status,
     result: Option<DryRun>,
+    blocked: Vec<String>,
 }
 
 impl Job {
@@ -105,6 +141,18 @@ impl Job {
     /// The dry-run result, if this was a preview build that has produced one.
     pub fn result(&self) -> Option<DryRun> {
         self.state.lock().unwrap().result.clone()
+    }
+
+    fn set_blocked(&self, blocked: Vec<String>) {
+        self.state.lock().unwrap().blocked = blocked;
+    }
+
+    /// What the pre-publish check would stop this build on. Kept beside the log
+    /// rather than left for the panel to read back out of it: an offer to
+    /// publish anyway must know it is answering the gate and not a resolve
+    /// failure that no override can help.
+    pub fn blocked(&self) -> Vec<String> {
+        self.state.lock().unwrap().blocked.clone()
     }
 
     pub fn status(&self) -> Status {
@@ -163,6 +211,7 @@ impl JobRegistry {
                 log: Vec::new(),
                 status: Status::Running,
                 result: None,
+                blocked: Vec::new(),
             }),
             notify: Notify::new(),
         });
@@ -186,19 +235,15 @@ impl JobRegistry {
 
     /// Create a build job and run it on a background task. Returns immediately
     /// with the job handle so the caller can hand back a job id.
-    #[allow(clippy::too_many_arguments)]
-    pub fn spawn_build(
-        &self,
-        pack_id: String,
-        storage: Arc<Storage>,
-        config: Arc<Config>,
-        registry: Arc<Registry>,
-        dry_run: bool,
-        pack_version: Option<String>,
-        channel: VersionChannel,
-        changelog: Option<String>,
-        harvest: Option<Arc<HarvestScheduler>>,
-    ) -> Arc<Job> {
+    pub fn spawn_build(&self, pack_id: String, deps: BuildDeps, req: BuildRequest) -> Arc<Job> {
+        let BuildDeps {
+            storage,
+            config,
+            registry,
+            accounts,
+            harvest,
+        } = deps;
+        let dry_run = req.dry_run;
         let job = self.create(if dry_run { "preview" } else { "build" }, pack_id);
         let handle = job.clone();
         // Real builds of the same pack are serialized; a dry run never publishes
@@ -225,18 +270,7 @@ impl JobRegistry {
                         .line("harvest still busy after 5 minutes; building against current state");
                 }
             }
-            match run_build(
-                &handle,
-                &storage,
-                &config,
-                &registry,
-                dry_run,
-                pack_version,
-                channel,
-                changelog,
-            )
-            .await
-            {
+            match run_build(&handle, &storage, &config, &registry, &accounts, req).await {
                 Ok(()) => {
                     handle.finish(Status::Done);
                     // a published build added a build + its mods to harvest -- a
@@ -282,18 +316,16 @@ impl JobRegistry {
 }
 
 /// Load the pack's authoring inputs, run the build enrichment passes
-/// transiently (config.json stays the source on disk), resolve sources, and
-/// publish the manifest + summary + latest pointer. Logs each step to the job.
-#[allow(clippy::too_many_arguments)]
+/// transiently (config.json stays the source on disk), resolve sources, check
+/// what the build would publish, and publish the manifest + summary + latest
+/// pointer. Logs each step to the job.
 async fn run_build(
     job: &Job,
     storage: &Storage,
     config: &Config,
     registry: &Arc<Registry>,
-    dry_run: bool,
-    pack_version: Option<String>,
-    channel: VersionChannel,
-    changelog: Option<String>,
+    accounts: &Arc<Accounts>,
+    req: BuildRequest,
 ) -> Result<(), String> {
     let pack_id = job.pack_id.clone();
     job.line(format!("build {pack_id}: loading authoring inputs"));
@@ -315,34 +347,78 @@ async fn run_build(
     infer_requires_from_mcmod_info(&mut cfg, storage.root())
         .map_err(|e| format!("infer-requires failed: {e:#}"))?;
 
-    // side/policy classification through the registry decision layer: the
-    // required-ness seeds and the side invariants ride on it
-    job.line("classifying mods (side / match policy)");
-    let classifications = {
+    // The registry pass, in one hop off the pool: the side/policy classification
+    // the required-ness seeds and side invariants ride on, and the dependency
+    // resolve the pre-publish check judges. Both read the same rows of the same
+    // enriched config, so they read them together.
+    job.line("classifying mods and checking the pack against the registry");
+    let (classifications, report) = {
         let reg = registry.clone();
         let cfg = cfg.clone();
         tokio::task::spawn_blocking(move || {
-            reg.with_conn(|c| crate::authoring::resolve::classify_pack(c, &cfg))
+            reg.with_conn(|c| {
+                Ok((
+                    crate::authoring::resolve::classify_pack(c, &cfg)?,
+                    crate::authoring::resolve::resolve_pack(c, &cfg)?,
+                ))
+            })
         })
         .await
-        .map_err(|e| format!("classify task: {e}"))?
-        .map_err(|e| format!("classify failed: {e:#}"))?
+        .map_err(|e| format!("registry task: {e}"))?
+        .map_err(|e| format!("registry check failed: {e:#}"))?
     };
+
+    // The gate (#108). Two findings mean the pack cannot start and stop a
+    // publish; the rest are recorded onto the build. A dry run runs the same
+    // check and reports the same verdict -- that is the point of previewing --
+    // but publishes nothing, so nothing it finds can stop anything.
+    let mut checks = gate::check(&report);
+    for line in &checks.blocking {
+        job.line(format!("blocking: {line}"));
+    }
+    for line in &checks.advisory {
+        job.line(format!("noted: {line}"));
+    }
+    job.set_blocked(checks.blocking.clone());
+    if !checks.blocking.is_empty() {
+        if req.dry_run {
+            job.line(format!(
+                "{} problem(s) would stop a real build of this pack",
+                checks.blocking.len()
+            ));
+        } else if !req.override_checks {
+            return Err(format!(
+                "{} problem(s) would keep this pack from starting -- fix them, or build again over the check",
+                checks.blocking.len()
+            ));
+        } else {
+            checks.overridden = true;
+            job.line(format!(
+                "publishing over {} blocking problem(s), at {}'s explicit request",
+                checks.blocking.len(),
+                actor_name(req.actor.as_ref()),
+            ));
+        }
+    }
 
     job.line("resolving sources (Modrinth lookups + cache reads)");
     let built = build_manifest(
         &cfg,
         storage.root(),
-        pack_version.as_deref(),
-        channel,
-        changelog,
+        req.pack_version.as_deref(),
+        req.channel,
+        req.changelog,
         &config.mirror_base,
         &classifications,
         registry,
     )
     .await
     .map_err(|e| format!("resolve failed: {e:#}"))?;
-    let manifest = built.manifest;
+    let mut manifest = built.manifest;
+    let published_over = checks.overridden.then_some(checks.blocking.len());
+    // What was known about this build, on the build itself. A job log lives in
+    // memory and its snapshot is evicted; the manifest is the artifact.
+    manifest.checks = (!checks.is_empty()).then_some(checks);
     let fell_back = built.resolved_from_registry;
     // A build that could not reach Modrinth and answered from the registry is
     // not the same event as one that reached it. It succeeds either way, but it
@@ -356,7 +432,7 @@ async fn run_build(
     }
     let summary = make_pack_summary(&cfg, &manifest.pack_version);
 
-    if dry_run {
+    if req.dry_run {
         job.line(format!(
             "dry run: resolved {} ({} mods, {} assets) -- not publishing",
             manifest.pack_version,
@@ -385,11 +461,60 @@ async fn run_build(
         .save_pack_summary(&summary)
         .await
         .map_err(|e| e.to_string())?;
+    // Recorded once the pack is actually public: an override that ended in a
+    // write failure published nothing, and the trail should not say it did.
+    if let Some(n) = published_over {
+        record_override(
+            accounts,
+            req.actor.as_ref(),
+            &pack_id,
+            &manifest.pack_version,
+            n,
+        )
+        .await;
+    }
     job.line(format!(
         "build complete: {pack_id} is now {}",
         manifest.pack_version
     ));
     Ok(())
+}
+
+/// Who asked, for the log line and the audit row. A build with no session
+/// behind it says so rather than borrowing a name.
+fn actor_name(actor: Option<&Identity>) -> &str {
+    actor.map_or("an unattributed caller", |i| i.login.as_str())
+}
+
+/// Append the override to the system-wide audit trail. Best-effort, like every
+/// other audit write: the pack is already published, and a lost trail entry
+/// must not turn a finished build into a failed one.
+async fn record_override(
+    accounts: &Arc<Accounts>,
+    actor: Option<&Identity>,
+    pack_id: &str,
+    pack_version: &str,
+    blocking: usize,
+) {
+    let acc = accounts.clone();
+    let (uid, login) = actor.map_or((0, "unknown".to_string()), |i| (i.uid, i.login.clone()));
+    let target = pack_id.to_string();
+    let detail = format!("{pack_version} published over {blocking} blocking check(s)");
+    let res = tokio::task::spawn_blocking(move || {
+        acc.record_audit(
+            uid,
+            &login,
+            "build.override_checks",
+            Some(&target),
+            Some(&detail),
+        )
+    })
+    .await;
+    match res {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => tracing::warn!(error = %e, "override audit write failed"),
+        Err(e) => tracing::warn!(error = %e, "override audit task failed"),
+    }
 }
 
 async fn run_bootstrap(
@@ -481,6 +606,38 @@ mod tests {
         }
     }
 
+    /// An ordinary build: publish, auto-numbered, no override.
+    fn plain() -> BuildRequest {
+        BuildRequest {
+            dry_run: false,
+            pack_version: None,
+            channel: VersionChannel::Beta,
+            changelog: None,
+            override_checks: false,
+            actor: None,
+        }
+    }
+
+    fn accounts() -> Arc<Accounts> {
+        Arc::new(Accounts::open_in_memory().unwrap())
+    }
+
+    /// Service handles for a build: an empty registry unless the test needs one
+    /// with something to say, and no harvester (nothing to settle or poke).
+    fn deps(
+        storage: Arc<Storage>,
+        config: Arc<Config>,
+        registry: Option<Arc<Registry>>,
+    ) -> BuildDeps {
+        BuildDeps {
+            storage,
+            config,
+            registry: registry.unwrap_or_else(|| Arc::new(Registry::open_in_memory().unwrap())),
+            accounts: accounts(),
+            harvest: None,
+        }
+    }
+
     async fn await_finish(job: &Job) -> Status {
         for _ in 0..300 {
             let (_, status) = job.since(0);
@@ -490,6 +647,167 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("job did not finish within timeout");
+    }
+
+    /// A registry that knows the pack's one mod and that it hard-requires
+    /// something the pack does not ship -- the shape of a pack that crashes on
+    /// launch, which is what the gate exists for.
+    fn registry_with_a_missing_hard_dep(sha1: &str) -> Arc<Registry> {
+        use crate::registry::model::{RelKind, Source};
+        use crate::registry::upsert;
+        const NOW: &str = "2026-07-29T00:00:00Z";
+        let r = Registry::open_in_memory().unwrap();
+        r.with_conn_mut(|c| {
+            let id = upsert::upsert_mod_by_alias(c, &[("modid", "test")], NOW)?;
+            upsert::upsert_mod_version(c, id, "1.0", &["forge"], sha1, 10, None, None, NOW)?;
+            upsert::upsert_relation(
+                c,
+                id,
+                None,
+                "absentmod",
+                None,
+                RelKind::Requires,
+                Source::JarMeta,
+                NOW,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        Arc::new(r)
+    }
+
+    async fn pack_with_one_cached_mod() -> (tempfile::TempDir, Arc<Storage>, Arc<Config>, String) {
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = Arc::new(Storage::new(tmp.path().to_path_buf()));
+        let bytes = b"jar";
+        let sha1 = sha1_of(bytes);
+        storage.save_cache_jar(&sha1, bytes).await.unwrap();
+        storage
+            .save_pack_config("Test", &cfg_with_cache_mod(&sha1))
+            .await
+            .unwrap();
+        let config = Arc::new(test_config(tmp.path().to_path_buf()));
+        (tmp, storage, config, sha1)
+    }
+
+    // The gate: a pack that cannot start does not reach the `latest` pointer the
+    // launcher reads. Before this, the build wrote the manifest, moved the
+    // pointer and rewrote the summary with nothing having asked (#108).
+    #[tokio::test]
+    async fn a_pack_that_cannot_start_is_not_published() {
+        let (_tmp, storage, config, sha1) = pack_with_one_cached_mod().await;
+        let jobs = JobRegistry::default();
+        let job = jobs.spawn_build(
+            "Test".into(),
+            deps(
+                storage.clone(),
+                config,
+                Some(registry_with_a_missing_hard_dep(&sha1)),
+            ),
+            plain(),
+        );
+        assert_eq!(await_finish(&job).await, Status::Failed);
+
+        let (log, _) = job.since(0);
+        let text = log.join("\n");
+        assert!(
+            text.contains("absentmod"),
+            "the log names the unmet dependency: {text}"
+        );
+        assert!(
+            job.blocked().iter().any(|b| b.contains("absentmod")),
+            "and it is readable as a gate refusal, not just log prose: {:?}",
+            job.blocked()
+        );
+        assert!(
+            storage.load_latest_manifest("Test").await.is_err(),
+            "nothing was published"
+        );
+    }
+
+    // The override: a curator who knows better than the graph can publish, and
+    // the mirror says so three times over -- in the log, in the audit trail, and
+    // on the manifest the launcher downloads.
+    #[tokio::test]
+    async fn an_override_publishes_and_leaves_the_finding_on_the_build() {
+        let (_tmp, storage, config, sha1) = pack_with_one_cached_mod().await;
+        let accounts = accounts();
+        let jobs = JobRegistry::default();
+        let job = jobs.spawn_build(
+            "Test".into(),
+            BuildDeps {
+                accounts: accounts.clone(),
+                ..deps(
+                    storage.clone(),
+                    config,
+                    Some(registry_with_a_missing_hard_dep(&sha1)),
+                )
+            },
+            BuildRequest {
+                override_checks: true,
+                actor: Some(Identity {
+                    uid: 7,
+                    login: "curator".into(),
+                    role: crate::accounts::Role::Admin,
+                }),
+                ..plain()
+            },
+        );
+        assert_eq!(await_finish(&job).await, Status::Done);
+
+        let published = storage.load_latest_manifest("Test").await.unwrap();
+        let checks = published.checks.expect("the build carries what it knew");
+        assert!(checks.overridden, "and that it was published over it");
+        assert_eq!(checks.blocking.len(), 1);
+        assert!(checks.blocking[0].contains("absentmod"));
+
+        let rows = accounts.list_audit(10).unwrap();
+        let row = rows
+            .iter()
+            .find(|r| r.action == "build.override_checks")
+            .expect("the override reached the audit trail");
+        assert_eq!(row.actor_login, "curator");
+        assert_eq!(row.target.as_deref(), Some("Test"));
+        assert!(
+            row.detail.as_deref().unwrap_or_default().contains("1"),
+            "the row says how much was overridden: {:?}",
+            row.detail
+        );
+    }
+
+    // A dry run judges the pack the same way and says what a real build would
+    // refuse -- that is what previewing is for -- but it publishes nothing, so
+    // it has nothing to refuse and finishes clean.
+    #[tokio::test]
+    async fn a_dry_run_reports_the_verdict_without_being_stopped_by_it() {
+        let (_tmp, storage, config, sha1) = pack_with_one_cached_mod().await;
+        let jobs = JobRegistry::default();
+        let job = jobs.spawn_build(
+            "Test".into(),
+            deps(
+                storage.clone(),
+                config,
+                Some(registry_with_a_missing_hard_dep(&sha1)),
+            ),
+            BuildRequest {
+                dry_run: true,
+                ..plain()
+            },
+        );
+        assert_eq!(await_finish(&job).await, Status::Done);
+        assert!(
+            job.blocked().iter().any(|b| b.contains("absentmod")),
+            "the preview still reports it: {:?}",
+            job.blocked()
+        );
+        let result = job.result().expect("a preview manifest");
+        assert!(
+            result
+                .manifest
+                .checks
+                .is_some_and(|c| !c.blocking.is_empty() && !c.overridden),
+            "the preview carries the finding, unoverridden"
+        );
     }
 
     #[tokio::test]
@@ -508,14 +826,11 @@ mod tests {
         let registry = JobRegistry::default();
         let job = registry.spawn_build(
             "Test".into(),
-            storage.clone(),
-            config,
-            Arc::new(crate::registry::Registry::open_in_memory().unwrap()),
-            true,
-            None,
-            VersionChannel::Beta,
-            None,
-            None,
+            deps(storage.clone(), config, None),
+            BuildRequest {
+                dry_run: true,
+                ..plain()
+            },
         );
         assert_eq!(job.kind, "preview");
         assert_eq!(await_finish(&job).await, Status::Done);
@@ -563,14 +878,11 @@ mod tests {
         let registry = JobRegistry::default();
         let job = registry.spawn_build(
             "Test".into(),
-            storage.clone(),
-            config,
-            Arc::new(crate::registry::Registry::open_in_memory().unwrap()),
-            false,
-            None,
-            VersionChannel::Release,
-            None,
-            None,
+            deps(storage.clone(), config, None),
+            BuildRequest {
+                channel: VersionChannel::Release,
+                ..plain()
+            },
         );
         assert_eq!(job.kind, "build");
         assert_eq!(await_finish(&job).await, Status::Done);

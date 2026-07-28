@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use smrt::authoring::{
     self, BootstrapArgs, Modrinth, apply_role_table as enrich_apply_role_table,
-    enrich_from_mcmod_info, infer_requires_from_mcmod_info, load_role_table,
+    enrich_from_mcmod_info, gate, infer_requires_from_mcmod_info, load_role_table,
 };
 use smrt::domain::{LoaderSpec, PackConfig, PackManifest, PackSummary, VersionChannel};
 use smrt::registry::Registry;
@@ -75,6 +75,10 @@ enum Cmd {
         changelog: Option<String>,
         #[arg(long, default_value = DEFAULT_MIRROR_BASE)]
         mirror_base: String,
+        /// Publish even though the pre-publish check found something that means
+        /// the pack cannot start. Recorded on the manifest.
+        #[arg(long)]
+        force: bool,
     },
 
     /// Pull each declared mod's missing hard dependencies in (Modrinth first,
@@ -282,6 +286,7 @@ async fn main() -> Result<()> {
             channel,
             changelog,
             mirror_base,
+            force,
         } => {
             let channel = VersionChannel::parse(&channel)
                 .ok_or_else(|| anyhow::anyhow!("channel must be release, beta or alpha"))?;
@@ -292,6 +297,7 @@ async fn main() -> Result<()> {
                 channel,
                 changelog,
                 &mirror_base,
+                force,
             )
             .await
         }
@@ -485,6 +491,7 @@ fn run_validate(config_path: &Path, sc_archive_path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_build(
     config_path: &Path,
     storage: &Path,
@@ -492,6 +499,7 @@ async fn run_build(
     channel: VersionChannel,
     changelog: Option<String>,
     mirror_base: &str,
+    force: bool,
 ) -> Result<()> {
     let mut cfg: PackConfig = read_json(config_path)?;
     // Build enrichment passes run on a transient copy: fill display metadata
@@ -501,6 +509,35 @@ async fn run_build(
     // side/policy classification through the registry decision layer
     let registry = Registry::open(storage.join("registry.db"))?;
     let classifications = registry.with_conn(|c| authoring::resolve::classify_pack(c, &cfg))?;
+
+    // The same gate the service applies (#108). This writes into the same
+    // storage tree the launcher reads, so it cannot be the way around the check.
+    // Unlike the service there is nobody to attribute an override to -- whoever
+    // has a shell on the box ran it -- so it is recorded on the manifest and in
+    // this process's log, and not in the account audit trail, which is about
+    // identities.
+    let mut checks =
+        registry.with_conn(|c| authoring::resolve_pack(c, &cfg).map(|r| gate::check(&r)))?;
+    for line in &checks.blocking {
+        warn!("blocking: {line}");
+    }
+    for line in &checks.advisory {
+        info!("noted: {line}");
+    }
+    if !checks.blocking.is_empty() {
+        if !force {
+            bail!(
+                "{} problem(s) would keep this pack from starting -- fix them, or build again with --force",
+                checks.blocking.len()
+            );
+        }
+        checks.overridden = true;
+        warn!(
+            blocking = checks.blocking.len(),
+            "publishing over the pre-publish check, as --force asked"
+        );
+    }
+
     let built = authoring::build_manifest(
         &cfg,
         storage,
@@ -512,7 +549,8 @@ async fn run_build(
         &registry,
     )
     .await?;
-    let manifest = built.manifest;
+    let mut manifest = built.manifest;
+    manifest.checks = (!checks.is_empty()).then_some(checks);
     let fell_back = built.resolved_from_registry;
     if !fell_back.is_empty() {
         warn!(

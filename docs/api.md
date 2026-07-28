@@ -52,6 +52,21 @@ GET /v1/packs/{id}/manifest/{version}      # a specific build
    comparison within a version base (`0.4.10` > `0.4.2`; lexicographic sort
    is wrong); across bases or historical labels, order by `date_published`.
 
+## What the mirror knew about a build
+
+A manifest may carry `checks`: what the pre-publish check found when the build
+was published. `blocking` lists findings that mean the pack cannot start (a
+declared hard dependency nothing satisfies, an artifact no loader present can
+run) -- it
+is non-empty only when a curator published over them, and `overridden` then says
+so. `advisory` lists what was recorded rather than enforced: active conflicts,
+versions outside a declared window, jars the registry could not identify.
+
+Advisory to a client in the strict sense -- nothing here changes what gets
+installed, and the block is absent when the check found nothing to say. It is
+worth surfacing to whoever is installing: a build that says it will not start
+usually will not.
+
 ## The update dialog: what changed
 
 ```
