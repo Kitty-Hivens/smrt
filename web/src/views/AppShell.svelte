@@ -7,6 +7,7 @@
   import { activity } from '../lib/motion.svelte';
   import { t, i18n, LOCALES } from '../lib/i18n.svelte';
   import Avatar from './Avatar.svelte';
+  import NavIcon from './ui/NavIcon.svelte';
 
   type Me = { uid: number; login: string; role: string };
   let {
@@ -82,7 +83,8 @@
               closeDrawer();
             }}
           >
-            {t(navKey[s])}
+            <NavIcon name={s} />
+            <span class="label">{t(navKey[s])}</span>
           </button>
         </li>
       {/each}
@@ -216,6 +218,9 @@
   }
   .item {
     position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
     width: 100%;
     text-align: left;
     background: transparent;
@@ -228,6 +233,21 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     box-shadow: none;
+  }
+  /* the glyph is the anchor while scanning, so it stays at full strength while
+     the label carries the dim/active contrast */
+  .item :global(.ico) {
+    opacity: 0.72;
+  }
+  .item:hover :global(.ico),
+  .item.active :global(.ico) {
+    opacity: 1;
+  }
+  .label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .item:hover {
     background: var(--panel-2);
