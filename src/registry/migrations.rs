@@ -87,6 +87,7 @@ const MIGRATIONS: &[(u32, Migration)] = &[
         Migration::Sql(include_str!("schema/0020_modrinth_project_name.sql")),
     ),
     (21, Migration::Sql(include_str!("schema/0021_jar_read.sql"))),
+    (22, Migration::Code(collapse_conflict_kinds)),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its
@@ -255,6 +256,50 @@ fn pack_has_provenance_column(conn: &Connection) -> Result<bool> {
 }
 
 /// True if `mod_version` still carries the pre-rename `target` column.
+/// Migration 22: collapse `conflicts` and `breaks` into one kind with a
+/// severity (#129). See `schema/0022_conflict_severity.sql` for the reasoning
+/// and the table shape.
+///
+/// A `Code` step rather than plain SQL for the same reason 0004 and 0009 are:
+/// the kind vocabulary is a CHECK constraint, SQLite cannot alter one, and a
+/// table rebuild needs `foreign_keys` off around the swap -- a pragma that is a
+/// no-op inside the transaction a `Sql` step would run in. `relation` carries
+/// FKs into `mods` and `mod_version`, so with the pragma left on the copy is
+/// checked row by row against tables the swap is in the middle of.
+///
+/// Idempotent: a no-op once the column exists.
+fn collapse_conflict_kinds(conn: &mut Connection) -> Result<()> {
+    if relation_has_severity_column(conn)? {
+        return Ok(());
+    }
+    conn.execute_batch("PRAGMA foreign_keys = OFF")
+        .context("0022: foreign_keys off")?;
+    let tx = conn.transaction().context("0022: begin rebuild")?;
+    tx.execute_batch(include_str!("schema/0022_conflict_severity.sql"))
+        .context("0022: rebuild relation")?;
+    tx.commit().context("0022: commit rebuild")?;
+    conn.execute_batch("PRAGMA foreign_keys = ON")
+        .context("0022: foreign_keys on")?;
+
+    // the rebuild must not have orphaned any foreign key
+    let violations = {
+        let mut stmt = conn.prepare("PRAGMA foreign_key_check")?;
+        stmt.query_map([], |_| Ok(()))?.count()
+    };
+    if violations > 0 {
+        bail!("0022 rebuild left {violations} foreign-key violations");
+    }
+    Ok(())
+}
+
+fn relation_has_severity_column(conn: &Connection) -> Result<bool> {
+    let mut stmt = conn.prepare("PRAGMA table_info(relation)")?;
+    let names = stmt
+        .query_map([], |r| r.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    Ok(names.iter().any(|name| name == "severity"))
+}
+
 fn mod_version_has_target_column(conn: &Connection) -> Result<bool> {
     let mut stmt = conn.prepare("PRAGMA table_info(mod_version)")?;
     let names = stmt
@@ -380,6 +425,114 @@ mod tests {
             .query_row("SELECT count(*) FROM loader", [], |r| r.get(0))
             .unwrap();
         assert!(loaders >= 6);
+    }
+
+    // #129 collapsed `conflicts` and `breaks` into one kind with a severity, and
+    // the stored rows carry the old vocabulary. The conversion runs once against
+    // real data and cannot be re-run, so it is tested against the shape it will
+    // actually meet: the pre-0022 table, with a row of every kind in it.
+    #[test]
+    fn conflict_severity_0022_converts_the_old_vocabulary() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE mods (id INTEGER PRIMARY KEY);
+             CREATE TABLE mod_version (id INTEGER PRIMARY KEY);
+             INSERT INTO mods (id) VALUES (10), (11);
+             INSERT INTO mod_version (id) VALUES (100);
+             CREATE TABLE relation (
+               id                   INTEGER PRIMARY KEY,
+               from_mod_id          INTEGER NOT NULL,
+               target_modid         TEXT NOT NULL,
+               target_version_range TEXT,
+               kind                 TEXT NOT NULL,
+               source               TEXT NOT NULL,
+               confidence           INTEGER NOT NULL,
+               created_at           TEXT NOT NULL,
+               from_mod_version_id  INTEGER,
+               CHECK (kind IN ('requires','conflicts','optional_dep','provides','recommends','breaks'))
+             );
+             INSERT INTO relation
+               (id, from_mod_id, target_modid, kind, source, confidence, created_at, from_mod_version_id)
+             VALUES
+               (1, 10, 'jei',      'requires',    'jar-meta', 50, 'T0', 100),
+               (2, 10, 'oldmod',   'conflicts',   'jar-meta', 50, 'T0', 100),
+               (3, 10, 'grumpy',   'breaks',      'jar-meta', 50, 'T0', 100),
+               (4, 11, 'optional', 'optional_dep','modrinth', 40, 'T0', NULL),
+               (5, 11, 'api',      'provides',    'harvested',10, 'T0', NULL),
+               (6, 11, 'nice',     'recommends',  'jar-meta', 50, 'T0', NULL);",
+        )
+        .unwrap();
+
+        collapse_conflict_kinds(&mut conn).unwrap();
+        // the step re-runs whole if a later migration fails before its version
+        // is recorded, so running it twice must change nothing
+        collapse_conflict_kinds(&mut conn).unwrap();
+
+        let row = |id: i64| -> (String, Option<String>) {
+            conn.query_row(
+                "SELECT kind, severity FROM relation WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        // the hard declaration keeps its name and gains the intensity it always had
+        assert_eq!(row(2), ("conflicts".into(), Some("hard".into())));
+        // and the advisory one stops claiming to be the harder kind
+        assert_eq!(row(3), ("conflicts".into(), Some("soft".into())));
+        // everything else is untouched, and states no intensity
+        assert_eq!(row(1), ("requires".into(), None));
+        assert_eq!(row(4), ("optional_dep".into(), None));
+        assert_eq!(row(5), ("provides".into(), None));
+        assert_eq!(row(6), ("recommends".into(), None));
+
+        // nothing was dropped: the two incompatibilities stay two rows, which is
+        // what the severity in the dedupe key is for
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM relation", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 6);
+        // and the artifact scope survived the rebuild
+        let scoped: i64 = conn
+            .query_row(
+                "SELECT from_mod_version_id FROM relation WHERE id = 2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(scoped, 100);
+
+        // the vocabulary is closed now: the old name no longer parses as a kind
+        assert!(super::super::model::RelKind::parse("breaks").is_none());
+    }
+
+    // The CHECK is the invariant, not a comment: a conflict without an intensity
+    // and a requirement with one are both rejected by the store itself.
+    #[test]
+    fn severity_belongs_to_conflicts_and_only_to_them() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_pending(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO mods (id, created_at, updated_at) VALUES (1, 'T0', 'T0')",
+            [],
+        )
+        .unwrap();
+
+        let insert = |kind: &str, severity: Option<&str>| {
+            conn.execute(
+                "INSERT INTO relation
+                   (from_mod_id, target_modid, kind, severity, source, confidence, created_at)
+                 VALUES (1, 'target', ?1, ?2, 'authored', 90, 'T0')",
+                rusqlite::params![kind, severity],
+            )
+        };
+        assert!(insert("conflicts", None).is_err());
+        assert!(insert("requires", Some("hard")).is_err());
+        assert!(insert("conflicts", Some("sort-of")).is_err());
+        if let Err(e) = insert("conflicts", Some("hard")) {
+            panic!("a hard conflict must be storable: {e}");
+        }
+        assert!(insert("requires", None).is_ok());
     }
 
     // A registry created from the pre-rename 0001 (mod_version with a `target`

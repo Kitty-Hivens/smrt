@@ -60,11 +60,20 @@ impl Source {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelKind {
     Requires,
+    /// Two mods that should not run together. How badly is [`Severity`], which
+    /// every conflict carries and nothing else does.
+    ///
+    /// One kind rather than two (#129). The model used to carry `conflicts` and
+    /// `breaks` side by side, and every parser mapped the hard declaration onto
+    /// `Conflicts` and the advisory one onto `Breaks` -- while in Fabric's own
+    /// vocabulary `breaks` is the hard one. Everything that reported a conflict
+    /// read the variant name, believed it, and printed the alarming word on the
+    /// mild declaration. Two names for one fact, each arguing with the ecosystem
+    /// it came from, is the shape that made that possible.
     Conflicts,
     OptionalDep,
     Provides,
     Recommends,
-    Breaks,
 }
 
 impl RelKind {
@@ -75,7 +84,6 @@ impl RelKind {
             RelKind::OptionalDep => "optional_dep",
             RelKind::Provides => "provides",
             RelKind::Recommends => "recommends",
-            RelKind::Breaks => "breaks",
         }
     }
     /// Inverse of [`as_str`], for reading a stored `relation.kind` back into the
@@ -87,7 +95,36 @@ impl RelKind {
             "optional_dep" => RelKind::OptionalDep,
             "provides" => RelKind::Provides,
             "recommends" => RelKind::Recommends,
-            "breaks" => RelKind::Breaks,
+            _ => return None,
+        })
+    }
+}
+
+/// How badly two mods disagree.
+///
+/// Stated by the declaration itself, never guessed: an upstream manifest says
+/// either "this will not load" or "we advise against it", and those are
+/// different sentences to put in front of a curator. Carried only by
+/// [`RelKind::Conflicts`] -- a requirement has no intensity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Severity {
+    /// The author advises against it. It runs.
+    Soft,
+    /// The loader refuses to run the two together.
+    Hard,
+}
+
+impl Severity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Severity::Hard => "hard",
+            Severity::Soft => "soft",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "hard" => Severity::Hard,
+            "soft" => Severity::Soft,
             _ => return None,
         })
     }
@@ -115,6 +152,8 @@ pub struct RelationRow {
     pub target: String,
     pub version_range: Option<String>,
     pub kind: RelKind,
+    /// Set exactly when `kind` is [`RelKind::Conflicts`] (#129).
+    pub severity: Option<Severity>,
     pub source: Source,
     pub confidence: i64,
 }
@@ -320,6 +359,12 @@ pub struct GraphEdge {
     pub to_mod_id: Option<i64>,
     pub target: String,
     pub kind: String,
+    /// `hard` | `soft` on a conflict edge, absent on every other kind (#129).
+    /// Carried so the view can tell a loader-enforced incompatibility from an
+    /// author's advice, which one alarming colour for both could not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub severity: Option<String>,
     pub source: String,
 }
 

@@ -135,6 +135,7 @@ impl Registry {
         from_mod_id: i64,
         target_modid: &str,
         kind: super::model::RelKind,
+        severity: Option<super::model::Severity>,
         remove: bool,
     ) -> Result<()> {
         let now = upsert::now_rfc3339();
@@ -142,7 +143,14 @@ impl Registry {
             if remove {
                 authored::remove_authored_relation(c, from_mod_id, target_modid, kind)?;
             } else {
-                authored::add_authored_relation(c, from_mod_id, target_modid, kind, &now)?;
+                authored::add_authored_relation(
+                    c,
+                    from_mod_id,
+                    target_modid,
+                    kind,
+                    severity,
+                    &now,
+                )?;
             }
             Ok(())
         })

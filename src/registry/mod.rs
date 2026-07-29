@@ -76,7 +76,7 @@ mod tests {
         let rows = r.with_conn(queries::jar_readouts).unwrap();
         assert_eq!(rows[&sha].modid.as_deref(), Some("railcraft"));
     }
-    use super::model::{RelKind, Source};
+    use super::model::{RelKind, Severity, Source};
     use super::{Registry, queries, upsert};
 
     const NOW: &str = "2026-06-06T00:00:00Z";
@@ -194,6 +194,7 @@ mod tests {
                 "appleskin",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -274,6 +275,7 @@ mod tests {
                 "appleskin@[2.5,)",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -315,6 +317,7 @@ mod tests {
                 "appleskin@[2.5,)",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -369,6 +372,7 @@ mod tests {
                 "appleskin@[2.5,)",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -715,7 +719,7 @@ mod tests {
         r.with_conn_mut(|c| {
             let jei = queries::mod_id_for_alias(c, "modid", "jei")?.unwrap();
             // same sourced assertion again -> ignored
-            upsert::upsert_relation(c, jei, None, "appleskin", None, RelKind::Requires, Source::JarMeta, NOW)?;
+            upsert::upsert_relation(c, jei, None, "appleskin", None, RelKind::Requires, None, Source::JarMeta, NOW)?;
             let n: i64 = c.query_row(
                 "SELECT count(*) FROM relation WHERE from_mod_id = ?1 AND target_modid = 'appleskin'",
                 [jei],
@@ -766,6 +770,7 @@ mod tests {
                 "oldlib",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -776,6 +781,7 @@ mod tests {
                 "newlib",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -786,6 +792,7 @@ mod tests {
                 "always",
                 None,
                 RelKind::Conflicts,
+                Some(Severity::Hard),
                 Source::Authored,
                 NOW,
             )?;
@@ -864,6 +871,7 @@ mod tests {
                 "oldlib",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -874,6 +882,7 @@ mod tests {
                 "newlib",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -934,6 +943,7 @@ mod tests {
                 "bbb",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -970,6 +980,7 @@ mod tests {
                     "lib",
                     None,
                     RelKind::Requires,
+                    None,
                     Source::JarMeta,
                     NOW,
                 )

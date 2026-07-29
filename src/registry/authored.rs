@@ -3,7 +3,7 @@
 //! (`WHERE source NOT IN ('curator','authored')`) preserves across re-harvests.
 //! Driven through the `Registry` methods (used by the CLI + admin HTTP).
 
-use super::model::{RelKind, Source};
+use super::model::{RelKind, Severity, Source};
 use anyhow::{Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -17,24 +17,29 @@ fn valid_channel(ch: &str) -> bool {
 /// Record an operator-asserted relation. De-duped against an identical authored
 /// row by the unique index; coexists with rows of other sources (precedence
 /// resolves later).
+///
+/// Mod-level (no artifact scope): an operator asserting that two mods do not get
+/// along is stating it about the mods, not about one build of one of them.
+/// Delegates rather than writing its own INSERT, so the rule about which kinds
+/// carry a severity lives in exactly one place (#129).
 pub fn add_authored_relation(
     conn: &Connection,
     from_mod_id: i64,
     target_modid: &str,
     kind: RelKind,
+    severity: Option<Severity>,
     now: &str,
 ) -> Result<()> {
-    conn.execute(
-        "INSERT OR IGNORE INTO relation
-           (from_mod_id, target_modid, target_version_range, kind, source, confidence, created_at)
-         VALUES (?1, ?2, NULL, ?3, 'authored', ?4, ?5)",
-        params![
-            from_mod_id,
-            target_modid,
-            kind.as_str(),
-            Source::Authored.rank(),
-            now
-        ],
+    super::upsert::upsert_relation(
+        conn,
+        from_mod_id,
+        None,
+        target_modid,
+        None,
+        kind,
+        severity,
+        Source::Authored,
+        now,
     )?;
     Ok(())
 }
@@ -146,8 +151,23 @@ pub fn set_authored_conflict(
         remove_authored_relation(conn, a_mod_id, b_modid, RelKind::Conflicts)?;
         remove_authored_relation(conn, b_mod_id, a_modid, RelKind::Conflicts)?;
     } else {
-        add_authored_relation(conn, a_mod_id, b_modid, RelKind::Conflicts, now)?;
-        add_authored_relation(conn, b_mod_id, a_modid, RelKind::Conflicts, now)?;
+        // an operator writing "these two do not get along" means the hard one
+        add_authored_relation(
+            conn,
+            a_mod_id,
+            b_modid,
+            RelKind::Conflicts,
+            Some(Severity::Hard),
+            now,
+        )?;
+        add_authored_relation(
+            conn,
+            b_mod_id,
+            a_modid,
+            RelKind::Conflicts,
+            Some(Severity::Hard),
+            now,
+        )?;
     }
     Ok(())
 }
@@ -552,6 +572,7 @@ mod tests {
                     "bar",
                     None,
                     RelKind::Requires,
+                    None,
                     Source::Inferred,
                     "T0",
                 )?;
