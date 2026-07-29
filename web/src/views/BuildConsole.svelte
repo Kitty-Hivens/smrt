@@ -1,11 +1,33 @@
 <script lang="ts">
   import { api } from '../lib/api';
-  import { notifyFail } from '../lib/toasts.svelte';
+  import { notifyFail, toasts } from '../lib/toasts.svelte';
   import { t } from '../lib/i18n.svelte';
-  import type { JobStatus } from '../lib/types';
+  import type { Commit, CommitStatus, JobStatus } from '../lib/types';
   import JobLog from './JobLog.svelte';
+  import PackHistory from './PackHistory.svelte';
 
-  let { packId }: { packId: string } = $props();
+  let { packId, historyTick = 0 }: { packId: string; historyTick?: number } = $props();
+
+  // The history, read here because a build is made from a commit (#122) -- the
+  // state that decides whether the build button can do anything is the same
+  // state the history shows.
+  let status = $state<CommitStatus | null>(null);
+  let log = $state<Commit[]>([]);
+
+  async function refreshHistory() {
+    try {
+      [status, log] = await Promise.all([api.commitStatus(packId), api.commits(packId)]);
+    } catch {
+      // a pack with no history yet answers nothing useful; the console still works
+    }
+  }
+
+  $effect(() => {
+    // re-read when the pack changes, and when anyone in the pack commits
+    void packId;
+    void historyTick;
+    void refreshHistory();
+  });
 
   let jobId = $state<string | null>(null);
   let busy = $state(false);
@@ -17,8 +39,37 @@
   // rather than scraped out of the log, so the offer below only appears for a
   // refusal an override can actually answer.
   let blocked = $state<string[]>([]);
+  // The commit message, held here rather than in the history view: a build with
+  // uncommitted work declares the checkpoint itself, so the same sentence is
+  // the one the button uses.
+  let commitMessage = $state('');
 
-  async function build(overrideChecks = false) {
+  // Whether the next publish has to declare a checkpoint first -- work sitting
+  // uncommitted, or a pack that has never committed at all.
+  const needsCommit = $derived(!status?.head || (status?.uncommitted ?? 0) > 0);
+
+  async function build(overrideChecks = false, fromCommit?: string) {
+    // Committing is the first half of building, not a hoop before it. The
+    // mirror refuses a publish that has uncommitted work -- that refusal is the
+    // honest answer for anything driving the API, but nobody should have to
+    // meet it here and press the same button twice.
+    if (!fromCommit && needsCommit) {
+      const text = commitMessage.trim();
+      if (!text) {
+        toasts.push({ kind: 'info', text: t('bld.needsMessage') });
+        return;
+      }
+      busy = true;
+      try {
+        await api.commit(packId, text);
+        commitMessage = '';
+        await refreshHistory();
+      } catch (e) {
+        notifyFail(e);
+        busy = false;
+        return;
+      }
+    }
     busy = true;
     jobId = null;
     blocked = [];
@@ -28,6 +79,7 @@
         channel,
         changelog: changelog.trim() || undefined,
         overrideChecks,
+        fromCommit,
       });
       jobId = job_id;
     } catch (e) {
@@ -36,9 +88,12 @@
     }
   }
 
-  async function finished(status: JobStatus) {
+  async function finished(jobStatus: JobStatus) {
     busy = false;
-    if (status !== 'failed' || !jobId) return;
+    // A build that landed published a commit's state; the history view says
+    // which, so it is re-read rather than left showing the state before.
+    void refreshHistory();
+    if (jobStatus !== 'failed' || !jobId) return;
     try {
       blocked = (await api.jobStatus(jobId)).blocked ?? [];
     } catch {
@@ -48,9 +103,18 @@
 </script>
 
 <div class="bc">
+  <PackHistory
+    {packId}
+    {status}
+    {log}
+    {busy}
+    onChanged={refreshHistory}
+    onBuildCommit={(id) => build(false, id)}
+    bind:message={commitMessage}
+  />
   <div class="bar">
     <button class="primary" onclick={() => build()} disabled={busy}>
-      {busy ? t('bld.building') : t('bld.build')}
+      {busy ? t('bld.building') : needsCommit ? t('bld.commitAndBuild') : t('bld.build')}
     </button>
     <label class="ver">
       {t('bld.version')}

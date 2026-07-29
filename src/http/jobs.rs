@@ -80,6 +80,9 @@ struct BuildParams {
     /// of the flag is that the decision is recorded rather than prevented.
     #[serde(default)]
     override_checks: bool,
+    /// Build this commit rather than the head of the pack's history (#122).
+    /// Absent -> the newest commit, which is what "build this pack" means.
+    from_commit: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -100,6 +103,7 @@ async fn build_pack(
     if !super::auth::may_author(&identity, &pack_id) {
         return Err(ApiError::Forbidden);
     }
+    let from_commit = resolve_build_commit(&state, &pack_id, &p).await?;
     let pack_version = p.pack_version.filter(|v| !v.trim().is_empty());
     let channel = match p.channel.as_deref() {
         None => VersionChannel::Beta,
@@ -125,6 +129,7 @@ async fn build_pack(
             channel,
             changelog,
             override_checks: p.override_checks,
+            from_commit,
             actor: Some(identity),
         },
     );
@@ -133,6 +138,52 @@ async fn build_pack(
         kind: job.kind,
         pack_id: job.pack_id.clone(),
     }))
+}
+
+/// Which stored state this build should turn into a manifest (#122).
+///
+/// A real build is made from a commit, never from the live config: with edits
+/// merging live, the config on disk is whatever is on screen at that instant,
+/// and pressing build while somebody is mid-rename would ship half a word. A
+/// dry run is the opposite question -- "what would what I have right now
+/// build?" -- so it reads the live config unless a commit was named.
+///
+/// Refusing a publish that has uncommitted work is the point rather than a
+/// safety rail: the alternative is a build that silently ships something older
+/// than what the person pressing it is looking at.
+async fn resolve_build_commit(
+    state: &AppState,
+    pack_id: &str,
+    p: &BuildParams,
+) -> Result<Option<String>, ApiError> {
+    if let Some(id) = p
+        .from_commit
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        // named explicitly: rebuilding an older state is a legitimate thing to
+        // ask for, and it is unambiguous, so nothing else needs checking
+        state.storage.load_commit(pack_id, id).await?;
+        return Ok(Some(id.to_string()));
+    }
+    if p.dry_run {
+        return Ok(None);
+    }
+    let Some(head) = state.storage.commit_head(pack_id).await else {
+        return Err(ApiError::Conflict(
+            "this pack has no commits yet, and a build is made from one -- declare a checkpoint first".into(),
+        ));
+    };
+    let live = state.storage.load_pack_config(pack_id).await?;
+    let head_config = state.storage.load_commit_config(pack_id, &head).await.ok();
+    let pending = crate::authoring::uncommitted(head_config.as_ref(), &live);
+    if pending > 0 {
+        return Err(ApiError::Conflict(format!(
+            "{pending} change(s) since the last commit; commit them or build that commit by name"
+        )));
+    }
+    Ok(Some(head))
 }
 
 #[derive(Deserialize)]

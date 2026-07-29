@@ -41,6 +41,14 @@ pub enum PackEvent {
     /// Base64 because this room is server-sent events, which is a text
     /// protocol -- the alternative is a second transport for one field.
     Doc { by: String, update: String },
+    /// A checkpoint was declared (#122). Everyone in the pack learns that the
+    /// history moved, so an editor's "changes since the last commit" count
+    /// drops to zero on its own rather than staying stale until a reload.
+    Committed {
+        id: String,
+        by: String,
+        message: String,
+    },
 }
 
 #[derive(Default)]

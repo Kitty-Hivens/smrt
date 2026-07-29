@@ -304,6 +304,162 @@ impl Storage {
         serde_json::from_slice(&bytes).map_err(json_err)
     }
 
+    // ── Pack history ─────────────────────────────────────────────────────────
+    //
+    // Commits live beside the config they checkpoint, under
+    // packs/<id>/authoring/commits/. Metadata and snapshot are separate files
+    // so walking the log reads kilobytes rather than megabytes, and `HEAD`
+    // names the newest commit -- the chain runs backwards from there through
+    // each commit's parent.
+
+    fn commits_dir(&self, pack_id: &str) -> PathBuf {
+        self.root
+            .join("packs")
+            .join(pack_id)
+            .join("authoring")
+            .join("commits")
+    }
+
+    /// Write a commit and move `HEAD` onto it.
+    ///
+    /// Order matters and is the whole reason this is one method: the snapshot
+    /// lands first, then the metadata, then `HEAD`. A crash between any two
+    /// leaves an unreferenced file rather than a `HEAD` pointing at a commit
+    /// whose snapshot is missing, and an unreferenced file is invisible where a
+    /// dangling `HEAD` would break the log for good.
+    pub async fn save_commit(
+        &self,
+        pack_id: &str,
+        commit: &crate::authoring::Commit,
+        snapshot: &crate::authoring::CommitSnapshot,
+    ) -> Result<(), ApiError> {
+        if !is_safe_id(pack_id) {
+            return Err(ApiError::BadRequest("invalid pack id".into()));
+        }
+        if !is_commit_id(&commit.id) {
+            return Err(ApiError::BadRequest("invalid commit id".into()));
+        }
+        let dir = self.commits_dir(pack_id);
+        fs::create_dir_all(&dir).await.map_err(io_err)?;
+
+        let snapshot_bytes = serde_json::to_vec_pretty(snapshot)
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("commit snapshot encode: {e}")))?;
+        atomic_write(
+            &dir.join(format!("{}.snapshot.json", commit.id)),
+            &snapshot_bytes,
+        )
+        .await?;
+
+        let meta_bytes = serde_json::to_vec_pretty(commit)
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("commit encode: {e}")))?;
+        atomic_write(&dir.join(format!("{}.json", commit.id)), &meta_bytes).await?;
+
+        atomic_write(&dir.join("HEAD"), commit.id.as_bytes()).await?;
+        // Everyone who saved into this commit is now named in it, so the
+        // pending set starts again from empty.
+        let _ = fs::remove_file(dir.join("pending.json")).await;
+        Ok(())
+    }
+
+    /// The newest commit's id, or `None` on a pack that has never committed.
+    pub async fn commit_head(&self, pack_id: &str) -> Option<String> {
+        if !is_safe_id(pack_id) {
+            return None;
+        }
+        let raw = fs::read_to_string(self.commits_dir(pack_id).join("HEAD"))
+            .await
+            .ok()?;
+        let id = raw.trim().to_string();
+        is_commit_id(&id).then_some(id)
+    }
+
+    pub async fn load_commit(
+        &self,
+        pack_id: &str,
+        commit_id: &str,
+    ) -> Result<crate::authoring::Commit, ApiError> {
+        if !is_safe_id(pack_id) || !is_commit_id(commit_id) {
+            return Err(ApiError::BadRequest("invalid commit id".into()));
+        }
+        let bytes = fs::read(self.commits_dir(pack_id).join(format!("{commit_id}.json")))
+            .await
+            .map_err(|_| ApiError::NotFound)?;
+        serde_json::from_slice(&bytes).map_err(json_err)
+    }
+
+    pub async fn load_commit_config(
+        &self,
+        pack_id: &str,
+        commit_id: &str,
+    ) -> Result<PackConfig, ApiError> {
+        if !is_safe_id(pack_id) || !is_commit_id(commit_id) {
+            return Err(ApiError::BadRequest("invalid commit id".into()));
+        }
+        let path = self
+            .commits_dir(pack_id)
+            .join(format!("{commit_id}.snapshot.json"));
+        let bytes = fs::read(path).await.map_err(|_| ApiError::NotFound)?;
+        let snapshot: crate::authoring::CommitSnapshot =
+            serde_json::from_slice(&bytes).map_err(json_err)?;
+        Ok(snapshot.config)
+    }
+
+    /// The history newest first, walking parents from `HEAD`.
+    ///
+    /// Stops at a parent that will not load rather than failing the whole read:
+    /// a truncated log still tells someone what the recent history was, where
+    /// an error tells them nothing at all.
+    pub async fn commit_log(
+        &self,
+        pack_id: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::authoring::Commit>, ApiError> {
+        let mut out = Vec::new();
+        let mut next = self.commit_head(pack_id).await;
+        while let Some(id) = next {
+            if out.len() >= limit {
+                break;
+            }
+            let Ok(commit) = self.load_commit(pack_id, &id).await else {
+                break;
+            };
+            next = commit.parent.clone();
+            out.push(commit);
+        }
+        Ok(out)
+    }
+
+    /// Note that someone saved, so the next commit can name them.
+    ///
+    /// A set rather than a log: the question a commit answers is who worked on
+    /// it, and someone who saved forty times is one contributor.
+    pub async fn note_pending_author(&self, pack_id: &str, who: &str) -> Result<(), ApiError> {
+        if !is_safe_id(pack_id) || who.is_empty() {
+            return Ok(());
+        }
+        let dir = self.commits_dir(pack_id);
+        fs::create_dir_all(&dir).await.map_err(io_err)?;
+        let mut authors = self.pending_authors(pack_id).await;
+        if authors.iter().any(|a| a == who) {
+            return Ok(());
+        }
+        authors.push(who.to_string());
+        let bytes = serde_json::to_vec(&authors)
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("pending authors encode: {e}")))?;
+        atomic_write(&dir.join("pending.json"), &bytes).await
+    }
+
+    pub async fn pending_authors(&self, pack_id: &str) -> Vec<String> {
+        if !is_safe_id(pack_id) {
+            return Vec::new();
+        }
+        fs::read(self.commits_dir(pack_id).join("pending.json"))
+            .await
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
+    }
+
     /// Set a pack's publication state (the publish/unpublish toggle). Patches
     /// both the built `summary.json` -- what the public listing filters on, so
     /// the change takes effect without a rebuild -- and the authoring config, so
@@ -1096,6 +1252,14 @@ fn is_safe_version(s: &str) -> bool {
     is_safe_id(s)
 }
 
+/// A commit id is exactly what `make_commit` produces: 40 hex characters. Held
+/// to that shape rather than to `is_safe_id` because it reaches the filesystem
+/// as a name from a URL, and a content address that is not one is not a commit
+/// this mirror wrote.
+fn is_commit_id(s: &str) -> bool {
+    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// Reject path traversal and other surprises in user-supplied relative paths.
 /// Allows nested directories so curated assets like `_nexira/banner.png` work,
 /// but every segment must be a plain `is_safe_id`-style token and there must
@@ -1203,6 +1367,117 @@ mod tests {
         assert_eq!(loaded.minecraft_version, "1.12.2");
     }
 
+    /// Commit `cfg` onto `parent` and hand back the stored commit.
+    async fn commit(
+        s: &Storage,
+        cfg: &PackConfig,
+        parent: Option<String>,
+        message: &str,
+    ) -> crate::authoring::Commit {
+        let (c, snap) = crate::authoring::make_commit(
+            cfg,
+            parent,
+            "operator",
+            message,
+            vec!["operator".into()],
+            format!("2026-07-29T00:00:0{}Z", message.len() % 10),
+        )
+        .unwrap();
+        s.save_commit("Industrial", &c, &snap).await.unwrap();
+        c
+    }
+
+    #[tokio::test]
+    async fn a_commit_round_trips_and_moves_head() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        assert!(s.commit_head("Industrial").await.is_none());
+
+        let c = commit(&s, &sample_config(), None, "first").await;
+        assert_eq!(s.commit_head("Industrial").await.as_deref(), Some(&*c.id));
+        assert_eq!(s.load_commit("Industrial", &c.id).await.unwrap(), c);
+        assert_eq!(
+            s.load_commit_config("Industrial", &c.id)
+                .await
+                .unwrap()
+                .minecraft_version,
+            "1.12.2"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_log_walks_parents_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let mut cfg = sample_config();
+        let first = commit(&s, &cfg, None, "first").await;
+        cfg.tagline = "second".into();
+        let second = commit(&s, &cfg, Some(first.id.clone()), "second state").await;
+
+        let log = s.commit_log("Industrial", 100).await.unwrap();
+        assert_eq!(
+            log.iter().map(|c| &*c.id).collect::<Vec<_>>(),
+            vec![&*second.id, &*first.id]
+        );
+        // an older state stays readable; that is what makes a restore possible
+        assert_eq!(
+            s.load_commit_config("Industrial", &first.id)
+                .await
+                .unwrap()
+                .tagline,
+            ""
+        );
+    }
+
+    #[tokio::test]
+    async fn the_same_state_committed_twice_is_two_commits() {
+        // The id covers the parent, so a snapshot identical to its predecessor
+        // is still a distinct checkpoint -- otherwise "I committed and nothing
+        // happened" would be indistinguishable from a lost write.
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let cfg = sample_config();
+        let first = commit(&s, &cfg, None, "first").await;
+        let again = commit(&s, &cfg, Some(first.id.clone()), "first").await;
+        assert_ne!(first.id, again.id);
+        assert_eq!(s.commit_log("Industrial", 100).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn committing_clears_the_pending_authors() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        s.note_pending_author("Industrial", "someone")
+            .await
+            .unwrap();
+        s.note_pending_author("Industrial", "someone")
+            .await
+            .unwrap();
+        s.note_pending_author("Industrial", "another")
+            .await
+            .unwrap();
+        // a set, not a log: forty saves by one person is one contributor
+        assert_eq!(
+            s.pending_authors("Industrial").await,
+            ["someone", "another"]
+        );
+
+        commit(&s, &sample_config(), None, "first").await;
+        assert!(s.pending_authors("Industrial").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_commit_id_from_outside_cannot_reach_the_filesystem() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        // ids arrive in a URL path segment, so they are held to the shape
+        // `make_commit` produces rather than to a general path check
+        for bad in ["../../etc/passwd", "HEAD", "", &"f".repeat(41)] {
+            assert!(s.load_commit("Industrial", bad).await.is_err());
+            assert!(s.load_commit_config("Industrial", bad).await.is_err());
+        }
+    }
+
     #[tokio::test]
     async fn list_authoring_packs_finds_configured_pack() {
         let dir = tempfile::tempdir().unwrap();
@@ -1227,6 +1502,7 @@ mod tests {
             generated_at: generated_at.into(),
             fingerprint: Some(format!("fp-{version}")),
             checks: None,
+            built_from: None,
             minecraft: MinecraftSpec {
                 version: "1.12.2".into(),
             },

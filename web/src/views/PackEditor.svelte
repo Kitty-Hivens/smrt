@@ -185,6 +185,11 @@
   // save as a precondition, so a save the mirror would apply over someone else's
   // is refused instead (#52). Null until the pack has a stored config.
   let rev = $state<string | null>(null);
+  // Bumped whenever the pack's history moves (#122). The editor does not hold
+  // the history -- the build console does, because a build is made from a
+  // commit -- but this is where the pack's event stream is read, so the fact
+  // that it moved is passed down rather than subscribed to twice.
+  let historyTick = $state(0);
   // Who else has this pack open, from the stream. Names, not a count: "bo is
   // here" is a different fact from "1 other person", and it is the one that
   // changes what you do next.
@@ -503,6 +508,16 @@
       // and being interrupted by a reload.
       if (event.kind === 'doc') {
         session?.receive(event.update, event.by);
+        return;
+      }
+      // The history moved. Whoever declared it did so for everyone in the pack,
+      // so the "changes since the last commit" count here corrects itself
+      // instead of staying stale until a reload.
+      if (event.kind === 'committed') {
+        historyTick += 1;
+        if (event.by !== me.login) {
+          toasts.push({ kind: 'info', text: t('pe.committedBy', { who: event.by }) });
+        }
         return;
       }
       streamRev = event.rev;
@@ -1419,7 +1434,7 @@
     {:else if tab === 'graph'}
       <PackGraph {packId} />
     {:else if tab === 'build'}
-      <BuildConsole {packId} />
+      <BuildConsole {packId} {historyTick} />
     {/if}
   </div>
   {#if previewOpen}

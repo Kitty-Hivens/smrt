@@ -142,6 +142,9 @@ pub async fn build_manifest(
             // the pre-publish check is the caller's to record: it decides whether
             // a finding stops the publish, and a dry run never gates at all
             checks: None,
+            // likewise the commit: the builder is handed a config, and only the
+            // caller knows whether it came out of the history or off the disk
+            built_from: None,
             generated_at: now_rfc3339(),
             fingerprint: Some(fingerprint),
             minecraft,
@@ -383,7 +386,7 @@ pub fn make_pack_summary(cfg: &PackConfig, pack_version: &str) -> PackSummary {
     }
 }
 
-fn now_rfc3339() -> String {
+pub(crate) fn now_rfc3339() -> String {
     use time::OffsetDateTime;
     use time::format_description::well_known::Rfc3339;
     OffsetDateTime::now_utc()

@@ -102,6 +102,14 @@ pub struct BuildRequest {
     /// log says it, the audit trail records who asked, and the built manifest
     /// carries the findings it was published over.
     pub override_checks: bool,
+    /// Build this commit's snapshot rather than the config on disk (#122).
+    ///
+    /// The live config is whatever is on screen at that instant, and with edits
+    /// merging live (#115) that means pressing build while somebody is mid-rename
+    /// builds half a word. A commit does not move while it is judged, so the
+    /// pre-publish check (#108) judges the same thing that ships. `None` builds
+    /// the live config -- the CLI takes a file and has no history to name.
+    pub from_commit: Option<String>,
     /// Who asked for the build. `None` for a build with no session behind it
     /// (tests, and any future non-HTTP trigger) -- an override then records an
     /// unknown actor rather than borrowing someone's name.
@@ -329,10 +337,19 @@ async fn run_build(
 ) -> Result<(), String> {
     let pack_id = job.pack_id.clone();
     job.line(format!("build {pack_id}: loading authoring inputs"));
-    let mut cfg = storage
-        .load_pack_config(&pack_id)
-        .await
-        .map_err(|e| format!("no authoring config: {e}"))?;
+    let mut cfg = match &req.from_commit {
+        Some(id) => {
+            job.line(format!("building from commit {id}"));
+            storage
+                .load_commit_config(&pack_id, id)
+                .await
+                .map_err(|e| format!("no such commit: {e}"))?
+        }
+        None => storage
+            .load_pack_config(&pack_id)
+            .await
+            .map_err(|e| format!("no authoring config: {e}"))?,
+    };
     job.line(format!(
         "config: {} mods, {} assets",
         cfg.mods.len(),
@@ -419,6 +436,10 @@ async fn run_build(
     // What was known about this build, on the build itself. A job log lives in
     // memory and its snapshot is evicted; the manifest is the artifact.
     manifest.checks = (!checks.is_empty()).then_some(checks);
+    // The state this build came out of, named on the build, so "what shipped in
+    // 0.1.24?" is answerable from the manifest alone rather than from whatever
+    // the config happens to say today.
+    manifest.built_from = req.from_commit.clone();
     let fell_back = built.resolved_from_registry;
     // A build that could not reach Modrinth and answered from the registry is
     // not the same event as one that reached it. It succeeds either way, but it
@@ -614,6 +635,7 @@ mod tests {
             channel: VersionChannel::Beta,
             changelog: None,
             override_checks: false,
+            from_commit: None,
             actor: None,
         }
     }

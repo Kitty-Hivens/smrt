@@ -8,6 +8,8 @@ import type {
   BuildSummary,
   CacheInventory,
   CommunityPack,
+  Commit,
+  CommitStatus,
   DeclaredAsset,
   CacheUsageListing,
   GraphData,
@@ -275,6 +277,55 @@ export const api = {
     if (!r.ok) throw await toError(r);
     return { config: (await r.json()) as PackConfig, rev: revisionOf(r) };
   },
+  // ── authoring: history (#122) ──
+  //
+  // A commit is what a build is made from, so these sit beside the build rather
+  // than in a corner of their own.
+  commits: (id: string) =>
+    getJson<Commit[]>(`/v1/authoring/packs/${encodeURIComponent(id)}/commits`),
+  // Where the history is, and how far the live config has moved off it -- what
+  // the editor needs to say "N changes since the last commit" before a build.
+  commitStatus: (id: string) =>
+    getJson<CommitStatus>(`/v1/authoring/packs/${encodeURIComponent(id)}/commits/status`),
+  commitConfig: (id: string, commitId: string) =>
+    getJson<PackConfig>(
+      `/v1/authoring/packs/${encodeURIComponent(id)}/commits/${encodeURIComponent(commitId)}/config`,
+    ),
+  async commit(id: string, message: string): Promise<Commit> {
+    activity.begin();
+    try {
+      const r = await fetch(`/v1/authoring/packs/${encodeURIComponent(id)}/commits`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+      if (!r.ok) throw await toError(r);
+      return (await r.json()) as Commit;
+    } finally {
+      activity.end();
+    }
+  },
+  // Put an older state back. Writes it forward as a new commit rather than
+  // rewinding, so nothing that was declared stops being true.
+  async restoreCommit(id: string, commitId: string, message?: string): Promise<Commit> {
+    activity.begin();
+    try {
+      const r = await fetch(
+        `/v1/authoring/packs/${encodeURIComponent(id)}/commits/${encodeURIComponent(commitId)}/restore`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: message ?? null }),
+        },
+      );
+      if (!r.ok) throw await toError(r);
+      return (await r.json()) as Commit;
+    } finally {
+      activity.end();
+    }
+  },
   async buildPack(
     id: string,
     opts?: {
@@ -285,6 +336,9 @@ export const api = {
       // publish over a pre-publish check that says the pack cannot start;
       // recorded on the build, in the job log and in the audit trail
       overrideChecks?: boolean;
+      // build this commit rather than the head of the history; absent takes the
+      // head, which is what "build this pack" means
+      fromCommit?: string;
     },
   ): Promise<{ job_id: string }> {
     const q = new URLSearchParams();
@@ -292,6 +346,7 @@ export const api = {
     if (opts?.overrideChecks) q.set('override_checks', 'true');
     if (opts?.packVersion) q.set('pack_version', opts.packVersion);
     if (opts?.channel) q.set('channel', opts.channel);
+    if (opts?.fromCommit) q.set('from_commit', opts.fromCommit);
     const qs = q.toString();
     const changelog = opts?.changelog?.trim();
     const r = await fetch(`/v1/authoring/packs/${encodeURIComponent(id)}/build${qs ? `?${qs}` : ''}`, {
