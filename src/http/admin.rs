@@ -92,6 +92,22 @@ fn authoring_router(state: AppState) -> Router {
             post(revert_pack_config),
         )
         .route(
+            "/v1/authoring/packs/{pack_id}/commits",
+            get(list_commits).post(create_commit),
+        )
+        .route(
+            "/v1/authoring/packs/{pack_id}/commits/status",
+            get(commit_status),
+        )
+        .route(
+            "/v1/authoring/packs/{pack_id}/commits/{commit_id}/config",
+            get(get_commit_config),
+        )
+        .route(
+            "/v1/authoring/packs/{pack_id}/commits/{commit_id}/restore",
+            post(restore_commit),
+        )
+        .route(
             "/v1/authoring/packs/{pack_id}/duplicate",
             post(duplicate_pack),
         )
@@ -1544,6 +1560,12 @@ async fn store_edited_config(
         }
     }
     state.storage.save_pack_config(pack_id, &cfg).await?;
+    // Remember that this person worked, so the next commit names them without
+    // anyone having to reconstruct it afterwards (#122). Best-effort: losing an
+    // attribution is not a reason to fail a save the operator asked for.
+    if let Err(e) = state.storage.note_pending_author(pack_id, by).await {
+        tracing::warn!(pack_id = %pack_id, error = %e, "could not note the pending commit author");
+    }
     // the revision of what was just stored, so the client that saved it edits
     // on from there without a re-read
     let rev = rev_of(&cfg)?;
@@ -1601,6 +1623,234 @@ async fn revert_pack_config(
     )
     .await;
     Ok((etag(&rev), Json(cfg)))
+}
+
+// ── pack history (#122) ──────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct CommitReq {
+    message: String,
+}
+
+/// Declare a checkpoint: snapshot the config as it stands, sign it, and name
+/// everyone whose saved work it takes in.
+///
+/// Takes the config lock, so a commit cannot capture a half-applied
+/// read-modify-write. It still captures someone's half-typed sentence -- the
+/// state is shared and merges live, so there is no moment when everything is
+/// quiet, and waiting for one is not a workable alternative.
+async fn create_commit(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+    Json(req): Json<CommitReq>,
+) -> Result<(StatusCode, Json<crate::authoring::Commit>), ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    let message = req.message.trim().to_string();
+    if message.is_empty() {
+        return Err(ApiError::BadRequest(
+            "a commit needs a message; an unlabelled checkpoint is one nobody can read later"
+                .into(),
+        ));
+    }
+
+    let _guard = state.storage.lock_pack_config(&pack_id).await;
+    let cfg = state.storage.load_pack_config(&pack_id).await?;
+    let parent = state.storage.commit_head(&pack_id).await;
+
+    // The signer is a contributor to their own commit, and is named first --
+    // they are the one who decided this state was worth keeping.
+    let mut contributors = vec![identity.login.clone()];
+    for who in state.storage.pending_authors(&pack_id).await {
+        if !contributors.contains(&who) {
+            contributors.push(who);
+        }
+    }
+
+    let (commit, snapshot) = crate::authoring::make_commit(
+        &cfg,
+        parent,
+        &identity.login,
+        &message,
+        contributors,
+        crate::authoring::build::now_rfc3339(),
+    )
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("commit encode: {e}")))?;
+
+    state
+        .storage
+        .save_commit(&pack_id, &commit, &snapshot)
+        .await?;
+    state.packs.publish(
+        &pack_id,
+        crate::authoring::PackEvent::Committed {
+            id: commit.id.clone(),
+            by: identity.login.clone(),
+            message: commit.message.clone(),
+        },
+    );
+    audit(
+        &state,
+        &identity,
+        "pack.commit",
+        Some(&pack_id),
+        Some(&commit.id),
+    )
+    .await;
+    Ok((StatusCode::CREATED, Json(commit)))
+}
+
+#[derive(serde::Deserialize)]
+struct LogParams {
+    #[serde(default = "default_log_limit")]
+    limit: usize,
+}
+
+fn default_log_limit() -> usize {
+    100
+}
+
+async fn list_commits(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+    Query(p): Query<LogParams>,
+) -> Result<Json<Vec<crate::authoring::Commit>>, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(Json(
+        state
+            .storage
+            .commit_log(&pack_id, p.limit.clamp(1, 500))
+            .await?,
+    ))
+}
+
+/// Where the history is and how far the working state has moved off it -- what
+/// the panel needs to say "47 changes since the last commit" before a build.
+async fn commit_status(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+) -> Result<Json<crate::authoring::CommitStatus>, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    let live = state.storage.load_pack_config(&pack_id).await?;
+    let head = match state.storage.commit_head(&pack_id).await {
+        Some(id) => state.storage.load_commit(&pack_id, &id).await.ok(),
+        None => None,
+    };
+    let head_config = match &head {
+        Some(c) => state.storage.load_commit_config(&pack_id, &c.id).await.ok(),
+        None => None,
+    };
+    Ok(Json(crate::authoring::CommitStatus {
+        uncommitted: crate::authoring::uncommitted(head_config.as_ref(), &live),
+        pending_authors: state.storage.pending_authors(&pack_id).await,
+        head,
+    }))
+}
+
+async fn get_commit_config(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path((pack_id, commit_id)): Path<(String, String)>,
+) -> Result<Json<PackConfig>, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(Json(
+        state
+            .storage
+            .load_commit_config(&pack_id, &commit_id)
+            .await?,
+    ))
+}
+
+#[derive(serde::Deserialize)]
+struct RestoreReq {
+    /// What to call the commit this restore writes. Absent -> named after what
+    /// it restores, which is the honest default.
+    #[serde(default)]
+    message: Option<String>,
+}
+
+/// Put a commit's state back, as a new commit.
+///
+/// History is append-only on purpose: restoring writes the old state forward
+/// rather than moving `HEAD` backwards, so a restore is itself a decision
+/// somebody made at a time, and nothing that was ever declared stops being
+/// true. The alternative -- rewinding `HEAD` -- would make every build that
+/// named a later commit refer to a history that no longer admits it.
+async fn restore_commit(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path((pack_id, commit_id)): Path<(String, String)>,
+    Json(req): Json<RestoreReq>,
+) -> Result<(StatusCode, Json<crate::authoring::Commit>), ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    let restored = state
+        .storage
+        .load_commit_config(&pack_id, &commit_id)
+        .await?;
+
+    let _guard = state.storage.lock_pack_config(&pack_id).await;
+    // A live document remembers the config this replaces and would put it back
+    // on the next merge, so the restore settles it too -- the same reason the
+    // build-revert does.
+    state.docs.forget(&pack_id);
+    let (cfg, _rev) =
+        store_edited_config(&state, &pack_id, restored, &identity.login, false).await?;
+
+    let parent = state.storage.commit_head(&pack_id).await;
+    let message = req
+        .message
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| format!("restore {}", short_commit(&commit_id)));
+    let (commit, snapshot) = crate::authoring::make_commit(
+        &cfg,
+        parent,
+        &identity.login,
+        &message,
+        vec![identity.login.clone()],
+        crate::authoring::build::now_rfc3339(),
+    )
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("commit encode: {e}")))?;
+    state
+        .storage
+        .save_commit(&pack_id, &commit, &snapshot)
+        .await?;
+
+    state.packs.publish(
+        &pack_id,
+        crate::authoring::PackEvent::Committed {
+            id: commit.id.clone(),
+            by: identity.login.clone(),
+            message: commit.message.clone(),
+        },
+    );
+    audit(
+        &state,
+        &identity,
+        "pack.commit.restore",
+        Some(&pack_id),
+        Some(&commit_id),
+    )
+    .await;
+    Ok((StatusCode::CREATED, Json(commit)))
+}
+
+/// The short form a person reads. Long enough to be unambiguous in a pack's
+/// history, short enough to sit in a sentence.
+fn short_commit(id: &str) -> &str {
+    &id[..id.len().min(8)]
 }
 
 #[derive(serde::Deserialize)]

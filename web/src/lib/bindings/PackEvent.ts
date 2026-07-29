@@ -3,4 +3,4 @@
 /**
  * Something that happened to a pack, as its editors see it.
  */
-export type PackEvent = { "kind": "saved", rev: string, by: string, } | { "kind": "present", editors: Array<string>, } | { "kind": "doc", by: string, update: string, };
+export type PackEvent = { "kind": "saved", rev: string, by: string, } | { "kind": "present", editors: Array<string>, } | { "kind": "doc", by: string, update: string, } | { "kind": "committed", id: string, by: string, message: string, };
