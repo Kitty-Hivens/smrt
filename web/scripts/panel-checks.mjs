@@ -1,4 +1,7 @@
-// The panel's half of the merge (#115), checked where it can lie.
+// The panel's logic that fails silently, checked here rather than in a
+// browser: the merge (#115), and what Java a pack needs (#126).
+//
+// The merge half:
 //
 // The editor keeps plain `bind:value` controls over a plain config object, so
 // every keystroke arrives here as a whole new config. Turning that into the
@@ -11,6 +14,7 @@
 // of pure functions. `node web/scripts/merge-check.mjs`, or `pnpm merge-check`.
 import * as Y from 'yjs';
 import { readConfig, textPatch, writeConfig } from '../src/lib/packdoc.ts';
+import { JAVA_MAJORS, suggestedJava } from '../src/lib/java.ts';
 
 let failures = 0;
 const check = (name, cond, detail = '') => {
@@ -129,6 +133,24 @@ const seed = Y.encodeStateAsUpdate(server);
   check('a config round-trips', JSON.stringify(readConfig(doc, base)) === JSON.stringify(base),
     JSON.stringify(readConfig(doc, base)));
 }
+
+// ── which Java a pack needs ─────────────────────────────────────────────────
+// Every one of these is a pack this mirror actually serves.
+check('1.12.2 forge wants 8', suggestedJava('1.12.2', 'forge') === 8);
+check('1.21.1 neoforge wants 21', suggestedJava('1.21.1', 'neoforge') === 21);
+check('1.7.10 on lwjgl3ify wants 21, not 8',
+  suggestedJava('1.7.10', 'lwjgl3ify') === 21,
+  'the loader exists to run old Minecraft on new Java; deriving from the version alone gets this wrong');
+check('cleanroom is the same kind of loader', suggestedJava('1.12.2', 'cleanroom') === 21);
+check('1.17 wants 16', suggestedJava('1.17', 'forge') === 16);
+check('1.18.2 wants 17', suggestedJava('1.18.2', 'forge') === 17);
+check('1.20.4 still wants 17', suggestedJava('1.20.4', 'forge') === 17);
+check('1.20.5 moves to 21', suggestedJava('1.20.5', 'forge') === 21);
+check('versions compare piecewise, not as strings',
+  suggestedJava('1.9.4', 'forge') === 8,
+  'lexically "1.9" > "1.18", which is how a naive compare puts 1.9 on Java 17');
+check('an unparseable version suggests nothing', suggestedJava('', 'forge') === null && suggestedJava('snapshot', 'forge') === null);
+check('the offered list holds what old packs need', [8, 11, 16, 17, 21].every((v) => JAVA_MAJORS.includes(v)));
 
 console.log(failures ? `\n${failures} failed` : '\nall good');
 process.exit(failures ? 1 : 0);
