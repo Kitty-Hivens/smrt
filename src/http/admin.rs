@@ -1027,7 +1027,15 @@ async fn materialise(state: &AppState, pack_id: &str, by: &str) {
     // version string is not a config. Keep the last good file and try again on
     // the next edit rather than writing half of one.
     let cfg = match doc.to_config(&existing) {
-        Ok(cfg) => cfg,
+        Ok(mut cfg) => {
+            // Rows the fill appended after this document was seeded are not in
+            // it, and writing the document as-is would delete them. They are
+            // server-managed, so they come from the file the same way a
+            // whole-config save carries them over; the document picks them up
+            // when it is next seeded.
+            crate::authoring::depfill::merge_pulled(&existing, &mut cfg);
+            cfg
+        }
         Err(e) => {
             tracing::warn!(pack_id, error = %format!("{e:#}"), "document does not materialise; keeping the stored config");
             return;

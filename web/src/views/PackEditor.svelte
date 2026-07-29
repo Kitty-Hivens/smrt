@@ -6,6 +6,7 @@
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
   import { arrive, stagger } from '../lib/motion.svelte';
+  import { openPackSession, type PackSession } from '../lib/packsession.svelte';
   import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
   import { isDebug } from '../lib/roles';
   import type {
@@ -168,6 +169,11 @@
   // problem must not move the thing the operator was working on.
   const fail = notifyFail;
 
+  // This editor's seat in the pack's document (#115). While it is open the
+  // document is the writer: edits are merged rather than saved conditionally,
+  // so there is no base to go stale and no version to lose a race with.
+  let session = $state<PackSession | null>(null);
+
   // autosave
   type SaveState = 'idle' | 'saving' | 'saved' | 'error' | 'conflict';
   let saveState = $state<SaveState>('idle');
@@ -211,18 +217,30 @@
   let revertPick = $state('');
   const revertOptions = $derived(revertVersions.map((v) => ({ value: v, label: v })));
 
+  /// Put a config on screen. `lastSig` is set with it, so adopting something --
+  /// a load, a revert, someone else's merged change -- is never mistaken for
+  /// this editor having typed it.
+  function adopt(c: PackConfig) {
+    if (!c.pack_meta) {
+      c.pack_meta = { icon_url: null, banner_url: null, gallery_urls: [], description_md: null };
+    }
+    cfg = c;
+    tagsStr = (c.tags ?? []).join(', ');
+    cardGalleryStr = (c.pack_meta.gallery_urls ?? []).join('\n');
+    lastSig = sig();
+  }
+
   async function load() {
     loading = true;
     try {
       const { config: c, rev: r } = await api.packConfig(packId);
-      if (!c.pack_meta) {
-        c.pack_meta = { icon_url: null, banner_url: null, gallery_urls: [], description_md: null };
-      }
-      cfg = c;
+      adopt(c);
       rev = r;
-      tagsStr = (c.tags ?? []).join(', ');
-      cardGalleryStr = (c.pack_meta.gallery_urls ?? []).join('\n');
-      lastSig = sig();
+      // Join the pack's document and take what it holds: someone may be editing
+      // right now, and their work is newer than the file this just read.
+      session?.close();
+      session = await openPackSession(packId, c, adopt);
+      adopt(session.read());
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) {
         cfg = null; // offer to create
@@ -247,14 +265,14 @@
     if (!ok) return;
     try {
       const { config: c, rev: r } = await api.revertPackConfig(packId, version);
-      if (!c.pack_meta) {
-        c.pack_meta = { icon_url: null, banner_url: null, gallery_urls: [], description_md: null };
-      }
-      cfg = c;
+      adopt(c);
       rev = r;
-      tagsStr = (c.tags ?? []).join(', ');
-      cardGalleryStr = (c.pack_meta.gallery_urls ?? []).join('\n');
-      lastSig = sig(); // matches new cfg -> autosave doesn't re-fire
+      // The mirror drops the document on a revert, so this editor rejoins the
+      // one it seeds from the reverted config rather than keeping a seat at a
+      // table that is gone.
+      session?.close();
+      session = await openPackSession(packId, c, adopt);
+      adopt(session.read());
       // a revert replaces the server's config outright, so whatever this editor
       // was in conflict with is gone
       clearConflict();
@@ -333,11 +351,31 @@
         alsoHere = event.editors.filter((name) => name !== me.login);
         return;
       }
-      // A merge-layer update (#115). The editor does not speak that protocol
-      // yet, so it is ignored rather than mistaken for a save -- and ignoring it
-      // is safe: what the merge writes still arrives as a save event.
-      if (event.kind !== 'saved') return;
+      // Someone else's keystrokes. Merged into this editor's copy, which calls
+      // back with the result -- the difference between watching a colleague work
+      // and being interrupted by a reload.
+      if (event.kind === 'doc') {
+        session?.receive(event.update);
+        return;
+      }
       streamRev = event.rev;
+      // With a document open, a save is the mirror reporting that it wrote what
+      // everyone here already has. Take the revision and stay put: re-reading
+      // would replace the screen with a file that says the same thing, and take
+      // the caret with it.
+      if (session) {
+        rev = event.rev;
+        saveState = 'saved';
+        // The fill appends libraries as it resolves them, and those rows exist
+        // on disk without anyone having typed them -- so they are not in the
+        // document and would stay invisible here until a reload. One read after
+        // a write, not one per keystroke.
+        void api
+          .packConfig(packId)
+          .then(({ config }) => mergePulled(config))
+          .catch(() => {});
+        return;
+      }
       // Our own save coming back: the revision is the one we now hold.
       if (event.rev === rev) return;
       // Someone else saved. With nothing of our own in flight the honest move is
@@ -357,11 +395,26 @@
     return () => src.close();
   });
 
-  // debounced autosave: deep-reads cfg + tags + gallery, persists once they settle
+  // The seat is given up with the editor: the mirror keeps the document for
+  // whoever is still in the pack, and this copy stops sending into it.
+  $effect(() => () => session?.close());
+
+  // Every change goes to the writer. With a document open that is a merge, sent
+  // as it is typed -- the delay that used to be here was there so a sentence was
+  // one save rather than forty, and the mirror now does that waiting itself,
+  // where it can also wait for the other editors. Without one the pack has no
+  // stored config yet, so the first write is still a conditional save: it is
+  // what creates the pack.
   $effect(() => {
     if (!cfg || conflict) return;
     const s = sig();
     if (s === lastSig) return;
+    lastSig = s;
+    if (session) {
+      session.push(composed());
+      saveState = 'saving'; // until the mirror says it wrote
+      return;
+    }
     saveState = 'saving';
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => doSave(s), 700);
@@ -379,10 +432,12 @@
     await doSave(sig());
   }
 
-  async function doSave(s: string) {
-    if (!cfg) return;
-    const snap = $state.snapshot(cfg);
-    const payload: PackConfig = {
+  /// What is on screen, as a config: the two comma/newline text boxes become
+  /// lists and the blank card fields become absent. Both writers send this, so
+  /// the shape cannot differ between saving a pack and merging into one.
+  function composed(): PackConfig {
+    const snap = $state.snapshot(cfg!) as PackConfig;
+    return {
       ...snap,
       tags: tagsStr
         .split(',')
@@ -398,9 +453,17 @@
           .filter(Boolean),
       },
     };
+  }
+
+  async function doSave(s: string) {
+    if (!cfg) return;
+    const payload = composed();
     try {
       const saved = await api.savePackConfig(packId, payload, rev);
       rev = saved.rev;
+      // The pack exists now, so the document does too: from here on edits are
+      // merged rather than saved against a base.
+      if (!session) session = await openPackSession(packId, saved.config, adopt);
       // The mirror answers with the config it stored, dependencies and all. That
       // answer used to be discarded, so a pulled library existed on disk and was
       // invisible here until a reload. Only the pulled rows are taken: they are
