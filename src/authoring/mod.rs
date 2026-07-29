@@ -25,6 +25,7 @@ pub mod packstream;
 pub mod reconstruct;
 pub mod resolve;
 pub mod search;
+pub mod spoof;
 pub mod validate;
 pub mod versions;
 
@@ -42,5 +43,6 @@ pub use packstream::{PackEvent, PackStream, Presence};
 pub use reconstruct::reconstruct_config;
 pub use resolve::{ResolveReport, pack_graph, resolve_pack};
 pub use search::{ModHit, PackContext, search_mods};
+pub use spoof::{SPOOF_DEST, Spoof, SpoofMod, spoof_from_status};
 pub use validate::{ValidateReport, validate};
 pub use versions::{MinecraftVersions, minecraft_versions};
