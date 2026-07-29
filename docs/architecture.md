@@ -94,6 +94,24 @@ is recorded three ways: the job log, the audit trail (`build.override_checks`,
 with the actor), and `checks.overridden` on the manifest itself. A dry run
 reports the same verdict and is never stopped by it.
 
+### Two people in one pack
+
+A pack being edited has a document (`authoring/packdoc.rs`): the config's own
+JSON shape as a CRDT, with a short list of paths marking which strings are prose.
+Editors join it empty and apply the mirror's state -- seeding a client from the
+config and then applying that state would author a second value for every key,
+and one whole `mods` array would silently replace the other.
+
+Updates arrive at `POST /v1/authoring/packs/{id}/doc`, are merged, fanned out to
+the pack's room (#113) and written to `config.json` once the typing stops. The
+write goes through the same path a whole-config `PUT` uses, so both doors reach
+one act; a `PUT` or a revert forgets the document first, since it would otherwise
+put back what it still remembers. Server-owned fields never enter the document.
+
+The document is a merge point, not a second source of truth: it is rebuilt from
+the stored config whenever nobody holds it, so a restart costs the history of how
+the content got there and none of the content.
+
 ### Harvest cycle
 
 After every real build or cache upload the harvest scheduler is poked (it can

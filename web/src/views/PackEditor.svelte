@@ -333,6 +333,10 @@
         alsoHere = event.editors.filter((name) => name !== me.login);
         return;
       }
+      // A merge-layer update (#115). The editor does not speak that protocol
+      // yet, so it is ignored rather than mistaken for a save -- and ignoring it
+      // is safe: what the merge writes still arrives as a save event.
+      if (event.kind !== 'saved') return;
       streamRev = event.rev;
       // Our own save coming back: the revision is the one we now hold.
       if (event.rev === rev) return;
