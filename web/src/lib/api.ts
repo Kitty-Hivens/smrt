@@ -443,7 +443,7 @@ export const api = {
   resolvePack: (id: string) =>
     getJson<ResolveReport>(`/v1/authoring/packs/${encodeURIComponent(id)}/resolve`),
 
-  // ── validate a config against an SC archive ──
+  // ── validate a config against an instance archive ──
   async validatePack(id: string, file: File): Promise<ValidateReport> {
     const buf = await file.arrayBuffer();
     const r = await fetch(`/v1/authoring/packs/${encodeURIComponent(id)}/validate`, {

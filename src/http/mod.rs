@@ -26,7 +26,7 @@ use axum::Router;
 /// It is a memory ceiling, not just a size gate: these handlers extract `Bytes`,
 /// so axum buffers the entire body in RAM before the handler runs, and the
 /// bootstrap path copies it once more. A request near this limit holds that much
-/// (bootstrap: twice that) for its lifetime. Sized for a whole SC pack archive
+/// (bootstrap: twice that) for its lifetime. Sized for a whole instance archive
 /// uploaded in one shot; nginx in front is raised to match (see the deploy
 /// config), since the smaller of the two wins.
 pub(crate) const MAX_UPLOAD_BODY: usize = 8 * 1024 * 1024 * 1024;

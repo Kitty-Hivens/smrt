@@ -831,9 +831,9 @@ async fn modrinth_icon(
     Ok(Json(IconResp { icon_url }))
 }
 
-// ── validate against an SC archive ───────────────────────────────────────────
+// ── validate against an instance archive ─────────────────────────────────────
 
-// Cross-reference the saved config against an uploaded SC archive by mod
+// Cross-reference the saved config against an uploaded instance archive by mod
 // filename. spawn_blocking: unzipping a large archive must not stall the runtime.
 async fn validate_pack(
     State(state): State<AppState>,

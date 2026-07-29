@@ -210,7 +210,7 @@
   let lastSig = '';
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
-  // validate the saved config against an uploaded SC archive
+  // validate the saved config against an uploaded instance archive
   let validating = $state(false);
   let valReport = $state<ValidateReport | null>(null);
 
@@ -1453,7 +1453,7 @@
         {t('pe.valMissing', { n: valReport.missing_in_config.length })}
       </span>
       <span class="faint">{t('pe.valExtra', { n: valReport.extra_in_config.length })}</span>
-      <span class="faint">{t('pe.valScMods', { n: valReport.sc_mod_count })}</span>
+      <span class="faint">{t('pe.valArchiveMods', { n: valReport.archive_mod_count })}</span>
     </div>
     {#if valReport.missing_in_config.length}
       <div class="vallist">

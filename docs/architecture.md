@@ -5,8 +5,8 @@ end to end: *given a pack id, what exactly lands in a client instance, and
 where does every byte come from?* Everything else -- the registry, the panel,
 the harvest -- exists to keep that answer correct without a human re-deriving
 it. Launchers are clients of the HTTP API; the reference deployment serves
-the Nexira launcher, and the SC-archive importer exists because that is where
-the first packs came from, but no component assumes either.
+the Nexira launcher, and the instance-archive importer exists because that is
+where the first packs came from, but no component assumes either.
 
 ## Components
 

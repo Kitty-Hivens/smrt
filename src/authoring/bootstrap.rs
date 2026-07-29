@@ -1,4 +1,4 @@
-//! The bootstrap pass: read an SC archive, stage its mods into the cache +
+//! The bootstrap pass: read an instance archive, stage its mods into the cache +
 //! extras into the pack's static area, and return a starter `PackConfig`.
 //! Modrinth matches become modrinth sources; the rest become smrt_cache /
 //! smrt_static. The caller persists the returned config.
@@ -25,7 +25,7 @@ pub struct BootstrapArgs {
 }
 
 pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConfig> {
-    info!(bytes = archive.len(), "loaded SC archive");
+    info!(bytes = archive.len(), "loaded instance archive");
 
     // The pack id becomes a path segment under storage/packs/<id>/ before the
     // config (the usual id guard) is ever written, so validate it here too: a
@@ -34,7 +34,7 @@ pub async fn bootstrap(args: BootstrapArgs, archive: Vec<u8>) -> Result<PackConf
         bail!("invalid pack id {:?}", args.pack_id);
     }
 
-    // Unzipping the whole SC archive is synchronous, CPU-heavy work; run it on
+    // Unzipping the whole archive is synchronous, CPU-heavy work; run it on
     // the blocking pool so it never stalls an async runtime worker (the public
     // /v1 read API shares them).
     let (mods, extras) = tokio::task::spawn_blocking(move || -> Result<_> {

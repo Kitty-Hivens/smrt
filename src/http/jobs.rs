@@ -41,7 +41,7 @@ fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// Bootstrap-from-archive seeds an official pack from an SC export -- operator
+/// Bootstrap-from-archive seeds an official pack from an instance archive -- operator
 /// content authoring, admin only.
 fn bootstrap_router(state: AppState) -> Router {
     Router::new()
