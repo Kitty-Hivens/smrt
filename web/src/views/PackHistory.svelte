@@ -17,6 +17,7 @@
     onChanged,
     onBuildCommit,
     busy = false,
+    message = $bindable(''),
   }: {
     packId: string;
     status: CommitStatus | null;
@@ -26,9 +27,11 @@
     onChanged: () => void;
     onBuildCommit: (commitId: string) => void;
     busy?: boolean;
+    // Owned by the build console, because the same sentence serves both acts:
+    // committing on its own, and committing as the first half of a build.
+    message?: string;
   } = $props();
 
-  let message = $state('');
   let working = $state(false);
 
   const uncommitted = $derived(status?.uncommitted ?? 0);

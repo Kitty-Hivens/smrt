@@ -406,6 +406,8 @@ export const en = {
     'A build is made from a commit, not from what is on screen: with edits merging live, building the working state could ship a half-typed word. Restoring writes an older state forward as a new commit rather than erasing what came after it.',
 
   'bld.build': 'Build pack',
+  'bld.commitAndBuild': 'Commit and build',
+  'bld.needsMessage': 'This build declares a checkpoint first -- say what changed, above.',
   'bld.building': 'building...',
   'bld.version': 'Pack version',
   'bld.versionPlaceholder': '(auto: base.N)',

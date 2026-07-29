@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api } from '../lib/api';
-  import { notifyFail } from '../lib/toasts.svelte';
+  import { notifyFail, toasts } from '../lib/toasts.svelte';
   import { t } from '../lib/i18n.svelte';
   import type { Commit, CommitStatus, JobStatus } from '../lib/types';
   import JobLog from './JobLog.svelte';
@@ -39,8 +39,37 @@
   // rather than scraped out of the log, so the offer below only appears for a
   // refusal an override can actually answer.
   let blocked = $state<string[]>([]);
+  // The commit message, held here rather than in the history view: a build with
+  // uncommitted work declares the checkpoint itself, so the same sentence is
+  // the one the button uses.
+  let commitMessage = $state('');
+
+  // Whether the next publish has to declare a checkpoint first -- work sitting
+  // uncommitted, or a pack that has never committed at all.
+  const needsCommit = $derived(!status?.head || (status?.uncommitted ?? 0) > 0);
 
   async function build(overrideChecks = false, fromCommit?: string) {
+    // Committing is the first half of building, not a hoop before it. The
+    // mirror refuses a publish that has uncommitted work -- that refusal is the
+    // honest answer for anything driving the API, but nobody should have to
+    // meet it here and press the same button twice.
+    if (!fromCommit && needsCommit) {
+      const text = commitMessage.trim();
+      if (!text) {
+        toasts.push({ kind: 'info', text: t('bld.needsMessage') });
+        return;
+      }
+      busy = true;
+      try {
+        await api.commit(packId, text);
+        commitMessage = '';
+        await refreshHistory();
+      } catch (e) {
+        notifyFail(e);
+        busy = false;
+        return;
+      }
+    }
     busy = true;
     jobId = null;
     blocked = [];
@@ -81,10 +110,11 @@
     {busy}
     onChanged={refreshHistory}
     onBuildCommit={(id) => build(false, id)}
+    bind:message={commitMessage}
   />
   <div class="bar">
     <button class="primary" onclick={() => build()} disabled={busy}>
-      {busy ? t('bld.building') : t('bld.build')}
+      {busy ? t('bld.building') : needsCommit ? t('bld.commitAndBuild') : t('bld.build')}
     </button>
     <label class="ver">
       {t('bld.version')}
