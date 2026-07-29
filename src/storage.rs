@@ -744,32 +744,35 @@ impl Storage {
         atomic_write(&path, &bytes).await
     }
 
-    /// The cached Minecraft version list (#126). `None` when the mirror has
-    /// never fetched one, which is a state and not a failure -- a fresh
+    /// A cached upstream list (#126), by name. `None` when the mirror has never
+    /// fetched this one, which is a state and not a failure -- a fresh
     /// deployment has nothing to fall back on and says so by asking upstream.
-    pub async fn load_minecraft_versions(
+    ///
+    /// A corrupt cache reads as a miss: the list is re-fetchable, and refusing
+    /// to open the editor over a bad file would be the wrong trade.
+    pub async fn load_meta_list<T: serde::de::DeserializeOwned>(
         &self,
-    ) -> Result<Option<crate::authoring::versions::MinecraftVersions>, ApiError> {
-        let path = self.root.join("meta").join("minecraft-versions.json");
+        name: &str,
+    ) -> Result<Option<T>, ApiError> {
+        let path = self.root.join("meta").join(format!("{name}.json"));
         let Ok(bytes) = fs::read(&path).await else {
             return Ok(None);
         };
-        // A corrupt cache is a cache miss: the list is re-fetchable, and
-        // refusing to open the editor over it would be the wrong trade.
         Ok(serde_json::from_slice(&bytes).ok())
     }
 
-    pub async fn save_minecraft_versions(
+    pub async fn save_meta_list<T: serde::Serialize>(
         &self,
-        list: &crate::authoring::versions::MinecraftVersions,
+        name: &str,
+        list: &T,
     ) -> Result<(), ApiError> {
         let dir = self.root.join("meta");
         fs::create_dir_all(&dir)
             .await
             .map_err(|e| ApiError::Internal(anyhow::anyhow!("meta dir: {e}")))?;
         let bytes = serde_json::to_vec(list)
-            .map_err(|e| ApiError::Internal(anyhow::anyhow!("versions json encode: {e}")))?;
-        atomic_write(&dir.join("minecraft-versions.json"), &bytes).await
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("{name} json encode: {e}")))?;
+        atomic_write(&dir.join(format!("{name}.json")), &bytes).await
     }
 
     pub async fn is_sha1_removed(&self, sha1: &str) -> Result<bool, ApiError> {

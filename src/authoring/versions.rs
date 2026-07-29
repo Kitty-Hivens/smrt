@@ -24,6 +24,9 @@ use ts_rs::TS;
 /// is still right about everything anyone is building against.
 const MAX_AGE_SECS: u64 = 6 * 60 * 60;
 
+/// Cache file name for the Minecraft list.
+const MINECRAFT_LIST: &str = "minecraft-versions";
+
 /// A cached list, with the answer to "how old is this?" rather than only the
 /// list -- a stale list is worth serving and worth admitting to.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -44,14 +47,14 @@ pub struct MinecraftVersions {
     pub stale: bool,
 }
 
-fn unix_now() -> u64 {
+pub(super) fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
 
-fn rfc3339(secs: u64) -> String {
+pub(super) fn rfc3339(secs: u64) -> String {
     use time::OffsetDateTime;
     use time::format_description::well_known::Rfc3339;
     OffsetDateTime::from_unix_timestamp(secs as i64)
@@ -64,7 +67,7 @@ fn rfc3339(secs: u64) -> String {
 ///
 /// A timestamp from the future is not fresh: a clock that moved backwards would
 /// otherwise pin a cache forever, and re-fetching is cheap.
-fn is_fresh(fetched_unix: u64) -> bool {
+pub(super) fn is_fresh(fetched_unix: u64) -> bool {
     let now = unix_now();
     fetched_unix <= now && now - fetched_unix < MAX_AGE_SECS
 }
@@ -78,7 +81,8 @@ pub async fn minecraft_versions(
     storage: &Arc<Storage>,
     modrinth: &Arc<Modrinth>,
 ) -> Result<MinecraftVersions> {
-    let cached = storage.load_minecraft_versions().await.ok().flatten();
+    let cached: Option<MinecraftVersions> =
+        storage.load_meta_list(MINECRAFT_LIST).await.ok().flatten();
     if let Some(list) = &cached
         && is_fresh(list.fetched_unix)
     {
@@ -94,7 +98,7 @@ pub async fn minecraft_versions(
                 fetched_unix: now,
                 stale: false,
             };
-            if let Err(e) = storage.save_minecraft_versions(&fresh).await {
+            if let Err(e) = storage.save_meta_list(MINECRAFT_LIST, &fresh).await {
                 tracing::warn!(error = %e, "caching the Minecraft version list failed");
             }
             Ok(fresh)

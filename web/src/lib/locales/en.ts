@@ -136,6 +136,8 @@ export const en = {
   'pe.spoof.drifted': 'The claim no longer matches the server',
   'pe.spoof.matches': 'The claim matches what the server expects.',
   'pe.spoof.none': 'This pack ships no claim.',
+  'pe.loaderRecommended': 'recommended',
+  'pe.loaderLatest': 'latest',
   'pe.basics': 'Basics',
   'pe.displayName': 'Display name',
   'pe.mcVersion': 'Minecraft version',
