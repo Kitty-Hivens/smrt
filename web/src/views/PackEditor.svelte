@@ -8,7 +8,7 @@
   import { arrive, stagger } from '../lib/motion.svelte';
   import { openPackSession, type PackSession } from '../lib/packsession.svelte';
   import { JAVA_MAJORS, suggestedJava } from '../lib/java';
-  import type { MinecraftVersions, SpoofReport } from '../lib/types';
+  import type { LoaderVersions, MinecraftVersions, SpoofReport } from '../lib/types';
   import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
   import { isDebug } from '../lib/roles';
   import type {
@@ -237,6 +237,33 @@
     const typed = cfg.minecraft_version.trim();
     if (!typed || mcVersions.versions.some((v) => v.version === typed)) return null;
     return t(mcVersions.stale ? 'pe.mcUnknownStale' : 'pe.mcUnknown');
+  });
+
+  // Builds of the pack's loader. Re-fetched when the loader changes; a loader
+  // with no published list answers 404, and the field stays free text, which is
+  // what it always was.
+  let loaderList = $state<LoaderVersions | null>(null);
+  let loaderAsked = '';
+  $effect(() => {
+    const name = cfg?.loader.name?.trim().toLowerCase() ?? '';
+    if (!name || name === loaderAsked) return;
+    loaderAsked = name;
+    loaderList = null;
+    api
+      .loaderVersions(name)
+      .then((v) => {
+        if (loaderAsked === name) loaderList = v;
+      })
+      .catch(() => {});
+  });
+  /// What the picker offers: the builds for this pack's Minecraft version, or
+  /// all of them for a loader whose builds do not tie to one. Recommended
+  /// first, then newest -- the order in which a curator wants to see them.
+  const loaderBuilds = $derived.by(() => {
+    const mc = cfg?.minecraft_version?.trim();
+    const all = loaderList?.builds ?? [];
+    const mine = all.filter((b) => !b.minecraft || b.minecraft === mc);
+    return [...mine].sort((a, b) => Number(b.recommended) - Number(a.recommended)).slice(0, 200);
   });
 
   const javaOptions = JAVA_MAJORS.map((v) => ({ value: String(v), label: String(v) }));
@@ -1075,7 +1102,19 @@
             <Field label={t('pe.loaderName')}>
               <Select full bind:value={cfg.loader.name} options={loaderOptions} ariaLabel={t('pe.loaderName')} />
             </Field>
-            <Field label={t('pe.loaderVersion')}><input bind:value={cfg.loader.version} /></Field>
+            <!-- Same shape as the Minecraft field: offers what the mirror
+                 knows, accepts anything. A build published an hour ago, or a
+                 private one, has to stay typeable. -->
+            <Field label={t('pe.loaderVersion')}>
+              <input bind:value={cfg.loader.version} list="loader-builds" />
+              <datalist id="loader-builds">
+                {#each loaderBuilds as b (b.version)}
+                  <option value={b.version}
+                    >{b.recommended ? t('pe.loaderRecommended') : b.latest ? t('pe.loaderLatest') : ''}</option
+                  >
+                {/each}
+              </datalist>
+            </Field>
             <!-- A list, not a number box: the set is closed, and a typed one
                  only announced itself as a launcher that would not start. The
                  hint fires when the choice disagrees with what this pack most

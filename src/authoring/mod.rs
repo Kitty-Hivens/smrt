@@ -17,6 +17,7 @@ pub mod gate;
 pub mod harvest;
 pub mod harvest_sched;
 pub mod jardiff;
+pub mod loaders;
 pub mod mcping;
 pub mod modmeta;
 pub mod modrinth;
@@ -36,6 +37,7 @@ pub use curator::{
 };
 pub use harvest_sched::{HarvestScheduler, HarvestStatus};
 pub use jardiff::{JarDiff, diff_jars};
+pub use loaders::{LoaderVersions, loader_versions};
 pub use mcping::{ServerStatus, status as server_status};
 pub use modrinth::*;
 pub use packdoc::{PackDoc, PackDocs};

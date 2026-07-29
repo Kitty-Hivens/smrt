@@ -135,6 +135,8 @@ export const ru: Dict = {
   'pe.spoof.drifted': 'Заявление больше не совпадает с сервером',
   'pe.spoof.matches': 'Заявление совпадает с тем, чего ждёт сервер.',
   'pe.spoof.none': 'Пак не везёт никакого заявления.',
+  'pe.loaderRecommended': 'рекомендованная',
+  'pe.loaderLatest': 'последняя',
   'pe.basics': 'Основное',
   'pe.displayName': 'Название',
   'pe.mcVersion': 'Версия Minecraft',

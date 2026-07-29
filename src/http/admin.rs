@@ -72,6 +72,7 @@ fn authoring_router(state: AppState) -> Router {
             get(get_pack_config).put(put_pack_config),
         )
         .route("/v1/meta/minecraft", get(get_minecraft_versions))
+        .route("/v1/meta/loaders/{loader}", get(get_loader_versions))
         .route(
             "/v1/authoring/packs/{pack_id}/spoof",
             get(pack_spoof).post(generate_pack_spoof),
@@ -1154,6 +1155,25 @@ async fn pack_events(
     Ok(Sse::new(events)
         .keep_alive(KeepAlive::default())
         .into_response())
+}
+
+/// Every build of a loader a pack can be pinned to (#126).
+///
+/// A loader with no published list -- a fork the registry knows through its
+/// loader chain -- answers 404 rather than an empty list: "nothing to offer" and
+/// "no builds exist" are different, and the field falls back to free text on
+/// the first, which is what it always was.
+async fn get_loader_versions(
+    State(state): State<AppState>,
+    Path(loader): Path<String>,
+) -> Result<Json<crate::authoring::LoaderVersions>, ApiError> {
+    if !crate::authoring::loaders::is_known(&loader) {
+        return Err(ApiError::NotFound);
+    }
+    crate::authoring::loader_versions(&state.storage, &state.modrinth, &loader)
+        .await
+        .map(Json)
+        .map_err(ApiError::Internal)
 }
 
 /// Every Minecraft version a pack can be built against (#126).

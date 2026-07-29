@@ -77,6 +77,35 @@ version section when a release is tagged.
 
 ### Added
 
+- The version fields stop being free text. Java is a list; the Minecraft version
+  and the loader build are offered from lists the mirror holds, and still accept
+  anything typed. A typo used to travel into the manifest and announce itself as
+  a launcher that would not start, a long way from where it was typed.
+  What is offered is never a cage: a build published an hour ago, or a private
+  one, has to remain typeable, so an unknown value is said rather than refused --
+  and when the list itself is out of date the note says that instead of blaming
+  the value. Forge is fetched whole rather than from its promotions file, because
+  the pack this mirror runs is pinned to a build that is neither latest nor
+  recommended; the promotions markers are applied on top, since *recommended* is
+  a fact a typed field cannot carry.
+  Java asks the loader before the Minecraft version: lwjgl3ify and Cleanroom
+  exist to run an old Minecraft on a new Java, and this mirror's own 1.7.10 pack
+  runs Java 21 through the first of them.
+  The lists are held rather than proxied, so opening the editor does not depend
+  on four external services being up, and an outage narrows the offer to what was
+  last known rather than emptying it.
+
+- A pack's handshake claim is written from what its server says, not typed. A
+  1.12.2 server refuses a client whose mod list is not the one it expects, and
+  the file that answers that went stale in silence -- the server bumped its list,
+  the file kept claiming the old one, and the failure arrived as a rejected
+  handshake explaining nothing. The mirror asks the server, writes the claim, and
+  can say afterwards what moved between the two.
+  The claim is not checked against reality, deliberately: a server here demands a
+  library version its author never published, which is why a patched jar was
+  being shipped to satisfy it. Copying the answer verbatim is what lets the
+  genuine build ship instead.
+
 - Two people can edit one pack at the same time. Presence (#113) and the
   revision check (#52) let them see each other and stopped them overwriting each
   other, but the unit of conflict was still the whole pack: one adding mods and

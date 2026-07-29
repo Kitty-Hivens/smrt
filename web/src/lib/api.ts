@@ -16,6 +16,7 @@ import type {
   Health,
   JarDiff,
   JobResult,
+  LoaderVersions,
   ManifestVersionsListing,
   MinecraftVersions,
   ModDetail,
@@ -312,6 +313,11 @@ export const api = {
   // Every Minecraft version a pack can be built against, from the mirror's own
   // copy (#126). Answers even when upstream is down, saying so.
   minecraftVersions: () => getJson<MinecraftVersions>('/v1/meta/minecraft'),
+
+  // Builds of one loader, from the mirror's copy (#126). 404 for a loader with
+  // no published list -- a fork the registry knows but upstream does not.
+  loaderVersions: (loader: string) =>
+    getJson<LoaderVersions>(`/v1/meta/loaders/${encodeURIComponent(loader)}`),
 
   packEventsUrl: (id: string) => `/v1/authoring/packs/${encodeURIComponent(id)}/events`,
 

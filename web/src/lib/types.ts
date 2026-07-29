@@ -148,3 +148,21 @@ export interface SpoofReport {
   unasked?: string | null;
   drift: string[];
 }
+
+// GET /v1/meta/loaders/:loader -- the builds a pack can be pinned to (#126).
+// `minecraft` is absent for loaders whose builds do not tie to one (Fabric,
+// Quilt). `stale` means upstream was unreachable and this is the last known.
+export interface LoaderBuild {
+  version: string;
+  minecraft?: string | null;
+  recommended: boolean;
+  latest: boolean;
+}
+
+export interface LoaderVersions {
+  loader: string;
+  builds: LoaderBuild[];
+  fetched_at: string;
+  fetched_unix: number;
+  stale: boolean;
+}
