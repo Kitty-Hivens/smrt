@@ -36,13 +36,13 @@ FTBQuests, Configured, open-smrt-network-1.21.1 -- have no side). Modrinth
 project env flags (`client_side` / `server_side`) are not requested at all:
 `authoring/modrinth.rs` `Project` deserializes only `{id, slug, title, team}`.
 
-### dependency edges (requires / optional_dep / recommends / conflicts / breaks / provides)
+### dependency edges (requires / optional_dep / recommends / conflicts / provides)
 
 | Producer | Source tag | Notes |
 | --- | --- | --- |
 | Modrinth `version.dependencies` (harvest batch lookup) | `modrinth` | authoritative when non-empty: suppresses jar declaration AND bytecode for that jar (`harvest.rs` `is_modrinth`). Targets in the `modrinth:<project_id>` namespace; pinned `version_id` rides in the range slot. `embedded` yields no edge |
 | `mcmod.info` (`requiredMods` else `dependencies`, filtered) | `jar-meta` | `mcmod_hard_deps` + `filter_deps` + `clean_dep_token`; pseudo-deps (forge/fml/mcp/...) dropped |
-| `mods.toml` / `neoforge.mods.toml` / `fabric.mod.json` | `jar-meta` | typed + version-ranged (`modmeta.rs`); `type`/`mandatory` mapped to RelKind; platform modids dropped. **Not read:** `displayTest`, per-dependency `side` |
+| `mods.toml` / `neoforge.mods.toml` / `fabric.mod.json` | `jar-meta` | typed + version-ranged (`modmeta.rs`); `type`/`mandatory` mapped to RelKind, with an incompatibility's intensity into `severity` -- Forge's `incompatible`/`discouraged` and Fabric's `breaks`/`conflicts` are the same two intensities under opposite names (#129); platform modids dropped. **Not read:** `displayTest`, per-dependency `side` |
 | bytecode package references | `inferred` | class-granularity: one unconditional referencing class makes the prefix hard; conditional = `isModLoaded` Methodref / `@Optional` / plugin-marker Utf8 in the pool. Prefix -> owner via `mod_package`; multi-owner prefixes dropped; `INTEGRATION_HOSTS` (item viewers/probes) downgraded to optional at write (bd3b4ce) |
 | pack `display.incompatible_with` | `curator` | mod-level mutual conflicts |
 | operator CLI / panel | `authored` | precious |

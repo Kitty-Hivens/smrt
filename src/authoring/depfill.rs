@@ -692,6 +692,7 @@ mod tests {
                 "modb",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -747,6 +748,7 @@ mod tests {
                 "modb",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -799,6 +801,7 @@ mod tests {
                 "modb",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -840,6 +843,7 @@ mod tests {
                 "modb",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -944,6 +948,7 @@ mod tests {
                 "netlib",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -954,6 +959,7 @@ mod tests {
                 "modb",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -991,6 +997,7 @@ mod tests {
                 "oldlib",
                 Some("[2.0,)"),
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -1031,6 +1038,7 @@ mod tests {
                 "ctm",
                 None,
                 RelKind::Requires,
+                None,
                 Source::Inferred,
                 NOW,
             )?;
@@ -1063,6 +1071,7 @@ mod tests {
                 "modr",
                 None,
                 RelKind::Recommends,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;

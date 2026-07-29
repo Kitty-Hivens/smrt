@@ -14,7 +14,8 @@ use crate::authoring::{JarDiff, diff_jars, reconstruct_config};
 use crate::domain::DeclaredAsset;
 use crate::registry::model::{
     BuildModRow, BuildSummary, EligibleArtifact, GraphData, GraphSlice, ModSummary, ModUse,
-    ModrinthProjectName, OrphanJar, RegistryStats, RelKind, ReleaseRow, UnassignedJar, VersionRow,
+    ModrinthProjectName, OrphanJar, RegistryStats, RelKind, ReleaseRow, Severity, UnassignedJar,
+    VersionRow,
 };
 use crate::registry::{authored, queries};
 use crate::state::AppState;
@@ -508,6 +509,11 @@ struct RelationBody {
     from_mod_id: i64,
     target_modid: String,
     kind: String,
+    /// `hard` | `soft`, for a conflict. Absent reads as hard: an incompatibility
+    /// whose intensity nobody stated is the one to surface (#129). Ignored for
+    /// every other kind, which carries no intensity.
+    #[serde(default)]
+    severity: Option<String>,
     #[serde(default)]
     remove: bool,
 }
@@ -523,9 +529,16 @@ async fn post_relation(
 ) -> Result<StatusCode, ApiError> {
     let kind = RelKind::parse(&b.kind)
         .ok_or_else(|| ApiError::BadRequest(format!("unknown relation kind {:?}", b.kind)))?;
+    let severity = match b.severity.as_deref() {
+        None => None,
+        Some(s) => Some(
+            Severity::parse(s)
+                .ok_or_else(|| ApiError::BadRequest(format!("unknown severity {s:?}")))?,
+        ),
+    };
     let (from, target, remove) = (b.from_mod_id, b.target_modid.clone(), b.remove);
     run_write(&state, move |reg| {
-        reg.author_relation(b.from_mod_id, &b.target_modid, kind, b.remove)
+        reg.author_relation(b.from_mod_id, &b.target_modid, kind, severity, b.remove)
     })
     .await?;
     let action = if remove {

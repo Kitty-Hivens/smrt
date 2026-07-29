@@ -689,6 +689,7 @@ mod tests {
                 "absentmod",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;

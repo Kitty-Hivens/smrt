@@ -20,7 +20,7 @@ use super::classfile::parse_class;
 use super::curator::{JarFacts, McModInfo, clean_mc_version, mcmod_modids, parse_mcmod_info};
 use super::modmeta;
 use super::modrinth::{Modrinth, Project};
-use crate::registry::model::{RelKind, Source};
+use crate::registry::model::{RelKind, Severity, Source};
 use crate::registry::{Registry, queries, upsert};
 use crate::storage::Storage;
 use anyhow::Result;
@@ -80,7 +80,7 @@ pub struct JarSeed {
     // Modern declared deps (mods.toml / neoforge.mods.toml / fabric.mod.json):
     // typed, version-ranged. Emitted for a non-Modrinth jar; the target modid,
     // its relation kind, and an optional version range.
-    pub declared_deps: Vec<(String, RelKind, Option<String>)>,
+    pub declared_deps: Vec<(String, RelKind, Option<Severity>, Option<String>)>,
     // JVM runtime languages (scala/kotlin) the jar needs on the classpath but a
     // modern-fork loader does not bundle, and those it provides itself. Emitted
     // as `runtime:<lang>` capability requires/provides so the resolver flags a
@@ -383,11 +383,12 @@ fn external_dep_selector(conn: &Connection, file_name: &str) -> Result<Option<St
 /// Map a Modrinth `dependency_type` to a relation kind. `embedded` (a bundled
 /// jar-in-jar library) is not an external requirement and yields no edge; an
 /// unknown type is ignored.
-fn modrinth_rel_kind(dep_type: &str) -> Option<RelKind> {
+fn modrinth_rel_kind(dep_type: &str) -> Option<(RelKind, Option<Severity>)> {
     match dep_type {
-        "required" => Some(RelKind::Requires),
-        "optional" => Some(RelKind::OptionalDep),
-        "incompatible" => Some(RelKind::Conflicts),
+        "required" => Some((RelKind::Requires, None)),
+        "optional" => Some((RelKind::OptionalDep, None)),
+        // Modrinth has one incompatibility and means the hard one by it
+        "incompatible" => Some((RelKind::Conflicts, Some(Severity::Hard))),
         _ => None,
     }
 }
@@ -566,7 +567,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
     let mut derivations: Vec<(i64, i64, &JarSeed)> = Vec::new();
 
     // external Modrinth deps deferred past jar registration (the hybrid case)
-    let mut external_deps: Vec<(i64, i64, RelKind, String)> = Vec::new();
+    let mut external_deps: Vec<(i64, i64, RelKind, Option<Severity>, String)> = Vec::new();
     let mut no_identity = 0usize;
     for jar in &scan.jars {
         // Per-jar classification, keyed by content hash -- recorded for every
@@ -692,7 +693,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
             // so when a dual-metadata jar declares the same target in both its
             // manifest and its mcmod.info, the first write occupies the slot --
             // and the loader-enforced manifest is the one that should.
-            for (target, kind, range) in &jar.declared_deps {
+            for (target, kind, severity, range) in &jar.declared_deps {
                 if upsert::upsert_relation_ranked(
                     conn,
                     mod_id,
@@ -700,6 +701,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                     target,
                     range.as_deref(),
                     *kind,
+                    *severity,
                     Source::JarMeta,
                     MANIFEST_DEP_RANK,
                     now,
@@ -715,6 +717,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                     dep,
                     None,
                     RelKind::Requires,
+                    None,
                     Source::JarMeta,
                     now,
                 )?;
@@ -749,6 +752,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                 &format!("loader:{carried}"),
                 None,
                 RelKind::Provides,
+                None,
                 Source::Harvested,
                 now,
             )?
@@ -772,6 +776,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                 &format!("runtime:{rt}"),
                 None,
                 RelKind::Provides,
+                None,
                 Source::Inferred,
                 now,
             )?;
@@ -784,6 +789,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                 &format!("runtime:{rt}"),
                 None,
                 RelKind::Requires,
+                None,
                 Source::Inferred,
                 now,
             )?;
@@ -791,7 +797,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
 
         if let Some(pid) = jar.project_id.as_deref() {
             for dep in &jar.modrinth_deps {
-                let Some(kind) = modrinth_rel_kind(&dep.dep_type) else {
+                let Some((kind, severity)) = modrinth_rel_kind(&dep.dep_type) else {
                     continue;
                 };
                 let (target, range) = match (&dep.project_id, &dep.file_name) {
@@ -804,7 +810,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                     (None, Some(fname)) => {
                         // resolved after the loop: the filename bridge needs
                         // every jar registered first
-                        external_deps.push((mod_id, mod_version_id, kind, fname.clone()));
+                        external_deps.push((mod_id, mod_version_id, kind, severity, fname.clone()));
                         continue;
                     }
                     (None, None) => continue, // nothing to key the target on
@@ -816,6 +822,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                     &target,
                     range,
                     kind,
+                    severity,
                     Source::Modrinth,
                     now,
                 )? {
@@ -866,6 +873,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                         &target,
                         None,
                         RelKind::OptionalDep,
+                        None,
                         Source::Inferred,
                         now,
                     )?
@@ -883,6 +891,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                     &target,
                     None,
                     RelKind::Requires,
+                    None,
                     Source::Inferred,
                     now,
                 )?
@@ -909,6 +918,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                     &target,
                     None,
                     RelKind::OptionalDep,
+                    None,
                     Source::Inferred,
                     now,
                 )?
@@ -961,6 +971,8 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                     b_modid,
                     None,
                     RelKind::Conflicts,
+                    // a curator writing `incompatible_with` means the hard one
+                    Some(Severity::Hard),
                     Source::Curator,
                     now,
                 )?;
@@ -976,6 +988,8 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
                     a_modid,
                     None,
                     RelKind::Conflicts,
+                    // a curator writing `incompatible_with` means the hard one
+                    Some(Severity::Hard),
                     Source::Curator,
                     now,
                 )?;
@@ -1061,7 +1075,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
     // External Modrinth deps (the hybrid case) resolve once every jar is
     // registered: the filename bridge needs the full artifact table, and the
     // identity folds above may have just settled the selector it lands on.
-    for (from_mod, from_mv, kind, fname) in &external_deps {
+    for (from_mod, from_mv, kind, severity, fname) in &external_deps {
         let target =
             external_dep_selector(conn, fname)?.unwrap_or_else(|| format!("external:{fname}"));
         if upsert::upsert_relation(
@@ -1071,6 +1085,7 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
             &target,
             None,
             *kind,
+            *severity,
             Source::Modrinth,
             now,
         )? {
@@ -1514,7 +1529,7 @@ pub async fn scan(
                     .map(|m| {
                         m.deps
                             .iter()
-                            .map(|d| (d.modid.clone(), d.kind, d.version_range.clone()))
+                            .map(|d| (d.modid.clone(), d.kind, d.severity, d.version_range.clone()))
                             .collect()
                     })
                     .unwrap_or_default(),
@@ -2020,6 +2035,7 @@ mod tests {
                 "somedep",
                 None,
                 crate::registry::model::RelKind::Requires,
+                None,
                 crate::registry::model::Source::Modrinth,
                 "T0",
             )?;
@@ -2293,7 +2309,7 @@ mod tests {
         let mut s = dseed(sha, modid, &[], &[], &[], None);
         s.declared_deps = deps
             .iter()
-            .map(|(m, k, v)| (m.to_string(), *k, v.map(String::from)))
+            .map(|(m, k, v)| (m.to_string(), *k, None, v.map(String::from)))
             .collect();
         s
     }
@@ -2508,7 +2524,7 @@ mod tests {
         // a real bytecode reference AND a jar declaration that would each be an edge
         // if not suppressed -- Modrinth's version.dependencies is the sole source
         moda.hard_refs = vec!["appeng/api".into()];
-        moda.declared_deps = vec![("suppressed".into(), RelKind::Requires, None)];
+        moda.declared_deps = vec![("suppressed".into(), RelKind::Requires, None, None)];
         let scan = ScanData {
             jars: vec![
                 moda,
