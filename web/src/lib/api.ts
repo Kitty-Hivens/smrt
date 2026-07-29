@@ -308,6 +308,26 @@ export const api = {
   // What is happening to a pack while it is open: who else is in it, and that it
   // moved. Subscribing is also how the mirror learns you are here.
   packEventsUrl: (id: string) => `/v1/authoring/packs/${encodeURIComponent(id)}/events`,
+
+  // The pack's merge document (#115). Binary both ways: these are CRDT updates,
+  // not configs, and base64 would only be the room's problem (server-sent events
+  // being a text protocol).
+  async packDocState(id: string): Promise<Uint8Array> {
+    const r = await fetch(`/v1/authoring/packs/${encodeURIComponent(id)}/doc`, {
+      credentials: 'include',
+    });
+    if (!r.ok) throw await toError(r);
+    return new Uint8Array(await r.arrayBuffer());
+  },
+  async sendPackDoc(id: string, update: Uint8Array): Promise<void> {
+    const r = await fetch(`/v1/authoring/packs/${encodeURIComponent(id)}/doc`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: update as unknown as BodyInit,
+    });
+    if (!r.ok) throw await toError(r);
+  },
   jobStatus: (jobId: string) => getJson<JobResult>(`/v1/jobs/${encodeURIComponent(jobId)}`),
 
   // ── published manifest (preview baseline + version diff) ──
