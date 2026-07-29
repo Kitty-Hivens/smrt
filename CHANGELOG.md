@@ -13,8 +13,9 @@ version section when a release is tagged.
   screen. With edits merging live, building the working state could ship a
   half-typed word and the pre-publish check judged something that moved while
   it was judging it. A publish takes the head of the history and refuses when
-  work sits uncommitted, saying how much; an older commit can be built again
-  by name. The manifest records the commit it came from, so what shipped in a
+  work sits uncommitted, saying how much; in the panel that is one press --
+  the build declares the checkpoint from the message already on screen. An
+  older commit can be built again by name. The manifest records the commit it came from, so what shipped in a
   given version is answerable from the manifest alone.
   History is linear and append-only: restoring writes an older state forward
   as a new commit rather than rewinding, so no build ends up naming a commit
