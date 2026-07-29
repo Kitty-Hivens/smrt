@@ -72,7 +72,10 @@ fn authoring_router(state: AppState) -> Router {
             get(get_pack_config).put(put_pack_config),
         )
         .route("/v1/meta/minecraft", get(get_minecraft_versions))
-        .route("/v1/authoring/packs/{pack_id}/spoof", get(pack_spoof))
+        .route(
+            "/v1/authoring/packs/{pack_id}/spoof",
+            get(pack_spoof).post(generate_pack_spoof),
+        )
         .route("/v1/authoring/packs/{pack_id}/events", get(pack_events))
         .route(
             "/v1/authoring/packs/{pack_id}/doc",
@@ -301,7 +304,7 @@ async fn pack_spoof(
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
 ) -> Result<Json<SpoofReport>, ApiError> {
-    use crate::authoring::spoof::{Spoof, drift, spoof_from_status};
+    use crate::authoring::spoof::{Spoof, drift};
     if !super::auth::may_author(&identity, &pack_id) {
         return Err(ApiError::Forbidden);
     }
@@ -326,37 +329,7 @@ async fn pack_spoof(
     // Which server this pack joins. Without one there is nothing to compare
     // against, and the shipped claim is reported alone rather than judged.
     let server_id = cfg.auth.as_ref().and_then(|a| a.server_id.clone());
-    let mut current = None;
-    let mut asked = None;
-    // Why there is nothing to compare against, when there is nothing. Four
-    // different situations used to look identical -- an empty report -- and they
-    // call for four different things: name a server, add it to the registry,
-    // record its address, or wait for it to come back up.
-    let unasked = match &server_id {
-        None => Some("this pack names no server, so there is nothing it has to match"),
-        Some(id) => match state.storage.load_server(id).await {
-            Err(_) => Some("this pack names a server the mirror has no entry for"),
-            Ok(entry) => match entry.address.as_deref().and_then(split_address) {
-                None => Some("that server has no address recorded, so there is nothing to ask"),
-                Some((host, port)) => match crate::authoring::server_status(&host, port).await {
-                    Ok(status) => {
-                        asked = Some(format!("{host}:{port}"));
-                        current = spoof_from_status(&status).ok();
-                        // A server that answers without advertising is not a
-                        // server with no mods, and a claim must not be built
-                        // from its silence.
-                        current
-                            .is_none()
-                            .then_some("that server answered without advertising a mod list")
-                    }
-                    Err(e) => {
-                        tracing::warn!(pack_id, error = %format!("{e:#}"), "asking the pack's server failed");
-                        Some("that server could not be reached just now")
-                    }
-                },
-            },
-        },
-    };
+    let (current, asked, unasked) = ask_packs_server(&state, &cfg).await;
 
     let moved = match (&shipped, &current) {
         (Some(a), Some(b)) => drift(a, b),
@@ -382,6 +355,142 @@ fn split_address(address: &str) -> Option<(String, u16)> {
         Some((h, p)) => p.parse::<u16>().ok().map(|port| (h.to_string(), port)),
         None => Some((address.to_string(), 25565)),
     }
+}
+
+/// Where the pack's claim has to come from, and what that server says now.
+/// Shared by the report and the write, so the two cannot disagree about which
+/// server a pack answers to.
+async fn ask_packs_server(
+    state: &AppState,
+    cfg: &crate::domain::PackConfig,
+) -> (
+    Option<crate::authoring::spoof::Spoof>,
+    Option<String>,
+    Option<&'static str>,
+) {
+    use crate::authoring::spoof::spoof_from_status;
+    let Some(id) = cfg.auth.as_ref().and_then(|a| a.server_id.as_deref()) else {
+        return (
+            None,
+            None,
+            Some("this pack names no server, so there is nothing it has to match"),
+        );
+    };
+    let Ok(entry) = state.storage.load_server(id).await else {
+        return (
+            None,
+            None,
+            Some("this pack names a server the mirror has no entry for"),
+        );
+    };
+    let Some((host, port)) = entry.address.as_deref().and_then(split_address) else {
+        return (
+            None,
+            None,
+            Some("that server has no address recorded, so there is nothing to ask"),
+        );
+    };
+    match crate::authoring::server_status(&host, port).await {
+        Ok(status) => {
+            let asked = Some(format!("{host}:{port}"));
+            match spoof_from_status(&status) {
+                Ok(spoof) => (Some(spoof), asked, None),
+                Err(_) => (
+                    None,
+                    asked,
+                    Some("that server answered without advertising a mod list"),
+                ),
+            }
+        }
+        Err(e) => {
+            tracing::warn!(pack = %cfg.pack_id, error = %format!("{e:#}"), "asking the pack's server failed");
+            (
+                None,
+                None,
+                Some("that server could not be reached just now"),
+            )
+        }
+    }
+}
+
+/// Where a generated claim is written under the pack's static tree. Its own
+/// directory: this file is the mirror's output, not something a curator placed,
+/// and a regeneration overwrites it without touching anything hand-uploaded.
+const SPOOF_REL_PATH: &str = "_generated/hidemymods-spoof.json";
+
+/// Write the pack's handshake claim from what its server says now (#110).
+///
+/// Replaces the shipped file rather than merging with it: the claim is the
+/// server's list, whole, and a claim half-derived from two moments in time is
+/// the stale file this exists to abolish.
+async fn generate_pack_spoof(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+) -> Result<Json<SpoofReport>, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    let _guard = state.storage.lock_pack_config(&pack_id).await;
+    let mut cfg = state.storage.load_pack_config(&pack_id).await?;
+    let (current, asked, unasked) = ask_packs_server(&state, &cfg).await;
+    let Some(spoof) = current else {
+        return Err(ApiError::BadRequest(
+            unasked
+                .unwrap_or("there is nothing to write a claim from")
+                .to_string(),
+        ));
+    };
+
+    let bytes = serde_json::to_vec_pretty(&spoof)
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("encoding the claim: {e}")))?;
+    state
+        .storage
+        .save_pack_static(&pack_id, SPOOF_REL_PATH, &bytes)
+        .await?;
+
+    // Declared once and kept: a second row writing the same destination is the
+    // duplicate the config refuses, and re-pointing the existing one is what a
+    // regeneration means anyway.
+    let declaration = crate::domain::DeclaredAsset {
+        dest: SPOOF_DEST.to_string(),
+        required: true,
+        source: crate::domain::SourceDecl::SmrtStatic {
+            rel_path: SPOOF_REL_PATH.to_string(),
+        },
+        display: None,
+    };
+    match cfg.assets.iter_mut().find(|a| a.dest == SPOOF_DEST) {
+        Some(existing) => *existing = declaration,
+        None => cfg.assets.push(declaration),
+    }
+
+    // An operator action that rewrites the config has to settle the live
+    // document, exactly as a revert does: it would otherwise put back the
+    // version its editors still hold and undo this.
+    state.docs.forget(&pack_id);
+    let server_id = cfg.auth.as_ref().and_then(|a| a.server_id.clone());
+    let (_, _) = store_edited_config(&state, &pack_id, cfg, &identity.login, false).await?;
+    audit(
+        &state,
+        &identity,
+        "pack.spoof",
+        Some(&pack_id),
+        Some(&format!(
+            "{} mods claimed from {}",
+            spoof.mods.len(),
+            asked.as_deref().unwrap_or("its server")
+        )),
+    )
+    .await;
+    Ok(Json(SpoofReport {
+        shipped: Some(spoof.clone()),
+        current: Some(spoof),
+        server_id,
+        asked,
+        unasked: None,
+        drift: Vec::new(),
+    }))
 }
 
 /// What a pack claims, what its server wants, and the difference.
