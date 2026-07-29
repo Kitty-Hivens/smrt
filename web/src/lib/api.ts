@@ -33,6 +33,7 @@ import type {
   ResolveReport,
   ServerEntry,
   ServerListing,
+  SpoofReport,
   UnassignedJar,
   UploadRow,
   UserRow,
@@ -313,6 +314,19 @@ export const api = {
   minecraftVersions: () => getJson<MinecraftVersions>('/v1/meta/minecraft'),
 
   packEventsUrl: (id: string) => `/v1/authoring/packs/${encodeURIComponent(id)}/events`,
+
+  // The pack's handshake claim: what it ships, what its server wants now, and
+  // the difference (#110). The POST rewrites it from the server's answer.
+  packSpoof: (id: string) =>
+    getJson<SpoofReport>(`/v1/authoring/packs/${encodeURIComponent(id)}/spoof`),
+  async generatePackSpoof(id: string): Promise<SpoofReport> {
+    const r = await fetch(`/v1/authoring/packs/${encodeURIComponent(id)}/spoof`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!r.ok) throw await toError(r);
+    return (await r.json()) as SpoofReport;
+  },
 
   // The pack's merge document (#115). Binary both ways: these are CRDT updates,
   // not configs, and base64 would only be the room's problem (server-sent events

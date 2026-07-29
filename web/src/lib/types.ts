@@ -132,3 +132,19 @@ export interface MinecraftVersions {
   fetched_unix: number;
   stale: boolean;
 }
+
+// GET/POST /v1/authoring/packs/:id/spoof -- the FML handshake claim a pack
+// ships against what its server expects now (#110). `unasked` present means
+// the server was not asked, or said nothing usable, and explains which.
+export interface Spoof {
+  mods: { id: string; version: string }[];
+}
+
+export interface SpoofReport {
+  shipped?: Spoof | null;
+  current?: Spoof | null;
+  server_id?: string | null;
+  asked?: string | null;
+  unasked?: string | null;
+  drift: string[];
+}
