@@ -8,7 +8,7 @@
   import { arrive, stagger } from '../lib/motion.svelte';
   import { openPackSession, type PackSession } from '../lib/packsession.svelte';
   import { JAVA_MAJORS, suggestedJava } from '../lib/java';
-  import type { MinecraftVersions } from '../lib/types';
+  import type { MinecraftVersions, SpoofReport } from '../lib/types';
   import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
   import { isDebug } from '../lib/roles';
   import type {
@@ -247,6 +247,44 @@
     if (want === null || want === cfg.java_major) return null;
     return t('pe.javaHint', { want: String(want) });
   });
+
+  // The handshake claim and its drift. Loaded on demand: it asks a game server,
+  // which is slower than everything else here and pointless for a pack that
+  // names none.
+  let spoof = $state<SpoofReport | null>(null);
+  let spoofBusy = $state(false);
+
+  async function checkSpoof() {
+    spoofBusy = true;
+    try {
+      spoof = await api.packSpoof(packId);
+    } catch (e) {
+      fail(e);
+    } finally {
+      spoofBusy = false;
+    }
+  }
+
+  /// Rewrites the shipped claim from what the server says now. Confirmed first:
+  /// it replaces a file the pack ships and touches the config, which is a
+  /// different weight of action from looking.
+  async function generateSpoof() {
+    const ok = await dialogs.confirm(t('pe.spoof.confirm'), { title: t('pe.spoof.title') });
+    if (!ok) return;
+    spoofBusy = true;
+    try {
+      spoof = await api.generatePackSpoof(packId);
+      // the config gained (or re-pointed) an asset row, and the mirror settled
+      // the document to do it -- so this editor rejoins rather than carrying on
+      // against a session that is gone
+      await load();
+      toasts.push({ kind: 'info', text: t('pe.spoof.written') });
+    } catch (e) {
+      fail(e);
+    } finally {
+      spoofBusy = false;
+    }
+  }
 
   let revertVersions = $state<string[]>([]);
   let revertPick = $state('');
@@ -1218,6 +1256,44 @@
           </div>
         </Section>
 
+        <!-- The handshake claim (#110). A 1.12.2 server refuses a client whose
+             mod list is not the one it expects, and the file that answers that
+             was typed by hand and went stale in silence. Here it is derived,
+             and the difference is visible before a player finds it. -->
+        <Section title={t('pe.spoof.title')}>
+          <p class="muted hint">{t('pe.spoof.hint')}</p>
+          {#if spoof}
+            {#if spoof.unasked}
+              <p class="muted">{spoof.unasked}</p>
+            {:else}
+              <p class="muted">
+                {t('pe.spoof.asked', {
+                  where: spoof.asked ?? '',
+                  n: String(spoof.current?.mods.length ?? 0),
+                })}
+              </p>
+            {/if}
+            {#if spoof.drift.length}
+              <div class="gate">
+                <h4>{t('pe.spoof.drifted')}</h4>
+                <ul>
+                  {#each spoof.drift as line (line)}<li>{line}</li>{/each}
+                </ul>
+              </div>
+            {:else if spoof.shipped && spoof.current}
+              <p class="ok">{t('pe.spoof.matches')}</p>
+            {:else if !spoof.shipped}
+              <p class="muted">{t('pe.spoof.none')}</p>
+            {/if}
+          {/if}
+          <div class="spoofbar">
+            <button onclick={checkSpoof} disabled={spoofBusy}>{t('pe.spoof.check')}</button>
+            <button class="primary" onclick={generateSpoof} disabled={spoofBusy || !spoof?.current}>
+              {t('pe.spoof.generate')}
+            </button>
+          </div>
+        </Section>
+
         <Section title={t('pe.card.title')}>
           <div class="card">
             <Field label={t('pe.card.icon')} wide error={say(urlError(cfg.pack_meta.icon_url ?? ''))}>
@@ -1419,6 +1495,33 @@
   .card {
     display: grid;
     gap: var(--space-3) var(--space-4);
+  }
+  .spoofbar {
+    display: flex;
+    gap: var(--space-3);
+    margin-top: var(--space-3);
+  }
+  .gate {
+    border: 1px solid var(--danger);
+    border-left-width: 3px;
+    padding: 10px 14px;
+    margin: 10px 0 0;
+    max-width: 720px;
+  }
+  .gate h4 {
+    margin: 0;
+    font-size: var(--fs-sm);
+    color: var(--danger);
+  }
+  .gate ul {
+    margin: 8px 0 0;
+    padding-left: 18px;
+    font-size: var(--fs-sm);
+    line-height: 1.6;
+  }
+  .ok {
+    color: var(--ok);
+    font-size: var(--fs-sm);
   }
   .javahint {
     grid-column: 1 / -1;
