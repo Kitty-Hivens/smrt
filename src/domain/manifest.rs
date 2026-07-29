@@ -48,6 +48,14 @@ pub struct PackManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub checks: Option<BuildChecks>,
+    /// The commit this build was made from (#122), so a published build is
+    /// reproducible: the config it came from is a stored snapshot rather than
+    /// whatever happened to be on screen at that instant. Absent on builds made
+    /// straight from the live config -- the CLI's `--config <file>`, and every
+    /// build made before history landed -- so the schema version stays at 2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub built_from: Option<String>,
     pub minecraft: MinecraftSpec,
     pub loader: LoaderSpec,
     pub java: JavaSpec,

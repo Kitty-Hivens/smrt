@@ -112,6 +112,7 @@ mod tests {
             generated_at: "now".into(),
             fingerprint: None,
             checks: None,
+            built_from: None,
             minecraft: MinecraftSpec {
                 version: "1.12.2".into(),
             },

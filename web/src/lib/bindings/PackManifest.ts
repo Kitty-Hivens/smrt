@@ -39,7 +39,15 @@ fingerprint?: string,
  * the pre-publish check found nothing to say (and on every manifest built
  * before the check landed), so the schema version stays at 2.
  */
-checks?: BuildChecks, minecraft: MinecraftSpec, loader: LoaderSpec, java: JavaSpec, 
+checks?: BuildChecks, 
+/**
+ * The commit this build was made from (#122), so a published build is
+ * reproducible: the config it came from is a stored snapshot rather than
+ * whatever happened to be on screen at that instant. Absent on builds made
+ * straight from the live config -- the CLI's `--config <file>`, and every
+ * build made before history landed -- so the schema version stays at 2.
+ */
+built_from?: string, minecraft: MinecraftSpec, loader: LoaderSpec, java: JavaSpec, 
 /**
  * See [`AuthSpec`]. Absent = no auth precondition.
  */

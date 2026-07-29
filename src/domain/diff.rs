@@ -242,6 +242,7 @@ mod tests {
             generated_at: "T".into(),
             fingerprint: Some(format!("fp-{version}-{loader}")),
             checks: None,
+            built_from: None,
             minecraft: MinecraftSpec {
                 version: "1.21.1".into(),
             },
