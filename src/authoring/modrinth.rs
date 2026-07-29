@@ -3,6 +3,7 @@ use reqwest::{Client, redirect::Policy};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
+use ts_rs::TS;
 
 const MODRINTH_BASE: &str = "https://api.modrinth.com";
 const USER_AGENT: &str = "Kitty-Hivens/smrt-pack (+https://github.com/Kitty-Hivens/smrt)";
@@ -119,6 +120,26 @@ impl Modrinth {
         }
         let p: ProjectIcon = resp.json().await.context("decode project")?;
         Ok(p.icon_url.filter(|s| !s.is_empty()))
+    }
+
+    /// Every Minecraft version Modrinth knows, newest first.
+    ///
+    /// A tag endpoint rather than a Mojang service: this mirror already talks to
+    /// Modrinth, and the list a mod site indexes is the list a pack can be built
+    /// against, which is the question being asked.
+    pub async fn game_versions(&self) -> Result<Vec<GameVersion>> {
+        let resp = self
+            .http
+            .get(format!("{}/v2/tag/game_version", self.base))
+            .send()
+            .await
+            .context("game version tag get")?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("modrinth game_version HTTP {status}: {body}"));
+        }
+        resp.json().await.context("decode game versions")
     }
 
     /// Batch version lookup by version id, chunked like the sha1 lookup. Ids with
@@ -385,6 +406,20 @@ impl Modrinth {
 struct VersionFilesRequest<'a> {
     hashes: &'a [String],
     algorithm: &'static str,
+}
+
+/// One Minecraft version as Modrinth indexes it. `version_type` separates a
+/// release from a snapshot, which is the difference between what a pack is
+/// normally built against and what almost nothing is mirrored for.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct GameVersion {
+    pub version: String,
+    pub version_type: String,
+    pub date: String,
+    /// Modrinth's own marker for a version worth showing first in a picker.
+    #[serde(default)]
+    pub major: bool,
 }
 
 #[derive(Deserialize)]

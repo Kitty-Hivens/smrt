@@ -26,6 +26,7 @@ pub mod reconstruct;
 pub mod resolve;
 pub mod search;
 pub mod validate;
+pub mod versions;
 
 pub use bootstrap::{BootstrapArgs, bootstrap};
 pub use build::{Built, build_manifest, make_pack_summary};
@@ -42,3 +43,4 @@ pub use reconstruct::reconstruct_config;
 pub use resolve::{ResolveReport, pack_graph, resolve_pack};
 pub use search::{ModHit, PackContext, search_mods};
 pub use validate::{ValidateReport, validate};
+pub use versions::{MinecraftVersions, minecraft_versions};

@@ -744,6 +744,34 @@ impl Storage {
         atomic_write(&path, &bytes).await
     }
 
+    /// The cached Minecraft version list (#126). `None` when the mirror has
+    /// never fetched one, which is a state and not a failure -- a fresh
+    /// deployment has nothing to fall back on and says so by asking upstream.
+    pub async fn load_minecraft_versions(
+        &self,
+    ) -> Result<Option<crate::authoring::versions::MinecraftVersions>, ApiError> {
+        let path = self.root.join("meta").join("minecraft-versions.json");
+        let Ok(bytes) = fs::read(&path).await else {
+            return Ok(None);
+        };
+        // A corrupt cache is a cache miss: the list is re-fetchable, and
+        // refusing to open the editor over it would be the wrong trade.
+        Ok(serde_json::from_slice(&bytes).ok())
+    }
+
+    pub async fn save_minecraft_versions(
+        &self,
+        list: &crate::authoring::versions::MinecraftVersions,
+    ) -> Result<(), ApiError> {
+        let dir = self.root.join("meta");
+        fs::create_dir_all(&dir)
+            .await
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("meta dir: {e}")))?;
+        let bytes = serde_json::to_vec(list)
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("versions json encode: {e}")))?;
+        atomic_write(&dir.join("minecraft-versions.json"), &bytes).await
+    }
+
     pub async fn is_sha1_removed(&self, sha1: &str) -> Result<bool, ApiError> {
         let path = self.root.join("removed.txt");
         let content = match fs::read_to_string(&path).await {
