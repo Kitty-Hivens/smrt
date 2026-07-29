@@ -467,7 +467,7 @@ pub fn relations_for_artifact(
     from_mod_id: i64,
 ) -> Result<Vec<RelationRow>> {
     let mut stmt = conn.prepare(
-        "SELECT target_modid, target_version_range, kind, source, confidence
+        "SELECT target_modid, target_version_range, kind, source, confidence, severity
          FROM relation
          WHERE from_mod_version_id = ?1
             OR (from_mod_version_id IS NULL AND from_mod_id = ?2)
@@ -485,6 +485,10 @@ pub fn relations_for_artifact(
             target: r.get(0)?,
             version_range: r.get(1)?,
             kind,
+            severity: r
+                .get::<_, Option<String>>(5)?
+                .as_deref()
+                .and_then(Severity::parse),
             source,
             confidence: r.get(4)?,
         });
@@ -499,7 +503,7 @@ pub fn relations_for_artifact(
 /// whose `kind`/`source` cell is unrecognised is skipped, not fatal.
 pub fn relations_from(conn: &Connection, from_mod_id: i64) -> Result<Vec<RelationRow>> {
     let mut stmt = conn.prepare(
-        "SELECT target_modid, target_version_range, kind, source, confidence
+        "SELECT target_modid, target_version_range, kind, source, confidence, severity
          FROM relation
          WHERE from_mod_id = ?1
          ORDER BY confidence DESC, id",
@@ -516,6 +520,10 @@ pub fn relations_from(conn: &Connection, from_mod_id: i64) -> Result<Vec<Relatio
             target: r.get(0)?,
             version_range: r.get(1)?,
             kind,
+            severity: r
+                .get::<_, Option<String>>(5)?
+                .as_deref()
+                .and_then(Severity::parse),
             source,
             confidence: r.get(4)?,
         });
@@ -549,18 +557,20 @@ pub fn repack_counterpart(conn: &Connection, sha1: &str) -> Result<Option<(Strin
 /// view is of the dependency/conflict graph, not the full mod list. The registry
 /// is single-operator-sized, so building it in Rust is fine.
 pub fn graph(conn: &Connection) -> Result<GraphData> {
-    let raw: Vec<(i64, String, String, String)> = {
+    let raw: Vec<(i64, String, String, Option<String>, String)> = {
         let mut stmt = conn.prepare(
-            "SELECT from_mod_id, target_modid, kind, source FROM relation
+            "SELECT from_mod_id, target_modid, kind, severity, source FROM relation
              ORDER BY from_mod_id, target_modid, kind",
         )?;
-        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
-            .collect::<rusqlite::Result<Vec<_>>>()?
+        stmt.query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
     };
 
     let mut node_ids: BTreeSet<i64> = BTreeSet::new();
     let mut edges = Vec::with_capacity(raw.len());
-    for (from, target, kind, source) in raw {
+    for (from, target, kind, severity, source) in raw {
         let to = mod_id_for_selector(conn, &target)?;
         node_ids.insert(from);
         if let Some(t) = to {
@@ -571,6 +581,7 @@ pub fn graph(conn: &Connection) -> Result<GraphData> {
             to_mod_id: to,
             target,
             kind,
+            severity,
             source,
         });
     }
@@ -777,6 +788,7 @@ pub fn graph_for_slice(
                 to_mod_id: to,
                 target: e.target,
                 kind,
+                severity: e.severity.map(|s| s.as_str().to_string()),
                 source: e.source.as_str().to_string(),
             });
         }

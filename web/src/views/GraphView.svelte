@@ -25,7 +25,7 @@
   let loading = $state(true);
   let canDebug = $state(false);
 
-  const KINDS = ['requires', 'optional_dep', 'recommends', 'conflicts', 'breaks', 'provides'];
+  const KINDS = ['requires', 'optional_dep', 'recommends', 'conflicts', 'provides'];
 
 
   async function load() {

@@ -8,6 +8,15 @@ version section when a release is tagged.
 
 ### Fixed
 
+- Incompatibility is reported at the strength it was declared. The registry
+  carried `conflicts` and `breaks` as separate kinds, and every parser stored
+  the hard declaration as `conflicts` and the advisory one as `breaks` -- while
+  in Fabric's own vocabulary `breaks` is the hard one, so everything that
+  reported a conflict read the variant name, believed it, and printed the
+  alarming word on the milder fact. Forge and Fabric use the same two words for
+  opposite intensities, so a name could never carry it: incompatibility is now
+  one kind with a severity the declaration states, and the panel, the
+  pre-publish check and the graph all say which one they mean.
 - Live editing no longer poisons the panel with a value JSON cannot carry.
   Every whole number in a config went into the shared document as a yrs
   BigInt, which yjs decodes in the browser as a JavaScript `BigInt` --

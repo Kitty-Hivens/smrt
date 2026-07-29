@@ -19,7 +19,7 @@
 
 use crate::domain::{PackConfig, SideClass, SourceDecl};
 use crate::registry::classify::{Classification, classify_artifact};
-use crate::registry::model::{GraphData, GraphEdge, RelKind, Source};
+use crate::registry::model::{GraphData, GraphEdge, RelKind, Severity, Source};
 use crate::registry::{queries, semver};
 use anyhow::Result;
 use rusqlite::Connection;
@@ -138,14 +138,18 @@ pub struct MissingDep {
     pub reason: Option<String>,
 }
 
-/// Two present mods the graph marks incompatible. `breaks` distinguishes the
-/// harder `breaks` kind from a plain `conflicts`.
+/// Two present mods the graph marks incompatible.
+///
+/// `hard` is the declaration's own intensity (#129): the loader refuses to run
+/// the two together, as against an author advising against it. An edge that
+/// somehow carries no severity reads as hard -- an incompatibility of unknown
+/// intensity is the one to show, not the one to quietly play down.
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "bindings/")]
 pub struct ActiveConflict {
     pub a: String,
     pub b: String,
-    pub breaks: bool,
+    pub hard: bool,
     pub source: String,
 }
 
@@ -535,6 +539,7 @@ pub fn pack_graph(conn: &Connection, cfg: &PackConfig) -> Result<GraphData> {
                 to_mod_id: to,
                 target: e.target,
                 kind: e.kind.as_str().to_string(),
+                severity: e.severity.map(|s| s.as_str().to_string()),
                 source: e.source.as_str().to_string(),
             });
         }
@@ -687,7 +692,7 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
                         }
                     }
                 }
-                RelKind::Conflicts | RelKind::Breaks => {
+                RelKind::Conflicts => {
                     if let Some(bi) = queries::mod_id_for_selector(conn, &e.target)?
                         .and_then(|id| by_mod_id.get(&id).copied())
                     {
@@ -696,7 +701,7 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
                             let c = ActiveConflict {
                                 a: a.filename.clone(),
                                 b: present[bi].filename.clone(),
-                                breaks: matches!(e.kind, RelKind::Breaks),
+                                hard: e.severity != Some(Severity::Soft),
                                 source: e.source.as_str().to_string(),
                             };
                             // Both in the default install -> a live conflict; an
@@ -950,11 +955,12 @@ mod tests {
         target: &str,
         range: Option<&str>,
         kind: RelKind,
+        severity: Option<Severity>,
         src: crate::registry::model::Source,
     ) {
         r.with_conn_mut(|c| {
             // mod-level: these fixtures assert resolver behaviour, not scoping
-            upsert::upsert_relation(c, from, None, target, range, kind, src, NOW)?;
+            upsert::upsert_relation(c, from, None, target, range, kind, severity, src, NOW)?;
             Ok(())
         })
         .unwrap();
@@ -984,6 +990,7 @@ mod tests {
             "modrinth:malilib_proj",
             None,
             RelKind::Requires,
+            None,
             crate::registry::model::Source::Modrinth,
         );
         let cfg = config(vec![
@@ -1022,8 +1029,24 @@ mod tests {
         let r = Registry::open_in_memory().unwrap();
         let a = add_mod(&r, "moda", "1", &"1".repeat(40));
         add_mod(&r, "modb", "1", &"2".repeat(40));
-        relate(&r, a, "modb", None, RelKind::Requires, Source::Inferred);
-        relate(&r, a, "modc", None, RelKind::Requires, Source::Inferred);
+        relate(
+            &r,
+            a,
+            "modb",
+            None,
+            RelKind::Requires,
+            None,
+            Source::Inferred,
+        );
+        relate(
+            &r,
+            a,
+            "modc",
+            None,
+            RelKind::Requires,
+            None,
+            Source::Inferred,
+        );
         let cfg = config(vec![
             declared("a.jar", true, cache(&"1".repeat(40))),
             declared("b.jar", true, cache(&"2".repeat(40))),
@@ -1112,6 +1135,7 @@ mod tests {
             "loader:fabric",
             None,
             RelKind::Provides,
+            None,
             Source::Authored,
         );
         let cfg = config(vec![
@@ -1143,9 +1167,17 @@ mod tests {
         let a = add_mod(&r, "aaa", "1.0", "sha_a");
         let b = add_mod(&r, "bbb", "1.0", "sha_b");
         add_mod(&r, "ccc", "1.0", "sha_c"); // in the registry, but not in this pack
-        relate(&r, a, "bbb", None, RelKind::Requires, Source::JarMeta); // satisfied here
-        relate(&r, a, "ccc", None, RelKind::Requires, Source::JarMeta); // not shipped
-        relate(&r, a, "bbb", None, RelKind::Conflicts, Source::Authored); // live conflict
+        relate(&r, a, "bbb", None, RelKind::Requires, None, Source::JarMeta); // satisfied here
+        relate(&r, a, "ccc", None, RelKind::Requires, None, Source::JarMeta); // not shipped
+        relate(
+            &r,
+            a,
+            "bbb",
+            None,
+            RelKind::Conflicts,
+            Some(Severity::Hard),
+            Source::Authored,
+        ); // live conflict
         let _ = b;
 
         let cfg = config(vec![
@@ -1221,6 +1253,7 @@ mod tests {
                 "oldlib",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -1231,6 +1264,7 @@ mod tests {
                 "newlib",
                 None,
                 RelKind::Requires,
+                None,
                 Source::JarMeta,
                 NOW,
             )?;
@@ -1261,6 +1295,7 @@ mod tests {
             "appliedenergistics2",
             None,
             RelKind::Requires,
+            None,
             Source::Inferred,
         );
 
@@ -1309,6 +1344,7 @@ mod tests {
             "modrinth:G1ckZuWK",
             None,
             RelKind::Requires,
+            None,
             Source::Modrinth,
         );
         let pack = || {
@@ -1353,8 +1389,24 @@ mod tests {
         let r = Registry::open_in_memory().unwrap();
         let jei = add_mod(&r, "somemod", "1.0", &"c".repeat(40));
         // inferred says requires jei; authored says it's only optional
-        relate(&r, jei, "jei", None, RelKind::Requires, Source::Inferred);
-        relate(&r, jei, "jei", None, RelKind::OptionalDep, Source::Authored);
+        relate(
+            &r,
+            jei,
+            "jei",
+            None,
+            RelKind::Requires,
+            None,
+            Source::Inferred,
+        );
+        relate(
+            &r,
+            jei,
+            "jei",
+            None,
+            RelKind::OptionalDep,
+            None,
+            Source::Authored,
+        );
 
         let rep = r
             .with_conn(|c| {
@@ -1377,7 +1429,15 @@ mod tests {
         let r = Registry::open_in_memory().unwrap();
         let a = add_mod(&r, "moda", "1.0", &"d".repeat(40));
         add_mod(&r, "modb", "1.0", &"e".repeat(40));
-        relate(&r, a, "modb", None, RelKind::Conflicts, Source::Authored);
+        relate(
+            &r,
+            a,
+            "modb",
+            None,
+            RelKind::Conflicts,
+            Some(Severity::Hard),
+            Source::Authored,
+        );
 
         let rep = r
             .with_conn(|c| {
@@ -1393,7 +1453,7 @@ mod tests {
         assert_eq!(rep.conflicts.len(), 1);
         assert_eq!(rep.conflicts[0].a, "a.jar");
         assert_eq!(rep.conflicts[0].b, "b.jar");
-        assert!(!rep.conflicts[0].breaks);
+        assert!(rep.conflicts[0].hard);
     }
 
     #[test]
@@ -1402,7 +1462,15 @@ mod tests {
         let r = Registry::open_in_memory().unwrap();
         let a = add_mod(&r, "moda", "1.0", &"d".repeat(40));
         add_mod(&r, "modb", "1.0", &"e".repeat(40));
-        relate(&r, a, "modb", None, RelKind::Conflicts, Source::Authored);
+        relate(
+            &r,
+            a,
+            "modb",
+            None,
+            RelKind::Conflicts,
+            Some(Severity::Hard),
+            Source::Authored,
+        );
 
         // b.jar is an optional the pack ships disabled: the conflict only bites if
         // the user turns it on, so it is advisory, not a blocking conflict (#9).
@@ -1442,6 +1510,7 @@ mod tests {
             "MinecraftForge",
             None,
             RelKind::Requires,
+            None,
             Source::JarMeta,
         );
 
@@ -1472,6 +1541,7 @@ mod tests {
             "connected_textures",
             None,
             RelKind::Provides,
+            None,
             Source::Authored,
         );
         relate(
@@ -1480,6 +1550,7 @@ mod tests {
             "connected_textures",
             None,
             RelKind::Provides,
+            None,
             Source::Authored,
         );
         // a mod requiring the capability is satisfied by a provider, not "missing"
@@ -1489,6 +1560,7 @@ mod tests {
             "connected_textures",
             None,
             RelKind::Requires,
+            None,
             Source::Authored,
         );
 
@@ -1526,6 +1598,7 @@ mod tests {
             "somelib",
             Some("[2.0,)"),
             RelKind::Requires,
+            None,
             Source::JarMeta,
         );
 
@@ -1568,7 +1641,15 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        relate(&r, chisel, "ctm", None, RelKind::Requires, Source::Inferred);
+        relate(
+            &r,
+            chisel,
+            "ctm",
+            None,
+            RelKind::Requires,
+            None,
+            Source::Inferred,
+        );
 
         // ctm present: no requires edge lands in the fill plan
         let both = config(vec![
@@ -1619,6 +1700,7 @@ mod tests {
             "mekanism",
             None,
             RelKind::Requires,
+            None,
             Source::Inferred,
         );
 
@@ -1650,7 +1732,15 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        relate(&r, a, "clientmod", None, RelKind::Requires, Source::JarMeta);
+        relate(
+            &r,
+            a,
+            "clientmod",
+            None,
+            RelKind::Requires,
+            None,
+            Source::JarMeta,
+        );
         let cfg = config(vec![
             declared("a.jar", true, cache("sha_a")),
             declared("client.jar", true, cache("sha_cl")),
@@ -1782,6 +1872,7 @@ mod tests {
             "external:OptiFine.jar",
             None,
             RelKind::Requires,
+            None,
             Source::Modrinth,
         );
         let cfg = config(vec![declared("host.jar", true, cache("sha_h"))]);

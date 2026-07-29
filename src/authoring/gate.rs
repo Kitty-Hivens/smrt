@@ -91,7 +91,11 @@ pub fn check(report: &ResolveReport) -> BuildChecks {
             "{} and {} are marked {} ({}), and both are enabled by default",
             c.a,
             c.b,
-            if c.breaks { "breaking" } else { "conflicting" },
+            if c.hard {
+                "incompatible"
+            } else {
+                "discouraged together"
+            },
             c.source,
         ));
     }
@@ -100,7 +104,7 @@ pub fn check(report: &ResolveReport) -> BuildChecks {
             "{} and {} are marked {} ({}); one ships opted out, so it only bites if that one is enabled",
             c.a,
             c.b,
-            if c.breaks { "breaking" } else { "conflicting" },
+            if c.hard { "incompatible" } else { "discouraged together" },
             c.source,
         ));
     }
@@ -295,13 +299,13 @@ mod tests {
             conflicts: vec![ActiveConflict {
                 a: "VoxelMap.jar".into(),
                 b: "Xaeros.jar".into(),
-                breaks: false,
+                hard: false,
                 source: "authored".into(),
             }],
             optional_conflicts: vec![ActiveConflict {
                 a: "OptiFine.jar".into(),
                 b: "Angelica.jar".into(),
-                breaks: true,
+                hard: true,
                 source: "authored".into(),
             }],
 

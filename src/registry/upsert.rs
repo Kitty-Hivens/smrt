@@ -4,7 +4,7 @@
 //! `Registry::with_conn_mut` (a write transaction).
 
 use super::authored;
-use super::model::{RelKind, Source};
+use super::model::{RelKind, Severity, Source};
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -447,6 +447,7 @@ pub fn upsert_relation(
     target_modid: &str,
     version_range: Option<&str>,
     kind: RelKind,
+    severity: Option<Severity>,
     source: Source,
     now: &str,
 ) -> Result<bool> {
@@ -457,6 +458,7 @@ pub fn upsert_relation(
         target_modid,
         version_range,
         kind,
+        severity,
         source,
         source.rank(),
         now,
@@ -475,21 +477,32 @@ pub fn upsert_relation_ranked(
     target_modid: &str,
     version_range: Option<&str>,
     kind: RelKind,
+    severity: Option<Severity>,
     source: Source,
     rank: i64,
     now: &str,
 ) -> Result<bool> {
+    // The severity rule lives here, once, so no caller can write a row the
+    // schema would reject and none has to remember the convention. A conflict
+    // whose intensity nobody stated is recorded hard: an incompatibility of
+    // unknown strength is the one to surface, not the one to play down -- and
+    // the reader defaults the same way (#129). Nothing else carries one.
+    let severity = match kind {
+        RelKind::Conflicts => Some(severity.unwrap_or(Severity::Hard).as_str()),
+        _ => None,
+    };
     let inserted = conn.execute(
         "INSERT OR IGNORE INTO relation
            (from_mod_id, from_mod_version_id, target_modid, target_version_range,
-            kind, source, confidence, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            kind, severity, source, confidence, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             from_mod_id,
             from_mod_version_id,
             target_modid,
             version_range,
             kind.as_str(),
+            severity,
             source.as_str(),
             rank,
             now

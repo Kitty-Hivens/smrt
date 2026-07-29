@@ -9,7 +9,7 @@
 //! never an error.
 
 use super::archive::read_zip_entry;
-use crate::registry::model::RelKind;
+use crate::registry::model::{RelKind, Severity};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -37,6 +37,9 @@ const PLATFORM_MODIDS: &[&str] = &[
 pub struct DeclaredDep {
     pub modid: String,
     pub kind: RelKind,
+    /// How hard an incompatibility is, straight from the declaration. `None`
+    /// for every other kind -- a requirement has no intensity (#129).
+    pub severity: Option<Severity>,
     pub version_range: Option<String>,
     pub side: Option<String>,
 }
@@ -187,7 +190,7 @@ pub fn parse_mods_toml(text: &str) -> ModMeta {
     let mut mc = None;
     for entry in parsed.dependencies.into_values().flatten() {
         // read the kind (borrows entry) before consuming its fields
-        let Some(kind) = forge_dep_kind(&entry) else {
+        let Some((kind, severity)) = forge_dep_kind(&entry) else {
             continue; // embedded / unknown -> not a graph edge
         };
         let Some(target) = entry
@@ -212,6 +215,7 @@ pub fn parse_mods_toml(text: &str) -> ModMeta {
         deps.push(DeclaredDep {
             modid: target,
             kind,
+            severity,
             version_range: clean_range(entry.version_range),
             side: entry
                 .side
@@ -233,19 +237,21 @@ pub fn parse_mods_toml(text: &str) -> ModMeta {
 
 /// Kind of a Forge/NeoForge dependency: `type` when present, else the legacy
 /// `mandatory` flag; a dep with neither qualifier reads as required.
-fn forge_dep_kind(dep: &ModsTomlDep) -> Option<RelKind> {
+fn forge_dep_kind(dep: &ModsTomlDep) -> Option<(RelKind, Option<Severity>)> {
     if let Some(t) = &dep.dep_type {
         return match t.to_ascii_lowercase().as_str() {
-            "required" => Some(RelKind::Requires),
-            "optional" => Some(RelKind::OptionalDep),
-            "incompatible" => Some(RelKind::Conflicts),
-            "discouraged" => Some(RelKind::Breaks),
+            "required" => Some((RelKind::Requires, None)),
+            "optional" => Some((RelKind::OptionalDep, None)),
+            // the loader refuses to start; `discouraged` is the author's advice
+            "incompatible" => Some((RelKind::Conflicts, Some(Severity::Hard))),
+            "discouraged" => Some((RelKind::Conflicts, Some(Severity::Soft))),
             _ => None, // embedded and anything unrecognised
         };
     }
+    // the pre-`type` spelling: `mandatory` only ever said required or not
     match dep.mandatory {
-        Some(false) => Some(RelKind::OptionalDep),
-        _ => Some(RelKind::Requires),
+        Some(false) => Some((RelKind::OptionalDep, None)),
+        _ => Some((RelKind::Requires, None)),
     }
 }
 
@@ -311,27 +317,32 @@ pub fn parse_fabric_json(bytes: &[u8]) -> ModMeta {
         .as_deref()
         .and_then(first_mc);
     let mut deps = Vec::new();
-    let mut add = |map: HashMap<String, VersionPredicate>, kind: RelKind| {
-        for (modid, pred) in map {
-            if modid.trim().is_empty() || is_platform_modid(&modid) {
-                continue;
+    let mut add =
+        |map: HashMap<String, VersionPredicate>, kind: RelKind, severity: Option<Severity>| {
+            for (modid, pred) in map {
+                if modid.trim().is_empty() || is_platform_modid(&modid) {
+                    continue;
+                }
+                deps.push(DeclaredDep {
+                    version_range: pred.range(),
+                    modid,
+                    kind,
+                    severity,
+                    side: None,
+                });
             }
-            deps.push(DeclaredDep {
-                version_range: pred.range(),
-                modid,
-                kind,
-                side: None,
-            });
-        }
-    };
-    add(parsed.depends, RelKind::Requires);
+        };
+    add(parsed.depends, RelKind::Requires, None);
     // `recommends` is the "works much better with" tier -- the Recommends
     // kind, surfaced to the curator as a suggestion, never auto-added;
     // `suggests` is weaker and stays a plain optional dependency.
-    add(parsed.recommends, RelKind::Recommends);
-    add(parsed.suggests, RelKind::OptionalDep);
-    add(parsed.breaks, RelKind::Conflicts);
-    add(parsed.conflicts, RelKind::Breaks);
+    add(parsed.recommends, RelKind::Recommends, None);
+    add(parsed.suggests, RelKind::OptionalDep, None);
+    // Fabric's own words: `breaks` is the one that fails to load, `conflicts`
+    // the one it merely warns about. Same two intensities, opposite names to
+    // Forge's -- which is exactly why the intensity is its own field now.
+    add(parsed.breaks, RelKind::Conflicts, Some(Severity::Hard));
+    add(parsed.conflicts, RelKind::Conflicts, Some(Severity::Soft));
     deps.sort_by(|a, b| a.modid.cmp(&b.modid));
     let has_entry = |k: &str| {
         parsed
@@ -507,8 +518,13 @@ mod tests {
             Some(">=11.0")
         );
         assert_eq!(find("modmenu").map(|d| d.kind), Some(RelKind::Recommends));
+        // Fabric's `breaks` is the hard one and its `conflicts` the advisory one
+        // -- one kind, two intensities, and the names do not decide which (#129)
+        let sev = |m: &str| find(m).and_then(|d| d.severity);
         assert_eq!(find("oldmod").map(|d| d.kind), Some(RelKind::Conflicts));
-        assert_eq!(find("grumpymod").map(|d| d.kind), Some(RelKind::Breaks));
+        assert_eq!(sev("oldmod"), Some(Severity::Hard));
+        assert_eq!(find("grumpymod").map(|d| d.kind), Some(RelKind::Conflicts));
+        assert_eq!(sev("grumpymod"), Some(Severity::Soft));
         // minecraft filtered
         assert!(find("minecraft").is_none());
     }

@@ -110,7 +110,6 @@
     optional_dep: 'var(--fg-dim)',
     recommends: 'var(--fg-dim)',
     conflicts: 'var(--danger)',
-    breaks: 'var(--danger)',
     provides: 'var(--ok)',
   };
 
@@ -284,7 +283,9 @@
       // A hard incompatibility keeps the marching red dash -- it reads as an alarm,
       // which is exactly what it is. Everything else becomes a tendril: the colour
       // still carries the kind, and the travelling wave carries the direction.
-      const alarm = e.kind === 'conflicts' || e.kind === 'breaks';
+      // An advisory conflict is not an alarm (#129): it stays red, because it is
+      // still an incompatibility, but it does not march.
+      const alarm = e.kind === 'conflicts' && e.severity !== 'soft';
       // No `label`: the kind is already in the colour, and a label per edge turns a
       // real pack's graph into a field of plates.
       es.push({

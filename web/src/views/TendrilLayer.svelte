@@ -54,7 +54,6 @@
       optional_dep: dim,
       recommends: dim,
       conflicts: danger,
-      breaks: danger,
       provides: v('--ok', [78, 203, 139]),
       _default: dim,
     };
