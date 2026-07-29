@@ -72,6 +72,7 @@ fn authoring_router(state: AppState) -> Router {
             get(get_pack_config).put(put_pack_config),
         )
         .route("/v1/meta/minecraft", get(get_minecraft_versions))
+        .route("/v1/authoring/packs/{pack_id}/spoof", get(pack_spoof))
         .route("/v1/authoring/packs/{pack_id}/events", get(pack_events))
         .route(
             "/v1/authoring/packs/{pack_id}/doc",
@@ -115,6 +116,7 @@ fn authoring_router(state: AppState) -> Router {
 // ── audit ────────────────────────────────────────────────────────────────────
 
 use super::audit;
+use crate::authoring::spoof::SPOOF_DEST;
 
 /// The recent audit trail, newest first -- the operator's "who did what" view.
 async fn get_audit_log(State(state): State<AppState>) -> Result<Json<Vec<AuditRow>>, ApiError> {
@@ -279,19 +281,116 @@ async fn advertised_mods(
             "server {server_id:?} has no address recorded, so there is nothing to ask"
         )));
     };
-    // host, or host:port -- the default is Minecraft's, not the caller's problem
-    let (host, port) = match address.rsplit_once(':') {
-        Some((h, p)) => (
-            h,
-            p.parse::<u16>()
-                .map_err(|_| ApiError::BadRequest(format!("port {p:?} is not a port")))?,
-        ),
-        None => (address, 25565),
-    };
-    crate::authoring::server_status(host, port)
+    let (host, port) = split_address(address)
+        .ok_or_else(|| ApiError::BadRequest(format!("{address:?} is not an address")))?;
+    crate::authoring::server_status(&host, port)
         .await
         .map(Json)
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("asking {address}: {e:#}")))
+}
+
+/// The claim a pack ships, the claim its server expects now, and what moved
+/// between them (#110).
+///
+/// The freshness question the hand-written file could never answer: a server
+/// bumps its mod list, the shipped claim keeps naming the old one, and the only
+/// symptom is a refused handshake. Asking is cheap and repeatable, so it is a
+/// report rather than something anyone has to remember to check.
+async fn pack_spoof(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+) -> Result<Json<SpoofReport>, ApiError> {
+    use crate::authoring::spoof::{Spoof, drift, spoof_from_status};
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    let cfg = state.storage.load_pack_config(&pack_id).await?;
+
+    // What the pack ships, if it ships one: the asset the launcher writes into
+    // the instance. Absent is a state, not a failure -- most packs need no claim.
+    let shipped: Option<Spoof> = match cfg.assets.iter().find(|a| a.dest == SPOOF_DEST) {
+        Some(crate::domain::DeclaredAsset {
+            source: crate::domain::SourceDecl::SmrtStatic { rel_path },
+            ..
+        }) => {
+            let path = state.storage.pack_static_path(&pack_id, rel_path)?;
+            tokio::fs::read(&path)
+                .await
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok())
+        }
+        _ => None,
+    };
+
+    // Which server this pack joins. Without one there is nothing to compare
+    // against, and the shipped claim is reported alone rather than judged.
+    let server_id = cfg.auth.as_ref().and_then(|a| a.server_id.clone());
+    let mut current = None;
+    let mut asked = None;
+    if let Some(id) = &server_id
+        && let Ok(entry) = state.storage.load_server(id).await
+        && let Some((host, port)) = entry.address.as_deref().and_then(split_address)
+    {
+        match crate::authoring::server_status(&host, port).await {
+            Ok(status) => {
+                asked = Some(format!("{host}:{port}"));
+                current = spoof_from_status(&status).ok();
+            }
+            Err(e) => {
+                tracing::warn!(pack_id, error = %format!("{e:#}"), "asking the pack's server failed");
+            }
+        }
+    }
+
+    let moved = match (&shipped, &current) {
+        (Some(a), Some(b)) => drift(a, b),
+        _ => Vec::new(),
+    };
+    Ok(Json(SpoofReport {
+        shipped,
+        current,
+        server_id,
+        asked,
+        drift: moved,
+    }))
+}
+
+/// host, or host:port -- the default is Minecraft's, not the caller's problem.
+fn split_address(address: &str) -> Option<(String, u16)> {
+    let address = address.trim();
+    if address.is_empty() {
+        return None;
+    }
+    match address.rsplit_once(':') {
+        Some((h, p)) => p.parse::<u16>().ok().map(|port| (h.to_string(), port)),
+        None => Some((address.to_string(), 25565)),
+    }
+}
+
+/// What a pack claims, what its server wants, and the difference.
+#[derive(serde::Serialize, ts_rs::TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct SpoofReport {
+    /// The claim the pack ships. Absent when it ships none, which is the
+    /// ordinary case -- most packs match their server without help.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub shipped: Option<crate::authoring::spoof::Spoof>,
+    /// What the server advertises now. Absent when the pack names no server,
+    /// the server has no address recorded, or it could not be reached.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub current: Option<crate::authoring::spoof::Spoof>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub server_id: Option<String>,
+    /// The address actually asked, when one was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub asked: Option<String>,
+    /// Empty when they agree, or when there was nothing to compare.
+    pub drift: Vec<String>,
 }
 
 async fn delete_server(
@@ -1541,6 +1640,26 @@ mod tests {
         );
 
         assert!(fill_needed(None, &before), "a pack being created is filled");
+    }
+
+    // A server is recorded as a host or a host:port, and Minecraft's default is
+    // the mirror's to know rather than the operator's to type. A port that is
+    // not a port is not an address -- silently falling back to 25565 would ask
+    // the wrong server and report its list as this one's.
+    #[test]
+    fn an_address_is_a_host_and_optionally_a_port() {
+        use super::split_address;
+        assert_eq!(
+            split_address("mc.example.com"),
+            Some(("mc.example.com".to_string(), 25565))
+        );
+        assert_eq!(
+            split_address("  mc.example.com:25566 "),
+            Some(("mc.example.com".to_string(), 25566))
+        );
+        assert_eq!(split_address(""), None);
+        assert_eq!(split_address("   "), None);
+        assert_eq!(split_address("mc.example.com:hello"), None);
     }
 
     #[test]
