@@ -264,7 +264,10 @@
     const mc = cfg?.minecraft_version?.trim();
     const all = loaderList?.builds ?? [];
     const mine = all.filter((b) => !b.minecraft || b.minecraft === mc);
-    return [...mine].sort((a, b) => Number(b.recommended) - Number(a.recommended)).slice(0, 200);
+    // Not capped. The list arrives newest first and a pack's own Minecraft
+    // version narrows it to a few hundred; cutting it is how the build this
+    // deployment actually runs fell off the end.
+    return [...mine].sort((a, b) => Number(b.recommended) - Number(a.recommended));
   });
 
   const javaOptions = JAVA_MAJORS.map((v) => ({ value: String(v), label: String(v) }));

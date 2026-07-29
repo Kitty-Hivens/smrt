@@ -175,8 +175,35 @@ fn parse_forge(xml: &str, promotions: Option<&[u8]>) -> Vec<LoaderBuild> {
             minecraft: Some(mc.to_string()),
         });
     }
-    out.reverse(); // newest first, as a picker wants it
+    sort_newest_first(&mut out);
     out
+}
+
+/// Order builds newest first by their own numbers.
+///
+/// Not by document order, which was the first attempt and was wrong: Forge's
+/// metadata lists 1.12.2 descending and then appends later re-releases, so
+/// reversing it put `14.23.5.2860` -- the build this deployment runs -- at
+/// position 354 of 355, behind a picker's cut. A version is a sequence of
+/// numbers and is compared as one; anything unparseable sorts last rather than
+/// disappearing.
+fn sort_newest_first(builds: &mut [LoaderBuild]) {
+    builds.sort_by(|a, b| {
+        version_key(&b.minecraft.clone().unwrap_or_default())
+            .cmp(&version_key(&a.minecraft.clone().unwrap_or_default()))
+            .then_with(|| version_key(&b.version).cmp(&version_key(&a.version)))
+    });
+}
+
+/// A version as the numbers in it, in order. `14.23.5.2860` sorts above
+/// `14.23.5.2859` and below `14.23.5.2861`, which string comparison does not
+/// manage past a digit boundary.
+fn version_key(version: &str) -> Vec<u64> {
+    version
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse::<u64>().ok())
+        .collect()
 }
 
 /// NeoForge versions carry the Minecraft version in their own first two
@@ -207,7 +234,7 @@ fn parse_neoforge(body: &[u8]) -> Result<Vec<LoaderBuild>> {
             }
         })
         .collect();
-    out.reverse();
+    sort_newest_first(&mut out);
     mark_latest_per_minecraft(&mut out);
     Ok(out)
 }
@@ -280,6 +307,36 @@ mod tests {
         );
     }
 
+    // The shape Forge actually publishes: a descending run with later
+    // re-releases appended. Reversing the document put the build this
+    // deployment runs at the far end of the list, behind a picker's cut --
+    // which is the whole reason the full list is fetched at all.
+    #[test]
+    fn builds_are_ordered_by_their_numbers_not_by_document_order() {
+        let xml = r#"<metadata><versions>
+            <version>1.12.2-14.23.5.2860</version>
+            <version>1.12.2-14.23.5.2859</version>
+            <version>1.12.2-14.23.5.2858</version>
+            <version>1.12.2-14.23.0.2486</version>
+            <version>1.12.2-14.23.5.2864</version>
+        </versions></metadata>"#;
+        let versions: Vec<String> = parse_forge(xml, None)
+            .into_iter()
+            .map(|b| b.version)
+            .collect();
+        assert_eq!(
+            versions,
+            vec![
+                "14.23.5.2864",
+                "14.23.5.2860",
+                "14.23.5.2859",
+                "14.23.5.2858",
+                "14.23.0.2486"
+            ],
+            "newest first by number, and 2860 is near the top rather than last"
+        );
+    }
+
     #[test]
     fn forge_entries_carry_their_minecraft_version_and_run_newest_first() {
         let builds = parse_forge(XML, None);
@@ -303,11 +360,17 @@ mod tests {
     fn neoforge_versions_say_which_minecraft_they_are_for() {
         let body = br#"{"isSnapshot":false,"versions":["21.1.9","21.1.10","20.4.1-beta"]}"#;
         let builds = parse_neoforge(body).unwrap();
-        assert_eq!(builds[0].version, "20.4.1-beta");
-        assert_eq!(builds[1].minecraft.as_deref(), Some("1.21.1"));
-        // newest of each Minecraft version is marked, since upstream does not
-        assert!(builds[1].latest, "21.1.10 is the newest 1.21.1 build");
-        assert!(!builds[2].latest);
+        let versions: Vec<&str> = builds.iter().map(|b| b.version.as_str()).collect();
+        assert_eq!(versions, vec!["21.1.10", "21.1.9", "20.4.1-beta"]);
+        assert_eq!(builds[0].minecraft.as_deref(), Some("1.21.1"));
+        assert_eq!(builds[2].minecraft.as_deref(), Some("1.20.4"));
+        // the newest of each Minecraft version is marked, since upstream does not
+        assert!(builds[0].latest, "21.1.10 is the newest 1.21.1 build");
+        assert!(!builds[1].latest);
+        assert!(
+            builds[2].latest,
+            "and 20.4.1-beta is the newest for its own"
+        );
     }
 
     // Fabric and Quilt publish one loader for every Minecraft version, so a
