@@ -75,6 +75,25 @@ version section when a release is tagged.
   animations and arrive already finished on the first frame. The preview's two
   collapsed lists -- libraries and config files -- open the same way.
 
+### Fixed
+
+- A version window is enforced, not noted -- and the comparison behind it now
+  reads the versions mods actually carry. A pack shipped Sodium `0.6.13` while a
+  mod in it demanded `[0.8.12,)`; the game died before the main menu and blamed
+  an unrelated mod, because the loader had already given up and the next thing
+  to touch a missing class was the one that got named.
+  The mirror had the finding and said nothing, twice over. Both versions carry
+  the game version as semver build metadata -- `0.6.13+mc1.21.1` -- which the
+  specification says to ignore when comparing and which the comparator refused
+  to read, so the check landed in a silent "could not be checked" counter. And
+  even read, it was recorded rather than enforced, on the reasoning that such
+  windows are written optimistically. They are not: a loader reads the range out
+  of the jar's own manifest and refuses to start.
+  Build metadata is dropped as the specification requires, and a hard dependency
+  present outside its declared window now stops a publish. A Modrinth file label
+  is still not a version: reading `mc1.21.1-0.6.13-neoforge` would be the guess
+  this comparison exists to refuse.
+
 ### Added
 
 - The version fields stop being free text. Java is a list; the Minecraft version

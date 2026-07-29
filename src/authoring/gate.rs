@@ -18,13 +18,18 @@
 //!   enforced. Refusing a publish on a guess is how a gate loses its authority.
 //! - An artifact built for a loader the pack does not run, with nothing present
 //!   to bridge it, does not load at all -- and whatever needed it then breaks.
+//! - A hard dependency present at a version outside the window its requirer
+//!   declared. This was recorded rather than enforced at first, on the reasoning
+//!   that such windows are written optimistically and the pack usually runs
+//!   anyway. It does not: a loader reads the range out of the jar's own manifest
+//!   and refuses to start. A pack shipped Sodium 0.6.13 under a dependant
+//!   demanding `[0.8.12,)`, and the game died before the main menu, reporting a
+//!   different mod entirely.
 //!
 //! Everything else is real information and not a verdict. An active conflict may
 //! be exactly what the curator intends (two mods that overlap, one of them
-//! shipped off by default at the launcher's discretion); a dependency outside a
-//! declared version window usually runs, because those windows are authored
-//! optimistically; an unidentified jar means the check was partial, not that the
-//! pack is broken. Blocking on all of them would make the gate something
+//! shipped off by default at the launcher's discretion); an unidentified jar
+//! means the check was partial, not that the pack is broken. Blocking on all of them would make the gate something
 //! operators route around, which is worse than not having one.
 //!
 //! The override exists for the same reason: a curator who knows better than the
@@ -100,7 +105,7 @@ pub fn check(report: &ResolveReport) -> BuildChecks {
         ));
     }
     for v in &report.version_issues {
-        advisory.push(format!(
+        blocking.push(format!(
             "{} ships {} for {}, outside the {} that {} declares",
             v.filename,
             v.present_version,
@@ -221,6 +226,33 @@ mod tests {
         assert!(bridged.is_empty(), "a connector carries it: {bridged:?}");
     }
 
+    // The finding that reached a player. A pack shipped Sodium 0.6.13 under a
+    // dependant demanding [0.8.12,); the loader reads that range out of the
+    // jar's own manifest, refused to start, and reported an unrelated mod as
+    // the crash. Recorded rather than enforced, this went out.
+    #[test]
+    fn a_dependency_outside_its_declared_window_stops_a_publish() {
+        let checks = check(&ResolveReport {
+            version_issues: vec![VersionIssue {
+                target: "sodium".into(),
+                filename: "sodium.jar".into(),
+                present_version: "0.6.13+mc1.21.1".into(),
+                required_range: "[0.8.12,)".into(),
+                needed_by: vec!["reeses-sodium-options.jar".into()],
+            }],
+            ..empty()
+        });
+        assert_eq!(checks.blocking.len(), 1, "{checks:?}");
+        let line = &checks.blocking[0];
+        assert!(line.contains("0.6.13"), "names what is shipped: {line}");
+        assert!(line.contains("[0.8.12,)"), "and what is wanted: {line}");
+        assert!(
+            line.contains("reeses-sodium-options.jar"),
+            "and who wants it, since that is the mod to change: {line}"
+        );
+        assert!(checks.advisory.is_empty());
+    }
+
     // A hard edge the mirror derived from bytecode is evidence, not a
     // declaration: it cannot tell a dependency from an optional integration
     // that references a foreign type. Recorded, so the curator sees it; not
@@ -272,13 +304,7 @@ mod tests {
                 breaks: true,
                 source: "authored".into(),
             }],
-            version_issues: vec![VersionIssue {
-                target: "jei".into(),
-                filename: "JEI.jar".into(),
-                present_version: "4.15.0".into(),
-                required_range: ">=4.16".into(),
-                needed_by: vec!["addon.jar".into()],
-            }],
+
             forced_client_attempts: vec![ForcedClientEdge {
                 filename: "OptiFine.jar".into(),
                 needed_by: vec!["shaderpack.jar".into()],
@@ -292,12 +318,11 @@ mod tests {
             "none of these stop a publish: {:?}",
             checks.blocking
         );
-        assert_eq!(checks.advisory.len(), 5);
+        assert_eq!(checks.advisory.len(), 4);
         let all = checks.advisory.join("\n");
         for expected in [
             "VoxelMap.jar",
             "Angelica.jar",
-            "4.15.0",
             "OptiFine.jar",
             "mystery.jar",
         ] {
