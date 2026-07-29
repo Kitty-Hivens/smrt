@@ -97,6 +97,12 @@ version section when a release is tagged.
   remembered.
   Server-owned fields (owner, tier, visibility, fork_of) are not in the document
   at all, so a client cannot propose a change to one even by accident.
+  In the panel, edits go out as they are typed and a colleague's arrive the same
+  way, through the room already open for presence. A save event stops meaning
+  "re-read the pack" and starts meaning "the mirror wrote what you already
+  have", so nothing replaces the screen mid-sentence. The conditional save
+  remains for what it is actually for -- creating a pack, where there is no
+  document to join yet.
 
 ### Removed
 
