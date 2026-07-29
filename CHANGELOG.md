@@ -8,6 +8,13 @@ version section when a release is tagged.
 
 ### Fixed
 
+- The pack importer is named for what it reads. Bootstrap and validate called
+  their input an "SC archive" everywhere -- module docs, log lines, CLI flags,
+  a wire field, and the empty-state a new self-hoster meets first -- while the
+  code behind it accepts any zip with a top-level `mods/`: a launcher export, a
+  plain instance directory. It is an instance archive now.
+  `ValidateReport.sc_mod_count` becomes `archive_mod_count`, and `smrt-pack
+  validate --against-sc-archive` becomes `--against-archive`.
 - Incompatibility is reported at the strength it was declared. The registry
   carried `conflicts` and `breaks` as separate kinds, and every parser stored
   the hard declaration as `conflicts` and the advisory one as `breaks` -- while
