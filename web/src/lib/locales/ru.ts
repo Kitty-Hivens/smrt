@@ -548,6 +548,8 @@ export const ru: Dict = {
   'users.you': 'вы',
   'mm.needsIdentity': 'Нужна identity',
   'mm.needsIdentitySub': '{n} джарок в кэше без мода',
+  'mm.declaresNothing': 'не объявляет метаданных',
+  'mm.unread': 'зеркало не смогло прочитать этот джарник',
   'mm.assign': 'Назначить',
   'mm.drop': 'Кинь сюда .jar, чтобы добавить, потом назначь каждому мод',
   'mm.uploading': 'Загрузка...',

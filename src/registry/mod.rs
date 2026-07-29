@@ -20,6 +20,62 @@ pub use db::Registry;
 
 #[cfg(test)]
 mod tests {
+
+    // #123: the unidentified bucket was a hash and a file size, so naming a jar
+    // meant downloading and opening it -- which is why it only ever grew. The
+    // harvest already has the file open; this is that readout surviving even
+    // when no identity could be derived.
+    #[test]
+    fn a_jar_the_harvest_could_not_identify_still_says_what_it_is() {
+        let r = Registry::open_in_memory().unwrap();
+        let sha = "d".repeat(40);
+        r.with_conn_mut(|c| {
+            upsert::set_jar_read(
+                c,
+                &sha,
+                &upsert::JarRead {
+                    modid: Some("railcraft"),
+                    name: Some("Railcraft"),
+                    version: Some("12.0.0"),
+                    loaders: &["forge".to_string()],
+                    mc: &["1.12.2".to_string()],
+                    filename: Some("railcraft-12.0.0.jar"),
+                },
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let rows = r.with_conn(queries::jar_readouts).unwrap();
+        let row = rows
+            .get(&sha)
+            .expect("the readout is keyed by content hash");
+        assert_eq!(row.modid.as_deref(), Some("railcraft"));
+        assert_eq!(row.version.as_deref(), Some("12.0.0"));
+        assert_eq!(row.loaders.as_deref(), Some("forge"));
+        assert_eq!(row.kind, None, "no classification is not a missing readout");
+
+        // A later harvest that reads less must not erase what an earlier one
+        // read: a jar whose metadata is unreadable this time is the same jar.
+        r.with_conn_mut(|c| {
+            upsert::set_jar_read(
+                c,
+                &sha,
+                &upsert::JarRead {
+                    modid: None,
+                    name: None,
+                    version: None,
+                    loaders: &[],
+                    mc: &[],
+                    filename: None,
+                },
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let rows = r.with_conn(queries::jar_readouts).unwrap();
+        assert_eq!(rows[&sha].modid.as_deref(), Some("railcraft"));
+    }
     use super::model::{RelKind, Source};
     use super::{Registry, queries, upsert};
 

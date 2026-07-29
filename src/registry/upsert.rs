@@ -352,6 +352,53 @@ pub fn set_mod_packages(conn: &Connection, mod_id: i64, prefixes: &[&str]) -> Re
 /// Record a scanned jar's classification (kind + side + match policy), keyed
 /// by content hash. Purely derived like `mod_package`: the harvest rewrites
 /// the row each run, for every scanned jar whether or not it has an identity.
+/// What one pass read out of a jar. Borrowed rather than owned: the caller
+/// already holds every field, and this crosses one function boundary.
+pub struct JarRead<'a> {
+    pub modid: Option<&'a str>,
+    pub name: Option<&'a str>,
+    pub version: Option<&'a str>,
+    pub loaders: &'a [String],
+    pub mc: &'a [String],
+    pub filename: Option<&'a str>,
+}
+
+/// Record what the harvest read out of a jar (#123). Written for every scanned
+/// jar, identified or not: a jar with no mod row is exactly the one whose name
+/// is otherwise lost, and it is the population this exists for.
+pub fn set_jar_read(conn: &Connection, sha1: &str, read: &JarRead<'_>) -> Result<()> {
+    let JarRead {
+        modid,
+        name,
+        version,
+        loaders,
+        mc,
+        filename,
+    } = *read;
+    let join = |v: &[String]| (!v.is_empty()).then(|| v.join(","));
+    conn.execute(
+        "INSERT INTO jar_read (sha1, modid, name, version, loaders, mc, filename)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(sha1) DO UPDATE SET
+           modid    = COALESCE(excluded.modid, jar_read.modid),
+           name     = COALESCE(excluded.name, jar_read.name),
+           version  = COALESCE(excluded.version, jar_read.version),
+           loaders  = COALESCE(excluded.loaders, jar_read.loaders),
+           mc       = COALESCE(excluded.mc, jar_read.mc),
+           filename = COALESCE(excluded.filename, jar_read.filename)",
+        rusqlite::params![
+            sha1,
+            modid,
+            name,
+            version,
+            join(loaders),
+            join(mc),
+            filename
+        ],
+    )?;
+    Ok(())
+}
+
 pub fn set_jar_class(
     conn: &Connection,
     sha1: &str,

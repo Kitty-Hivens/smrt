@@ -342,9 +342,24 @@
         <span class="faint">{t('mm.needsIdentitySub', { n: unassigned.length })}</span>
       </div>
       {#each unassigned as u (u.sha1)}
+        <!-- What the harvest read out of the jar (#123). It was a hash and a
+             file size, so naming one meant downloading and opening it by hand,
+             which is why the bucket only grew. A jar that declares nothing
+             still shows as it always did -- that is the honest answer for it. -->
         <div class="urow">
           <div class="uinfo">
-            <span class="mono">{u.sha1.slice(0, 16)}</span>
+            {#if u.name || u.modid}
+              <span class="uname">{u.name ?? u.modid}</span>
+              {#if u.version}<span class="chip">{u.version}</span>{/if}
+              {#if u.kind && u.kind !== 'mod'}<span class="chip kind">{u.kind}</span>{/if}
+              <span class="faint">{[u.loaders, u.mc].filter(Boolean).join(' · ')}</span>
+            {:else if u.filename}
+              <span class="uname mono">{u.filename}</span>
+              <span class="faint">{t('mm.declaresNothing')}</span>
+            {:else}
+              <span class="mono">{u.sha1.slice(0, 16)}</span>
+              <span class="faint">{t('mm.unread')}</span>
+            {/if}
             <span class="faint mono">{fmtBytes(u.size_bytes)}</span>
           </div>
           <button class="primary sm" onclick={() => assign(u)}>{t('mm.assign')}</button>
@@ -579,6 +594,13 @@
   .btitle {
     font-size: var(--fs-md);
     color: var(--warn);
+  }
+  .uname {
+    font-weight: 600;
+  }
+  .chip.kind {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
   .urow {
     display: flex;

@@ -549,6 +549,8 @@ export const en = {
   'users.you': 'you',
   'mm.needsIdentity': 'Needs identity',
   'mm.needsIdentitySub': '{n} cached jars with no mod assigned',
+  'mm.declaresNothing': 'declares no metadata',
+  'mm.unread': 'the mirror could not read this jar',
   'mm.assign': 'Assign',
   'mm.drop': 'Drop .jar files here to add them, then assign each a mod',
   'mm.uploading': 'Uploading...',

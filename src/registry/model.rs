@@ -260,6 +260,33 @@ pub struct UnassignedJar {
     pub sha1: String,
     #[ts(type = "number")]
     pub size_bytes: i64,
+    /// What the harvest read out of the jar (#123). All optional: a jar it
+    /// could not open, or one declaring nothing, is still listed -- with
+    /// nothing to say about it, which is itself the answer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub modid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub loaders: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mc: Option<String>,
+    /// The name it was first seen under, for a jar that declares none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub filename: Option<String>,
+    /// mod / coremod / library, where the classifier decided. A bare ASM
+    /// library is not an unidentified mod, and saying so is half the triage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub kind: Option<String>,
 }
 
 /// One node in the dependency/conflict graph view: a mod that is an endpoint of

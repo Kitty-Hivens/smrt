@@ -614,12 +614,26 @@ async fn get_unassigned(
 ) -> Result<Json<Vec<UnassignedJar>>, ApiError> {
     let inv = state.storage.list_cache_inventory().await?;
     let known = run_query(&state, queries::all_mod_version_shas).await?;
+    // What the harvest read out of each of them (#123). Without this the answer
+    // is a hash and a file size, which is a pile rather than a queue: naming a
+    // jar meant downloading and opening it, so nobody did.
+    let read = run_query(&state, queries::jar_readouts).await?;
     let out = inv
         .into_iter()
         .filter(|e| !known.contains(&e.sha1))
-        .map(|e| UnassignedJar {
-            sha1: e.sha1,
-            size_bytes: e.size_bytes as i64,
+        .map(|e| {
+            let r = read.get(&e.sha1).cloned().unwrap_or_default();
+            UnassignedJar {
+                size_bytes: e.size_bytes as i64,
+                modid: r.modid,
+                name: r.name,
+                version: r.version,
+                loaders: r.loaders,
+                mc: r.mc,
+                filename: r.filename,
+                kind: r.kind,
+                sha1: e.sha1,
+            }
         })
         .collect();
     Ok(Json(out))

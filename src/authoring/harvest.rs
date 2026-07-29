@@ -572,6 +572,21 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         // Per-jar classification, keyed by content hash -- recorded for every
         // scanned jar BEFORE the identity gate: a bare coremod/library jar has
         // no mod row, yet the resolve report still needs its kind.
+        // What was read out of it, identified or not (#123). The unidentified
+        // ones are exactly the population whose names are otherwise lost, and
+        // this file is already open.
+        upsert::set_jar_read(
+            conn,
+            &jar.sha1,
+            &upsert::JarRead {
+                modid: jar.modid.as_deref(),
+                name: jar.name.as_deref(),
+                version: jar.version.as_deref(),
+                loaders: &jar.loaders,
+                mc: &jar.mc_versions,
+                filename: jar.filename.as_deref(),
+            },
+        )?;
         if let Some(kind) = jar.kind.as_deref() {
             upsert::set_jar_class(
                 conn,
