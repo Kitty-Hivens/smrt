@@ -35,6 +35,12 @@ version section when a release is tagged.
 
 ### Added
 
+- Release notes on a build can be written per language. A build carries
+  `changelog_i18n` beside `changelog` -- the same notes keyed by language tag --
+  and a launcher renders whichever matches its user, falling back to the
+  untagged text every client already reads. A language left blank is absent
+  rather than published as an empty note. The panel offers a tab per language it
+  speaks; the wire accepts any tag.
 - Pack history: a commit is a snapshot of the config, an author, a message
   and a parent, and a build is made from one rather than from whatever is on
   screen. With edits merging live, building the working state could ship a
