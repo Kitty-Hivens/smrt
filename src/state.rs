@@ -1,6 +1,6 @@
 use crate::accounts::Accounts;
-use crate::authoring::PackStream;
 use crate::authoring::{HarvestScheduler, Modrinth};
+use crate::authoring::{PackDocs, PackStream};
 use crate::config::Config;
 use crate::jobs::JobRegistry;
 use crate::registry::Registry;
@@ -26,6 +26,10 @@ pub struct AppState {
     /// job registry: presence that outlived the process would be a list of
     /// ghosts.
     pub packs: Arc<PackStream>,
+    /// The live merge point for packs being edited. In-process like the room
+    /// above, and rebuilt from `config.json` whenever nobody holds one, so it is
+    /// a cache of an edit in flight rather than a second source of truth.
+    pub docs: Arc<PackDocs>,
 }
 
 impl AppState {
@@ -46,6 +50,7 @@ impl AppState {
             config: Arc::new(config),
             jobs: Arc::new(JobRegistry::default()),
             packs: Arc::new(PackStream::default()),
+            docs: Arc::new(PackDocs::default()),
             accounts,
         })
     }

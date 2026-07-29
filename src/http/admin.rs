@@ -72,6 +72,10 @@ fn authoring_router(state: AppState) -> Router {
             get(get_pack_config).put(put_pack_config),
         )
         .route("/v1/authoring/packs/{pack_id}/events", get(pack_events))
+        .route(
+            "/v1/authoring/packs/{pack_id}/doc",
+            get(get_pack_doc).post(post_pack_doc),
+        )
         .route("/v1/authoring/packs/{pack_id}", delete(delete_pack))
         .route(
             "/v1/authoring/packs/{pack_id}/visibility",
@@ -921,6 +925,123 @@ async fn pack_events(
         .into_response())
 }
 
+/// How long the mirror waits for the typing to stop before writing the merged
+/// config to disk. Long enough that a sentence is one write rather than forty,
+/// short enough that a build started right after an edit sees it.
+const MATERIALISE_AFTER: std::time::Duration = std::time::Duration::from_millis(1200);
+
+/// The document as it stands, for an editor joining the pack.
+///
+/// Binary rather than JSON: this is a CRDT update, not a config. The editor
+/// applies it to an empty document -- seeding its own from the config and then
+/// applying this would author a second value for every key, and one whole `mods`
+/// array would silently replace the other.
+async fn get_pack_doc(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+) -> Result<impl axum::response::IntoResponse, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    let cfg = state.storage.load_pack_config(&pack_id).await?;
+    let doc = state
+        .docs
+        .get_or_seed(&pack_id, &cfg)
+        .map_err(ApiError::Internal)?;
+    Ok((
+        [(header::CONTENT_TYPE, "application/octet-stream")],
+        doc.state(),
+    ))
+}
+
+/// One editor's changes. Merged into the mirror's copy, passed on to everyone
+/// else in the pack, and written to disk once the typing stops.
+async fn post_pack_doc(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+    body: Bytes,
+) -> Result<StatusCode, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    // The config is read only when there is no document yet: seeding happens
+    // once per pack, and a file read per keystroke would be the cost of writing
+    // this the obvious way.
+    let doc = match state.docs.get(&pack_id) {
+        Some(doc) => doc,
+        None => {
+            let cfg = state.storage.load_pack_config(&pack_id).await?;
+            state
+                .docs
+                .get_or_seed(&pack_id, &cfg)
+                .map_err(ApiError::Internal)?
+        }
+    };
+    doc.apply(&body)
+        .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
+
+    // Everyone else in the pack gets the same bytes. Base64 because the room is
+    // server-sent events, which is a text protocol; the alternative is a second
+    // transport for one field.
+    use base64::Engine;
+    state.packs.publish(
+        &pack_id,
+        crate::authoring::PackEvent::Doc {
+            by: identity.login.clone(),
+            update: base64::engine::general_purpose::STANDARD.encode(&body),
+        },
+    );
+
+    // Writing on every keystroke would be a file write per character and a
+    // revision bump per character with it. Each update takes a ticket; the last
+    // one still holding it when the wait is over does the write.
+    let ticket = state.docs.touch(&pack_id);
+    let (state, pack_id, by) = (state.clone(), pack_id.clone(), identity.login.clone());
+    tokio::spawn(async move {
+        tokio::time::sleep(MATERIALISE_AFTER).await;
+        if !state.docs.is_current(&pack_id, ticket) {
+            return;
+        }
+        materialise(&state, &pack_id, &by).await;
+    });
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// Write the merged document to `config.json`, through the same door a
+/// whole-config save uses.
+///
+/// Everything that reads a pack keeps reading that file, which is the whole
+/// reason this arrangement is affordable: the document is a merge point, not a
+/// second source of truth.
+async fn materialise(state: &AppState, pack_id: &str, by: &str) {
+    let _guard = state.storage.lock_pack_config(pack_id).await;
+    let Some(doc) = state.docs.get(pack_id) else {
+        return;
+    };
+    let Ok(existing) = state.storage.load_pack_config(pack_id).await else {
+        return;
+    };
+    // Two people can leave the document briefly nonsensical -- a half-retyped
+    // version string is not a config. Keep the last good file and try again on
+    // the next edit rather than writing half of one.
+    let cfg = match doc.to_config(&existing) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            tracing::warn!(pack_id, error = %format!("{e:#}"), "document does not materialise; keeping the stored config");
+            return;
+        }
+    };
+    if serde_json::to_value(&cfg).ok() == serde_json::to_value(&existing).ok() {
+        return; // nothing moved; a write would bump the revision for nobody
+    }
+    let fill = fill_needed(Some(&existing), &cfg);
+    if let Err(e) = store_edited_config(state, pack_id, cfg, by, fill).await {
+        tracing::warn!(pack_id, error = ?e, "materialising the document failed");
+    }
+}
+
 // ── config revisions (optimistic concurrency) ───────────────────────────────
 //
 // Config edits used to be a plain read-modify-write: two accounts editing one
@@ -1047,7 +1168,7 @@ async fn put_pack_config(
     // can't reassign ownership, self-promote to official, or publish. On create,
     // derive them from the id's namespace: a community id (u/<uid>/...) is a draft
     // owned by that uid; a flat id is an official published operator pack.
-    match state.storage.load_pack_config(&pack_id).await {
+    let fill = match state.storage.load_pack_config(&pack_id).await {
         Ok(existing) => {
             check_precondition(pre.as_ref(), Some(&rev_of(&existing)?), &pack_id)?;
             cfg.owner = existing.owner;
@@ -1060,6 +1181,7 @@ async fn put_pack_config(
             // Modrinth right now. Orphans are pruned by the fill itself once
             // nothing declared reaches them.
             crate::authoring::depfill::merge_pulled(&existing, &mut cfg);
+            fill_needed(Some(&existing), &cfg)
         }
         Err(_) => {
             check_precondition(pre.as_ref(), None, &pack_id)?;
@@ -1078,33 +1200,15 @@ async fn put_pack_config(
                     cfg.fork_of = None;
                 }
             }
+            true
         }
-    }
-    // Pull in each mod's missing hard dependencies (Modrinth first, the mirror's
-    // own cache second) and record the resolved requires graph, so the operator
-    // never hand-manages libraries and the build can derive required-ness.
-    // Best-effort: a Modrinth outage must not block saving a config, so a fill
-    // error is logged and the raw config is saved.
-    let cached: std::collections::HashSet<String> = state
-        .storage
-        .list_cache_inventory()
-        .await
-        .map(|inv| inv.into_iter().map(|e| e.sha1).collect())
-        .unwrap_or_default();
-    if let Err(e) = crate::authoring::depfill::fill_dependencies(
-        &mut cfg,
-        &state.registry,
-        &state.modrinth,
-        &cached,
-    )
-    .await
-    {
-        tracing::warn!(pack_id = %pack_id, error = %e, "dependency auto-fill failed; saving config as-is");
-    }
-    state.storage.save_pack_config(&pack_id, &cfg).await?;
-    // the revision of what was just stored, so the client that saved it edits
-    // on from there without a re-read
-    let rev = rev_of(&cfg)?;
+    };
+    // A whole-config write is the other door into the same act, so it goes
+    // through the same one. It also settles any live document: the document
+    // would otherwise keep the version it remembers and put it back on the next
+    // merge, quietly undoing this write.
+    state.docs.forget(&pack_id);
+    let (cfg, rev) = store_edited_config(&state, &pack_id, cfg, &identity.login, fill).await?;
     audit(
         &state,
         &identity,
@@ -1113,14 +1217,70 @@ async fn put_pack_config(
         Some(&format!("{} mods", cfg.mods.len())),
     )
     .await;
+    Ok((StatusCode::CREATED, etag(&rev), Json(cfg)))
+}
+
+/// Whether the dependency fill has anything to do. It reaches Modrinth, so it
+/// runs when the declared set changed and not when someone retitled the pack --
+/// a document materialises every second or two while a person types, and a
+/// network round trip per keystroke would be a denial of service we wrote
+/// ourselves.
+fn fill_needed(before: Option<&PackConfig>, after: &PackConfig) -> bool {
+    // compared through their serialized form: the declarations are plain data,
+    // and this needs no equality derive spreading across the domain types
+    let declared = |c: &PackConfig| serde_json::to_value((&c.mods, &c.assets)).ok();
+    before.is_none_or(|b| declared(b) != declared(after))
+}
+
+/// Store an edited config: write it, note the revision, and tell everyone in the
+/// pack. Shared by the whole-config PUT and by the document's materialisation,
+/// which are two doors into one act and must not drift.
+///
+/// The caller holds the pack's config lock and has already settled the
+/// server-owned fields; `fill` says whether the dependency pass is worth its
+/// network round trip.
+async fn store_edited_config(
+    state: &AppState,
+    pack_id: &str,
+    mut cfg: PackConfig,
+    by: &str,
+    fill: bool,
+) -> Result<(PackConfig, String), ApiError> {
+    // Pull in each mod's missing hard dependencies (Modrinth first, the mirror's
+    // own cache second) and record the resolved requires graph, so the operator
+    // never hand-manages libraries and the build can derive required-ness.
+    // Best-effort: a Modrinth outage must not block saving a config, so a fill
+    // error is logged and the raw config is saved.
+    if fill {
+        let cached: std::collections::HashSet<String> = state
+            .storage
+            .list_cache_inventory()
+            .await
+            .map(|inv| inv.into_iter().map(|e| e.sha1).collect())
+            .unwrap_or_default();
+        if let Err(e) = crate::authoring::depfill::fill_dependencies(
+            &mut cfg,
+            &state.registry,
+            &state.modrinth,
+            &cached,
+        )
+        .await
+        {
+            tracing::warn!(pack_id = %pack_id, error = %e, "dependency auto-fill failed; saving config as-is");
+        }
+    }
+    state.storage.save_pack_config(pack_id, &cfg).await?;
+    // the revision of what was just stored, so the client that saved it edits
+    // on from there without a re-read
+    let rev = rev_of(&cfg)?;
     state.packs.publish(
-        &pack_id,
+        pack_id,
         crate::authoring::PackEvent::Saved {
             rev: rev.clone(),
-            by: identity.login.clone(),
+            by: by.to_string(),
         },
     );
-    Ok((StatusCode::CREATED, etag(&rev), Json(cfg)))
+    Ok((cfg, rev))
 }
 
 #[derive(serde::Deserialize)]
@@ -1152,6 +1312,10 @@ async fn revert_pack_config(
     // middle of a save's read-modify-write, and it answers with the revision it
     // produced so the editor keeps saving conditionally afterwards.
     let _guard = state.storage.lock_pack_config(&pack_id).await;
+    // A live document remembers the config this replaces and would put it back
+    // on the next merge, so the revert settles it too. Editors resync from the
+    // reverted config, which is what a revert means to them.
+    state.docs.forget(&pack_id);
     state.storage.save_pack_config(&pack_id, &cfg).await?;
     let rev = rev_of(&cfg)?;
     audit(
@@ -1281,13 +1445,78 @@ struct StaticListing {
 
 #[cfg(test)]
 mod tests {
-    use super::{Precondition, check_precondition, github_asset_url, precondition};
+    use super::{Precondition, check_precondition, fill_needed, github_asset_url, precondition};
+    use crate::domain::{DeclaredMod, LoaderSpec, PackConfig, PackTier, SourceDecl, Visibility};
     use axum::http::{HeaderMap, HeaderValue, header};
 
     fn headers(if_match: &str) -> HeaderMap {
         let mut h = HeaderMap::new();
         h.insert(header::IF_MATCH, HeaderValue::from_str(if_match).unwrap());
         h
+    }
+
+    fn cfg(mods: Vec<DeclaredMod>) -> PackConfig {
+        PackConfig {
+            pack_id: "Industrial".into(),
+            display_name: "Industrial".into(),
+            tagline: String::new(),
+            minecraft_version: "1.12.2".into(),
+            loader: LoaderSpec {
+                name: "forge".into(),
+                version: "14.23.5.2860".into(),
+            },
+            java_major: 8,
+            version: None,
+            tags: vec![],
+            featured: false,
+            mods,
+            assets: vec![],
+            auth: None,
+            pack_meta: Default::default(),
+            owner: 0,
+            tier: PackTier::Official,
+            visibility: Visibility::Published,
+            fork_of: None,
+        }
+    }
+
+    fn declared(filename: &str) -> DeclaredMod {
+        DeclaredMod {
+            filename: filename.into(),
+            default_enabled: true,
+            source: SourceDecl::SmrtCache {
+                sha1: "a".repeat(40),
+            },
+            display: None,
+            slug: None,
+            pulled: false,
+        }
+    }
+
+    // The dependency fill reaches Modrinth. A document materialises every second
+    // or two while somebody types, so running the fill on every write would be a
+    // network round trip per sentence -- and the fill has nothing to do unless
+    // the declared set actually moved.
+    #[test]
+    fn the_dependency_fill_runs_on_a_changed_declaration_and_not_on_prose() {
+        let before = cfg(vec![declared("jei.jar")]);
+
+        let mut retitled = before.clone();
+        retitled.display_name = "Industrial II".into();
+        retitled.tagline = "now with more".into();
+        assert!(
+            !fill_needed(Some(&before), &retitled),
+            "renaming a pack pulls no dependencies"
+        );
+
+        let mut added = before.clone();
+        added.mods.push(declared("ae2.jar"));
+        assert!(
+            fill_needed(Some(&before), &added),
+            "a new mod might need one"
+        );
+
+        assert!(fill_needed(None, &before), "a pack being created is filled");
     }
 
     #[test]

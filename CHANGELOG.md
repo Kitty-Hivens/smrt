@@ -75,6 +75,29 @@ version section when a release is tagged.
   animations and arrive already finished on the first frame. The preview's two
   collapsed lists -- libraries and config files -- open the same way.
 
+### Added
+
+- Two people can edit one pack at the same time. Presence (#113) and the
+  revision check (#52) let them see each other and stopped them overwriting each
+  other, but the unit of conflict was still the whole pack: one adding mods and
+  one writing the card copy collided anyway, and the loser reapplied by hand.
+  The config is now a document the mirror merges, and the unit of a change is
+  the shape of the thing changed. A paragraph merges a character at a time,
+  because two people writing in one sentence have no correct winner. A mod row
+  merges as a row -- rows added by either side both land, and a neighbour's
+  filename appearing one letter at a time would be noise rather than
+  collaboration. A scalar has nothing to merge inside it, so the last write wins
+  and everyone converges on the same answer.
+  `config.json` is unchanged and still written on the same path a save always
+  used, so the build, the publish check and the CLI go on reading a plain file.
+  The merged document is written once the typing stops rather than per
+  keystroke, and the dependency fill -- which reaches Modrinth -- runs only when
+  the declared set actually moved. A whole-config save or a revert settles any
+  live document, since it would otherwise put back the version it still
+  remembered.
+  Server-owned fields (owner, tier, visibility, fork_of) are not in the document
+  at all, so a client cannot propose a change to one even by accident.
+
 ### Removed
 
 - Mod roles. A role grouped interchangeable mods into one selectable slot in a

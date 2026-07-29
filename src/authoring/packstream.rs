@@ -37,6 +37,10 @@ pub enum PackEvent {
     /// Who is in this pack now. Sent on every join and leave rather than as a
     /// delta: the list is short, and a list is impossible to desynchronise.
     Present { editors: Vec<String> },
+    /// Someone's edit, as the merge layer's own update (#115), and who made it.
+    /// Base64 because this room is server-sent events, which is a text
+    /// protocol -- the alternative is a second transport for one field.
+    Doc { by: String, update: String },
 }
 
 #[derive(Default)]
