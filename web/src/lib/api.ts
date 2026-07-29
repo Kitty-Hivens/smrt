@@ -17,6 +17,7 @@ import type {
   JarDiff,
   JobResult,
   ManifestVersionsListing,
+  MinecraftVersions,
   ModDetail,
   ModHit,
   ModrinthHit,
@@ -307,6 +308,10 @@ export const api = {
   jobEventsUrl: (jobId: string) => `/v1/jobs/${encodeURIComponent(jobId)}/events`,
   // What is happening to a pack while it is open: who else is in it, and that it
   // moved. Subscribing is also how the mirror learns you are here.
+  // Every Minecraft version a pack can be built against, from the mirror's own
+  // copy (#126). Answers even when upstream is down, saying so.
+  minecraftVersions: () => getJson<MinecraftVersions>('/v1/meta/minecraft'),
+
   packEventsUrl: (id: string) => `/v1/authoring/packs/${encodeURIComponent(id)}/events`,
 
   // The pack's merge document (#115). Binary both ways: these are CRDT updates,
