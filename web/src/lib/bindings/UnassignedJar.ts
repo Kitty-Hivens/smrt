@@ -5,4 +5,19 @@
  * modid/Modrinth id). The authoring UI lists these so the operator can assign
  * each a mod + release + facets instead of it vanishing into the cache.
  */
-export type UnassignedJar = { sha1: string, size_bytes: number, };
+export type UnassignedJar = { sha1: string, size_bytes: number, 
+/**
+ * What the harvest read out of the jar (#123). All optional: a jar it
+ * could not open, or one declaring nothing, is still listed -- with
+ * nothing to say about it, which is itself the answer.
+ */
+modid?: string, name?: string, version?: string, loaders?: string, mc?: string, 
+/**
+ * The name it was first seen under, for a jar that declares none.
+ */
+filename?: string, 
+/**
+ * mod / coremod / library, where the classifier decided. A bare ASM
+ * library is not an unidentified mod, and saying so is half the triage.
+ */
+kind?: string, };

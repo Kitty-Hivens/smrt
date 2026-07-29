@@ -1458,6 +1458,48 @@ pub fn all_mod_version_shas(conn: &Connection) -> Result<HashSet<String>> {
     Ok(out)
 }
 
+/// What the harvest read out of each jar it opened, by content hash (#123).
+/// The unidentified listing joins this so a row says what the jar is instead of
+/// forty hex characters and a file size.
+pub fn jar_readouts(conn: &Connection) -> Result<HashMap<String, JarReadRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT r.sha1, r.modid, r.name, r.version, r.loaders, r.mc, r.filename, c.kind
+           FROM jar_read r LEFT JOIN jar_class c ON c.sha1 = r.sha1",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            JarReadRow {
+                modid: r.get(1)?,
+                name: r.get(2)?,
+                version: r.get(3)?,
+                loaders: r.get(4)?,
+                mc: r.get(5)?,
+                filename: r.get(6)?,
+                kind: r.get(7)?,
+            },
+        ))
+    })?;
+    let mut out = HashMap::new();
+    for row in rows {
+        let (sha1, read) = row?;
+        out.insert(sha1, read);
+    }
+    Ok(out)
+}
+
+/// One jar's readout, as stored.
+#[derive(Debug, Clone, Default)]
+pub struct JarReadRow {
+    pub modid: Option<String>,
+    pub name: Option<String>,
+    pub version: Option<String>,
+    pub loaders: Option<String>,
+    pub mc: Option<String>,
+    pub filename: Option<String>,
+    pub kind: Option<String>,
+}
+
 pub fn stats(conn: &Connection) -> Result<RegistryStats> {
     let count = |sql: &str| -> Result<i64> { Ok(conn.query_row(sql, [], |r| r.get(0))?) };
     Ok(RegistryStats {

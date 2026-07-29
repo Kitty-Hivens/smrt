@@ -86,6 +86,7 @@ const MIGRATIONS: &[(u32, Migration)] = &[
         20,
         Migration::Sql(include_str!("schema/0020_modrinth_project_name.sql")),
     ),
+    (21, Migration::Sql(include_str!("schema/0021_jar_read.sql"))),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its
