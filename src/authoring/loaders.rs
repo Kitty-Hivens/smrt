@@ -64,7 +64,8 @@ pub struct LoaderVersions {
     pub fetched_at: String,
     #[ts(type = "number")]
     pub fetched_unix: u64,
-    /// Upstream could not be reached and this is what was last known.
+    /// Past its freshness window: a refresh is in flight behind this answer, or
+    /// upstream is not answering.
     #[serde(default)]
     pub stale: bool,
 }
@@ -94,38 +95,53 @@ pub async fn loader_versions(
     }
     let key = format!("loader-{loader}");
     let cached: Option<LoaderVersions> = storage.load_meta_list(&key).await.ok().flatten();
-    if let Some(list) = &cached
-        && super::versions::is_fresh(list.fetched_unix)
-    {
-        return Ok(list.clone());
+    if let Some(list) = cached {
+        if super::versions::is_fresh(list.fetched_unix) {
+            return Ok(list);
+        }
+        // Served now, refreshed behind. Forge's metadata is 210 kB, and having
+        // whoever opens the editor first after six hours pay for that download
+        // is an economy taken out of someone else's afternoon.
+        let (storage, modrinth, loader) = (storage.clone(), modrinth.clone(), loader.clone());
+        tokio::spawn(async move {
+            if let Err(e) = refresh(&storage, &modrinth, &loader).await {
+                tracing::warn!(loader, error = %format!("{e:#}"), "refreshing the loader build list failed");
+            }
+        });
+        return Ok(LoaderVersions {
+            stale: true,
+            ..list
+        });
     }
 
-    match fetch(modrinth, &loader).await {
-        Ok(builds) => {
-            let now = super::versions::unix_now();
-            let fresh = LoaderVersions {
-                loader: loader.clone(),
-                builds,
-                fetched_at: super::versions::rfc3339(now),
-                fetched_unix: now,
-                stale: false,
-            };
-            if let Err(e) = storage.save_meta_list(&key, &fresh).await {
-                tracing::warn!(loader, error = %e, "caching the loader build list failed");
-            }
-            Ok(fresh)
-        }
-        Err(e) => match cached {
-            Some(list) => {
-                tracing::warn!(loader, error = %format!("{e:#}"), "loader builds unreachable; serving the last known list");
-                Ok(LoaderVersions {
-                    stale: true,
-                    ..list
-                })
-            }
-            None => Err(e).context("no cached loader build list to fall back on"),
-        },
+    // Nothing cached: no older answer exists to hand back, so this one waits.
+    refresh(storage, modrinth, &loader)
+        .await
+        .context("no cached loader build list to fall back on")
+}
+
+/// Ask upstream and write what comes back.
+async fn refresh(
+    storage: &Arc<Storage>,
+    modrinth: &Arc<Modrinth>,
+    loader: &str,
+) -> Result<LoaderVersions> {
+    let builds = fetch(modrinth, loader).await?;
+    let now = super::versions::unix_now();
+    let fresh = LoaderVersions {
+        loader: loader.to_string(),
+        builds,
+        fetched_at: super::versions::rfc3339(now),
+        fetched_unix: now,
+        stale: false,
+    };
+    if let Err(e) = storage
+        .save_meta_list(&format!("loader-{loader}"), &fresh)
+        .await
+    {
+        tracing::warn!(loader, error = %e, "caching the loader build list failed");
     }
+    Ok(fresh)
 }
 
 async fn fetch(modrinth: &Arc<Modrinth>, loader: &str) -> Result<Vec<LoaderBuild>> {

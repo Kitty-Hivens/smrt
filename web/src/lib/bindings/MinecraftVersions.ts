@@ -18,7 +18,8 @@ fetched_at: string,
  */
 fetched_unix: number, 
 /**
- * True when upstream could not be reached and this is what was last known.
- * The panel can say so rather than presenting old news as current.
+ * This copy is past its freshness window: a refresh is in flight behind
+ * the answer, or upstream is not answering. Either way it is old news, and
+ * the panel says so rather than presenting it as current.
  */
 stale: boolean, };

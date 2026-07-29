@@ -41,8 +41,9 @@ pub struct MinecraftVersions {
     /// parser earned for one comparison is more surface than one integer.
     #[ts(type = "number")]
     pub fetched_unix: u64,
-    /// True when upstream could not be reached and this is what was last known.
-    /// The panel can say so rather than presenting old news as current.
+    /// This copy is past its freshness window: a refresh is in flight behind
+    /// the answer, or upstream is not answering. Either way it is old news, and
+    /// the panel says so rather than presenting it as current.
     #[serde(default)]
     pub stale: bool,
 }
@@ -83,40 +84,52 @@ pub async fn minecraft_versions(
 ) -> Result<MinecraftVersions> {
     let cached: Option<MinecraftVersions> =
         storage.load_meta_list(MINECRAFT_LIST).await.ok().flatten();
-    if let Some(list) = &cached
-        && is_fresh(list.fetched_unix)
-    {
-        return Ok(list.clone());
+    if let Some(list) = cached {
+        if is_fresh(list.fetched_unix) {
+            return Ok(list);
+        }
+        // Stale, but there is something to serve. Nobody waits on somebody
+        // else's service for a list that moves a few times a month: the old one
+        // goes back now, and the refresh runs behind it. If upstream is down the
+        // only casualty is that the next ask is also served from this file.
+        let (storage, modrinth) = (storage.clone(), modrinth.clone());
+        tokio::spawn(async move {
+            if let Err(e) = refresh(&storage, &modrinth).await {
+                tracing::warn!(error = %format!("{e:#}"), "refreshing the Minecraft version list failed");
+            }
+        });
+        // Said to be old, because it is. The flag used to mean "upstream was
+        // unreachable"; measured against the window it means the same thing to
+        // whoever reads it -- this is not current -- and it is true in the case
+        // that actually happens, which is a refresh still in flight.
+        return Ok(MinecraftVersions {
+            stale: true,
+            ..list
+        });
     }
 
-    match modrinth.game_versions().await {
-        Ok(versions) => {
-            let now = unix_now();
-            let fresh = MinecraftVersions {
-                versions,
-                fetched_at: rfc3339(now),
-                fetched_unix: now,
-                stale: false,
-            };
-            if let Err(e) = storage.save_meta_list(MINECRAFT_LIST, &fresh).await {
-                tracing::warn!(error = %e, "caching the Minecraft version list failed");
-            }
-            Ok(fresh)
-        }
-        Err(e) => match cached {
-            // Old news, said to be old news. An editor with a list from
-            // yesterday can still pick 1.21.1; an editor with an empty picker
-            // has to go back to typing, which is what this replaced.
-            Some(list) => {
-                tracing::warn!(error = %format!("{e:#}"), "Minecraft versions unreachable; serving the last known list");
-                Ok(MinecraftVersions {
-                    stale: true,
-                    ..list
-                })
-            }
-            None => Err(e).context("no cached Minecraft version list to fall back on"),
-        },
+    // Nothing cached at all: this caller has to wait, because there is no older
+    // answer to hand it. Every ask after this one is served from the file.
+    refresh(storage, modrinth)
+        .await
+        .context("no cached Minecraft version list to fall back on")
+}
+
+/// Ask upstream and write what comes back, so the caller that triggered it and
+/// every later one are answered from the same work.
+async fn refresh(storage: &Arc<Storage>, modrinth: &Arc<Modrinth>) -> Result<MinecraftVersions> {
+    let versions = modrinth.game_versions().await?;
+    let now = unix_now();
+    let fresh = MinecraftVersions {
+        versions,
+        fetched_at: rfc3339(now),
+        fetched_unix: now,
+        stale: false,
+    };
+    if let Err(e) = storage.save_meta_list(MINECRAFT_LIST, &fresh).await {
+        tracing::warn!(error = %e, "caching the Minecraft version list failed");
     }
+    Ok(fresh)
 }
 
 #[cfg(test)]

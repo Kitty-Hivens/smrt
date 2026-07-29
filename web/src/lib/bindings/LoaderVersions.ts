@@ -6,6 +6,7 @@ import type { LoaderBuild } from "./LoaderBuild";
  */
 export type LoaderVersions = { loader: string, builds: Array<LoaderBuild>, fetched_at: string, fetched_unix: number, 
 /**
- * Upstream could not be reached and this is what was last known.
+ * Past its freshness window: a refresh is in flight behind this answer, or
+ * upstream is not answering.
  */
 stale: boolean, };
