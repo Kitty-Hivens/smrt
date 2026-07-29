@@ -85,7 +85,7 @@
       {#each report.conflicts as c}
         <div class="rl-row">
           <span class="mono strong">{c.a}</span>
-          <span class="faint">{c.breaks ? t('resolve.breaks') : t('resolve.conflictsWith')}</span>
+          <span class="faint">{c.hard ? t('resolve.incompatible') : t('resolve.discouraged')}</span>
           <span class="mono strong">{c.b}</span>
           <span class="src mono">{c.source}</span>
         </div>
@@ -99,7 +99,7 @@
       {#each report.optional_conflicts as c}
         <div class="rl-row">
           <span class="mono strong">{c.a}</span>
-          <span class="faint">{c.breaks ? t('resolve.breaks') : t('resolve.conflictsWith')}</span>
+          <span class="faint">{c.hard ? t('resolve.incompatible') : t('resolve.discouraged')}</span>
           <span class="mono strong">{c.b}</span>
           <span class="faint">{t('resolve.ifEnabled')}</span>
           <span class="src mono">{c.source}</span>

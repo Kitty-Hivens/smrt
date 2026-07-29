@@ -7,4 +7,10 @@
  * as a labelled leaf so the dangling requirement is still visible. `kind` and
  * `source` are the relation vocab strings.
  */
-export type GraphEdge = { from_mod_id: number, to_mod_id?: number, target: string, kind: string, source: string, };
+export type GraphEdge = { from_mod_id: number, to_mod_id?: number, target: string, kind: string, 
+/**
+ * `hard` | `soft` on a conflict edge, absent on every other kind (#129).
+ * Carried so the view can tell a loader-enforced incompatibility from an
+ * author's advice, which one alarming colour for both could not.
+ */
+severity?: string, source: string, };

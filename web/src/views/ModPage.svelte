@@ -71,7 +71,6 @@
     optional_dep: 'var(--fg-dim)',
     recommends: 'var(--fg-dim)',
     conflicts: 'var(--danger)',
-    breaks: 'var(--danger)',
     provides: 'var(--ok)',
   };
   const kindColor = (k: string) => KIND_COLOR[k] ?? 'var(--fg-dim)';
