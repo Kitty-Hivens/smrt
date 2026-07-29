@@ -297,7 +297,7 @@ impl JobRegistry {
         job
     }
 
-    /// Create a bootstrap job: stage an SC archive into the cache + static and
+    /// Create a bootstrap job: stage an instance archive into the cache + static and
     /// write the starter authoring config, on a background task.
     pub fn spawn_bootstrap(
         &self,
@@ -546,7 +546,7 @@ async fn run_bootstrap(
 ) -> Result<(), String> {
     let pack_id = args.pack_id.clone();
     job.line(format!(
-        "bootstrap {pack_id}: reading SC archive ({} bytes)",
+        "bootstrap {pack_id}: reading instance archive ({} bytes)",
         archive.len()
     ));
     let cfg = authoring::bootstrap(args, archive)

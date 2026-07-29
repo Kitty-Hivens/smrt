@@ -1,6 +1,10 @@
-//! The validate pass: cross-reference a `PackConfig` against an SC archive
-//! by mod filename, so a curator can confirm the declared set matches what
-//! the SC server's FML handshake expects.
+//! The validate pass: cross-reference a `PackConfig` against an instance
+//! archive by mod filename, so a curator can confirm the declared set matches
+//! what a server's FML handshake expects.
+//!
+//! An instance archive is any zip with a top-level `mods/` -- an export from a
+//! launcher, or a plain instance directory. Nothing here knows or cares which
+//! one made it.
 
 use super::archive::extract_mods;
 use crate::domain::PackConfig;
@@ -9,7 +13,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 use ts_rs::TS;
 
-/// Result of cross-referencing a `PackConfig` against an SC archive by
+/// Result of cross-referencing a `PackConfig` against an instance archive by
 /// mod filename. `missing_in_config` (in the archive but not declared)
 /// would break the FML handshake; `extra_in_config` (declared but not in
 /// the archive) is expected when the curator adds mods on top.
@@ -17,7 +21,7 @@ use ts_rs::TS;
 #[ts(export, export_to = "bindings/")]
 pub struct ValidateReport {
     #[ts(type = "number")]
-    pub sc_mod_count: usize,
+    pub archive_mod_count: usize,
     #[ts(type = "number")]
     pub declared_mods: usize,
     #[ts(type = "number")]
@@ -28,29 +32,30 @@ pub struct ValidateReport {
     pub extra_in_config: Vec<String>,
 }
 
-/// Cross-reference a `PackConfig` against an SC archive's `mods/*.jar` set
+/// Cross-reference a `PackConfig` against an instance archive's `mods/*.jar` set
 /// by filename. Pure: returns the report, leaves printing / failing to the
 /// caller.
-pub fn validate(cfg: &PackConfig, sc_archive_bytes: &[u8]) -> Result<ValidateReport> {
-    let sc_mods = extract_mods(sc_archive_bytes)?;
+pub fn validate(cfg: &PackConfig, archive_bytes: &[u8]) -> Result<ValidateReport> {
+    let archive_mods = extract_mods(archive_bytes)?;
 
-    let sc_filenames: HashSet<&str> = sc_mods.iter().map(|m| m.filename.as_str()).collect();
+    let archive_filenames: HashSet<&str> =
+        archive_mods.iter().map(|m| m.filename.as_str()).collect();
     let config_filenames: HashSet<&str> = cfg.mods.iter().map(|m| m.filename.as_str()).collect();
 
-    let mut missing_in_config: Vec<String> = sc_filenames
+    let mut missing_in_config: Vec<String> = archive_filenames
         .difference(&config_filenames)
         .map(|s| s.to_string())
         .collect();
     let mut extra_in_config: Vec<String> = config_filenames
-        .difference(&sc_filenames)
+        .difference(&archive_filenames)
         .map(|s| s.to_string())
         .collect();
-    let matched = sc_filenames.intersection(&config_filenames).count();
+    let matched = archive_filenames.intersection(&config_filenames).count();
     missing_in_config.sort();
     extra_in_config.sort();
 
     Ok(ValidateReport {
-        sc_mod_count: sc_mods.len(),
+        archive_mod_count: archive_mods.len(),
         declared_mods: cfg.mods.len(),
         declared_assets: cfg.assets.len(),
         matched,

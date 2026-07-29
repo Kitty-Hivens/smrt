@@ -1,5 +1,5 @@
-//! SC archive extraction: pull `mods/*.jar` and the bundled `extra.zip`
-//! tree out of an SC client archive. Used by bootstrap (staging) and
+//! Instance archive extraction: pull `mods/*.jar` and the bundled `extra.zip`
+//! tree out of a client instance archive. Used by bootstrap (staging) and
 //! validate (cross-reference). Internal to the authoring layer.
 
 use super::sources::sha1_hex;
@@ -46,7 +46,7 @@ pub(super) fn read_zip_entry(mut reader: impl Read, declared: u64, name: &str) -
 
 pub(super) fn extract_mods(archive_bytes: &[u8]) -> Result<Vec<DiscoveredMod>> {
     let reader = Cursor::new(archive_bytes);
-    let mut zip = zip::ZipArchive::new(reader).context("opening SC archive as zip")?;
+    let mut zip = zip::ZipArchive::new(reader).context("opening the instance archive as zip")?;
     let mut out = Vec::new();
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).context("reading zip entry")?;
@@ -76,7 +76,7 @@ pub(super) fn extract_mods(archive_bytes: &[u8]) -> Result<Vec<DiscoveredMod>> {
 
 pub(super) fn extract_extra_assets(archive_bytes: &[u8]) -> Result<Vec<DiscoveredAsset>> {
     let reader = Cursor::new(archive_bytes);
-    let mut zip = zip::ZipArchive::new(reader).context("opening SC archive as zip")?;
+    let mut zip = zip::ZipArchive::new(reader).context("opening the instance archive as zip")?;
     let mut extra_zip_bytes = None;
     if let Ok(mut entry) = zip.by_name("extra.zip") {
         let size = entry.size();

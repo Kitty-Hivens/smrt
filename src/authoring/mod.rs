@@ -1,5 +1,5 @@
 //! Authoring (service layer): turn an admin-authored `PackConfig` into the
-//! wire manifest, bootstrap a starter config from an SC archive, run the
+//! wire manifest, bootstrap a starter config from an instance archive, run the
 //! build enrichment passes, and resolve Modrinth sources. The compute core
 //! shared by the `smrt-pack` CLI and the panel's build endpoints. `archive`
 //! and `sources` are internal helpers; the passes are the public surface.

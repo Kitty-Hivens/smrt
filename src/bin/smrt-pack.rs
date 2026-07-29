@@ -22,10 +22,11 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// Read an SC archive and emit a starter PackConfig JSON.
+    /// Read an instance archive (any zip with a top-level `mods/`) and emit a
+    /// starter PackConfig JSON.
     Bootstrap {
         #[arg(long)]
-        sc_archive: PathBuf,
+        archive: PathBuf,
         #[arg(long)]
         out: PathBuf,
         #[arg(long)]
@@ -48,12 +49,12 @@ enum Cmd {
         storage: PathBuf,
     },
 
-    /// Cross-reference a PackConfig against an SC archive by filename.
+    /// Cross-reference a PackConfig against an instance archive by filename.
     Validate {
         #[arg(long)]
         config: PathBuf,
-        #[arg(long = "against-sc-archive")]
-        sc_archive: PathBuf,
+        #[arg(long = "against-archive")]
+        archive: PathBuf,
     },
 
     /// Resolve every source in a PackConfig and write the wire manifest.
@@ -227,7 +228,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Bootstrap {
-            sc_archive,
+            archive: archive_path,
             out,
             pack_id,
             display_name,
@@ -238,8 +239,8 @@ async fn main() -> Result<()> {
             java_major,
             storage,
         } => {
-            let archive = fs::read(&sc_archive)
-                .with_context(|| format!("reading {}", sc_archive.display()))?;
+            let archive = fs::read(&archive_path)
+                .with_context(|| format!("reading {}", archive_path.display()))?;
             let cfg = authoring::bootstrap(
                 BootstrapArgs {
                     pack_id,
@@ -265,7 +266,7 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
-        Cmd::Validate { config, sc_archive } => run_validate(&config, &sc_archive),
+        Cmd::Validate { config, archive } => run_validate(&config, &archive),
         Cmd::Build {
             config,
             storage,
@@ -440,13 +441,13 @@ fn run_reconstruct_config(manifest_path: &Path, summary_path: &Path, out: &Path)
 
 // ── build + validate (thin wrappers over authoring::) ──────────────────────
 
-fn run_validate(config_path: &Path, sc_archive_path: &Path) -> Result<()> {
+fn run_validate(config_path: &Path, archive_path: &Path) -> Result<()> {
     let cfg: PackConfig = read_json(config_path)?;
-    let archive_bytes = fs::read(sc_archive_path)
-        .with_context(|| format!("reading {}", sc_archive_path.display()))?;
+    let archive_bytes =
+        fs::read(archive_path).with_context(|| format!("reading {}", archive_path.display()))?;
     let report = authoring::validate(&cfg, &archive_bytes)?;
 
-    println!("SC archive: {} mods", report.sc_mod_count);
+    println!("instance archive: {} mods", report.archive_mod_count);
     println!(
         "PackConfig: {} mods declared, {} assets declared",
         report.declared_mods, report.declared_assets
@@ -454,14 +455,14 @@ fn run_validate(config_path: &Path, sc_archive_path: &Path) -> Result<()> {
     println!("matched by filename: {}", report.matched);
 
     if !report.missing_in_config.is_empty() {
-        println!("\nIn SC archive but missing from PackConfig (would break handshake):");
+        println!("\nIn the archive but missing from PackConfig (would break the handshake):");
         for f in &report.missing_in_config {
             println!("  - {}", f);
         }
     }
     if !report.extra_in_config.is_empty() {
         println!(
-            "\nIn PackConfig but not in SC archive (client additions, expected if intentional):"
+            "\nIn PackConfig but not in the archive (client additions, expected if intentional):"
         );
         for f in &report.extra_in_config {
             println!("  + {}", f);
@@ -470,7 +471,7 @@ fn run_validate(config_path: &Path, sc_archive_path: &Path) -> Result<()> {
 
     if !report.missing_in_config.is_empty() {
         bail!(
-            "{} SC mods missing from PackConfig",
+            "{} archive mods missing from PackConfig",
             report.missing_in_config.len()
         );
     }
