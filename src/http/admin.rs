@@ -328,20 +328,35 @@ async fn pack_spoof(
     let server_id = cfg.auth.as_ref().and_then(|a| a.server_id.clone());
     let mut current = None;
     let mut asked = None;
-    if let Some(id) = &server_id
-        && let Ok(entry) = state.storage.load_server(id).await
-        && let Some((host, port)) = entry.address.as_deref().and_then(split_address)
-    {
-        match crate::authoring::server_status(&host, port).await {
-            Ok(status) => {
-                asked = Some(format!("{host}:{port}"));
-                current = spoof_from_status(&status).ok();
-            }
-            Err(e) => {
-                tracing::warn!(pack_id, error = %format!("{e:#}"), "asking the pack's server failed");
-            }
-        }
-    }
+    // Why there is nothing to compare against, when there is nothing. Four
+    // different situations used to look identical -- an empty report -- and they
+    // call for four different things: name a server, add it to the registry,
+    // record its address, or wait for it to come back up.
+    let unasked = match &server_id {
+        None => Some("this pack names no server, so there is nothing it has to match"),
+        Some(id) => match state.storage.load_server(id).await {
+            Err(_) => Some("this pack names a server the mirror has no entry for"),
+            Ok(entry) => match entry.address.as_deref().and_then(split_address) {
+                None => Some("that server has no address recorded, so there is nothing to ask"),
+                Some((host, port)) => match crate::authoring::server_status(&host, port).await {
+                    Ok(status) => {
+                        asked = Some(format!("{host}:{port}"));
+                        current = spoof_from_status(&status).ok();
+                        // A server that answers without advertising is not a
+                        // server with no mods, and a claim must not be built
+                        // from its silence.
+                        current
+                            .is_none()
+                            .then_some("that server answered without advertising a mod list")
+                    }
+                    Err(e) => {
+                        tracing::warn!(pack_id, error = %format!("{e:#}"), "asking the pack's server failed");
+                        Some("that server could not be reached just now")
+                    }
+                },
+            },
+        },
+    };
 
     let moved = match (&shipped, &current) {
         (Some(a), Some(b)) => drift(a, b),
@@ -352,6 +367,7 @@ async fn pack_spoof(
         current,
         server_id,
         asked,
+        unasked: unasked.map(str::to_string),
         drift: moved,
     }))
 }
@@ -389,6 +405,12 @@ pub struct SpoofReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub asked: Option<String>,
+    /// Why the server was not asked, or why its answer yielded nothing. Absent
+    /// when it was asked and answered: then an empty `drift` means they agree,
+    /// which is the one case worth telling apart from every kind of silence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub unasked: Option<String>,
     /// Empty when they agree, or when there was nothing to compare.
     pub drift: Vec<String>,
 }

@@ -20,6 +20,12 @@ current?: Spoof, server_id?: string,
  */
 asked?: string, 
 /**
+ * Why the server was not asked, or why its answer yielded nothing. Absent
+ * when it was asked and answered: then an empty `drift` means they agree,
+ * which is the one case worth telling apart from every kind of silence.
+ */
+unasked?: string, 
+/**
  * Empty when they agree, or when there was nothing to compare.
  */
 drift: Array<string>, };
