@@ -8,6 +8,18 @@ version section when a release is tagged.
 
 ### Added
 
+- Pack history: a commit is a snapshot of the config, an author, a message
+  and a parent, and a build is made from one rather than from whatever is on
+  screen. With edits merging live, building the working state could ship a
+  half-typed word and the pre-publish check judged something that moved while
+  it was judging it. A publish takes the head of the history and refuses when
+  work sits uncommitted, saying how much; an older commit can be built again
+  by name. The manifest records the commit it came from, so what shipped in a
+  given version is answerable from the manifest alone.
+  History is linear and append-only: restoring writes an older state forward
+  as a new commit rather than rewinding, so no build ends up naming a commit
+  its own history no longer admits. Saves note their author, so a commit names
+  everyone whose work it takes in instead of reconstructing attribution later.
 - Modrinth-shaped version model for packs: plain `base.counter` version
   numbers, a stored release/beta/alpha channel chosen at build time
   (default beta), and a versions listing speaking Modrinth field names
