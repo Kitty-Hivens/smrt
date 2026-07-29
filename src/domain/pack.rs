@@ -163,6 +163,10 @@ pub struct ManifestBuildInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub changelog: Option<String>,
+    /// The same notes per language tag; see `PackManifest::changelog_i18n`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub changelog_i18n: Option<std::collections::BTreeMap<String, String>>,
     #[ts(type = "number")]
     pub mods_count: u64,
     #[ts(type = "number")]

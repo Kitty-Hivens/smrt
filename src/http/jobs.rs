@@ -18,6 +18,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::time::Duration;
 
@@ -91,6 +92,11 @@ struct BuildBody {
     /// (Modrinth `version.changelog` analog). Body rather than query:
     /// multi-line CommonMark does not belong in a URL.
     changelog: Option<String>,
+    /// The same notes per language tag (`{"en": "...", "ru": "..."}`). Blank
+    /// entries are dropped, so a language the curator left empty does not ship
+    /// as an empty release note.
+    #[serde(default)]
+    changelog_i18n: Option<BTreeMap<String, String>>,
 }
 
 async fn build_pack(
@@ -110,10 +116,7 @@ async fn build_pack(
         Some(c) => VersionChannel::parse(c)
             .ok_or_else(|| ApiError::BadRequest("channel must be release, beta or alpha".into()))?,
     };
-    let changelog = body
-        .and_then(|Json(b)| b.changelog)
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let (changelog, changelog_i18n) = release_notes(body.map(|Json(b)| b).unwrap_or_default());
     let job = state.jobs.spawn_build(
         pack_id,
         BuildDeps {
@@ -128,6 +131,7 @@ async fn build_pack(
             pack_version,
             channel,
             changelog,
+            changelog_i18n,
             override_checks: p.override_checks,
             from_commit,
             actor: Some(identity),
@@ -138,6 +142,36 @@ async fn build_pack(
         kind: job.kind,
         pack_id: job.pack_id.clone(),
     }))
+}
+
+/// Settle a build's release notes: the per-language map, and the untagged text
+/// a client that matches no language reads.
+///
+/// Blank entries are dropped rather than shipped, so a language the curator
+/// left empty is absent instead of publishing an empty note. When no untagged
+/// text was given, it is taken from the map -- English first, then whichever
+/// language sorts first -- because a note in some language beats no note, and
+/// every existing client reads only the untagged field.
+fn release_notes(body: BuildBody) -> (Option<String>, Option<BTreeMap<String, String>>) {
+    let i18n = body
+        .changelog_i18n
+        .map(|m| {
+            m.into_iter()
+                .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))
+                .filter(|(k, v)| !k.is_empty() && !v.is_empty())
+                .collect::<BTreeMap<_, _>>()
+        })
+        .filter(|m| !m.is_empty());
+    let changelog = body
+        .changelog
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            i18n.as_ref()
+                .and_then(|m| m.get("en").or_else(|| m.values().next()))
+                .cloned()
+        });
+    (changelog, i18n)
 }
 
 /// Which stored state this build should turn into a manifest (#122).
@@ -314,4 +348,63 @@ async fn job_events(
     Ok(Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(changelog: Option<&str>, i18n: &[(&str, &str)]) -> BuildBody {
+        BuildBody {
+            changelog: changelog.map(str::to_string),
+            changelog_i18n: (!i18n.is_empty()).then(|| {
+                i18n.iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect()
+            }),
+        }
+    }
+
+    #[test]
+    fn a_language_left_empty_does_not_ship_as_an_empty_note() {
+        let (untagged, map) =
+            release_notes(body(None, &[("en", "Fixed the crash."), ("ru", "  ")]));
+        let map = map.expect("english survives");
+        assert_eq!(map.keys().collect::<Vec<_>>(), ["en"]);
+        // and the untagged copy every existing client reads is filled from it
+        assert_eq!(untagged.as_deref(), Some("Fixed the crash."));
+    }
+
+    #[test]
+    fn nothing_written_stays_nothing() {
+        assert_eq!(release_notes(body(None, &[])), (None, None));
+        assert_eq!(
+            release_notes(body(Some("   "), &[("ru", "")])),
+            (None, None)
+        );
+    }
+
+    #[test]
+    fn the_untagged_note_falls_back_to_english_then_to_whatever_exists() {
+        let (untagged, _) = release_notes(body(None, &[("ru", "Починили."), ("en", "Fixed.")]));
+        assert_eq!(untagged.as_deref(), Some("Fixed."));
+
+        // no English written: a note in some language beats no note at all
+        let (untagged, _) = release_notes(body(None, &[("ru", "Починили.")]));
+        assert_eq!(untagged.as_deref(), Some("Починили."));
+    }
+
+    #[test]
+    fn an_explicit_untagged_note_is_never_overwritten() {
+        let (untagged, map) = release_notes(body(Some("Read me"), &[("en", "Fixed.")]));
+        assert_eq!(untagged.as_deref(), Some("Read me"));
+        assert_eq!(map.unwrap().get("en").map(String::as_str), Some("Fixed."));
+    }
+
+    #[test]
+    fn language_tags_are_normalised_so_one_language_is_one_entry() {
+        let (_, map) = release_notes(body(None, &[(" EN ", "Fixed."), ("ru", "Починили.")]));
+        let map = map.unwrap();
+        assert_eq!(map.keys().collect::<Vec<_>>(), ["en", "ru"]);
+    }
 }

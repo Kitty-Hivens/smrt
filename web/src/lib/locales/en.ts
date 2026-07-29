@@ -413,6 +413,8 @@ export const en = {
   'bld.versionPlaceholder': '(auto: base.N)',
   'bld.channel': 'Channel',
   'bld.changelog': 'Release notes',
+  'bld.langWritten': 'written',
+  'bld.langEmpty': 'nothing written for this language',
   'bld.changelogPlaceholder': 'What changed and why (CommonMark, optional)',
   'bld.blocked': 'Not published: this pack would not start',
   'bld.overrideHint':

@@ -531,6 +531,9 @@ async fn run_build(
         pack_version,
         channel,
         changelog,
+        // the CLI takes one note; per-language notes are authored where they are
+        // written, which is the panel
+        None,
         mirror_base,
         &classifications,
         &registry,

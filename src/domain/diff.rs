@@ -239,6 +239,7 @@ mod tests {
             pack_version: version.into(),
             channel: None,
             changelog: None,
+            changelog_i18n: None,
             generated_at: "T".into(),
             fingerprint: Some(format!("fp-{version}-{loader}")),
             checks: None,

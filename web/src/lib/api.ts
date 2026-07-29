@@ -333,6 +333,9 @@ export const api = {
       packVersion?: string;
       channel?: 'release' | 'beta' | 'alpha';
       changelog?: string;
+      // the same notes per language tag; the mirror fills the untagged
+      // `changelog` from these when it is not given
+      changelogI18n?: Record<string, string>;
       // publish over a pre-publish check that says the pack cannot start;
       // recorded on the build, in the job log and in the audit trail
       overrideChecks?: boolean;
@@ -349,13 +352,15 @@ export const api = {
     if (opts?.fromCommit) q.set('from_commit', opts.fromCommit);
     const qs = q.toString();
     const changelog = opts?.changelog?.trim();
+    const i18n = opts?.changelogI18n;
+    const notes = i18n && Object.keys(i18n).length ? { changelog_i18n: i18n } : {};
     const r = await fetch(`/v1/authoring/packs/${encodeURIComponent(id)}/build${qs ? `?${qs}` : ''}`, {
       method: 'POST',
       credentials: 'include',
-      ...(changelog
+      ...(changelog || Object.keys(notes).length
         ? {
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ changelog }),
+            body: JSON.stringify({ ...(changelog ? { changelog } : {}), ...notes }),
           }
         : {}),
     });

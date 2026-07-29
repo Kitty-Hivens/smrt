@@ -31,6 +31,18 @@ pub struct PackManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub changelog: Option<String>,
+    /// The same notes per language, keyed by a language tag (`en`, `ru`).
+    ///
+    /// `changelog` stays what a client reads when it can match nothing here, so
+    /// every existing client keeps working and nothing has to guess which
+    /// language an untagged string is written in -- the tagged map includes that
+    /// language too, and the untagged copy is the compatibility shim. Open by
+    /// design: a mirror serving a community that speaks neither of the panel's
+    /// own languages is the ordinary case for a self-hosted registry, not an
+    /// exception. Additive, so the schema version stays at 2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub changelog_i18n: Option<std::collections::BTreeMap<String, String>>,
     pub generated_at: String,
     /// Content fingerprint: a stable hash of what actually lands in an instance
     /// (artifact hashes + install flags + loader/java/mc), independent of the
