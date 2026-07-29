@@ -131,6 +131,7 @@ export const ru: Dict = {
   'pe.loaderName': 'Загрузчик',
   'pe.loaderVersion': 'Версия загрузчика',
   'pe.java': 'Java',
+  'pe.javaHint': 'Этому паку скорее всего нужна Java {want}.',
   'pe.featured': 'Рекомендуемый',
   'pe.tagline': 'Подзаголовок',
   'pe.tags': 'Теги',

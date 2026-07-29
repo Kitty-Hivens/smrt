@@ -7,6 +7,7 @@
   import { t } from '../lib/i18n.svelte';
   import { arrive, stagger } from '../lib/motion.svelte';
   import { openPackSession, type PackSession } from '../lib/packsession.svelte';
+  import { JAVA_MAJORS, suggestedJava } from '../lib/java';
   import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
   import { isDebug } from '../lib/roles';
   import type {
@@ -213,6 +214,15 @@
   // published build versions, for "revert config to build" (config edits autosave
   // with no undo, so the last built state is the recovery point). The picker is an
   // action menu -- `revertPick` resets to the placeholder after each choice.
+  const javaOptions = JAVA_MAJORS.map((v) => ({ value: String(v), label: String(v) }));
+  /// What this pack most likely needs, when that disagrees with what it says.
+  const javaHint = $derived.by(() => {
+    if (!cfg) return null;
+    const want = suggestedJava(cfg.minecraft_version, cfg.loader.name);
+    if (want === null || want === cfg.java_major) return null;
+    return t('pe.javaHint', { want: String(want) });
+  });
+
   let revertVersions = $state<string[]>([]);
   let revertPick = $state('');
   const revertOptions = $derived(revertVersions.map((v) => ({ value: v, label: v })));
@@ -996,21 +1006,26 @@
               <Select full bind:value={cfg.loader.name} options={loaderOptions} ariaLabel={t('pe.loaderName')} />
             </Field>
             <Field label={t('pe.loaderVersion')}><input bind:value={cfg.loader.version} /></Field>
+            <!-- A list, not a number box: the set is closed, and a typed one
+                 only announced itself as a launcher that would not start. The
+                 hint fires when the choice disagrees with what this pack most
+                 likely needs -- it says so and changes nothing, because an
+                 archival pack pinned to an old toolchain is a real thing. -->
             <Field label={t('pe.java')} error={say(javaError(cfg.java_major))}>
-              <input
-                type="number"
-                min="8"
-                value={cfg.java_major}
-                oninput={(e) => {
-                  // an emptied number input binds as null, and java_major is a
-                  // required integer -- every later save would 422 with the
-                  // failure only visible in a tooltip. Hold the last good value
-                  // until a number is typed.
-                  const n = (e.currentTarget as HTMLInputElement).valueAsNumber;
-                  if (Number.isFinite(n) && n > 0) cfg!.java_major = Math.trunc(n);
+              <Select
+                full
+                value={String(cfg.java_major)}
+                options={javaOptions}
+                ariaLabel={t('pe.java')}
+                onChange={(v) => {
+                  const n = Number.parseInt(v, 10);
+                  if (Number.isFinite(n) && n > 0) cfg!.java_major = n;
                 }}
               />
             </Field>
+            {#if javaHint}
+              <p class="javahint muted">{javaHint}</p>
+            {/if}
             <label class="chk"><input type="checkbox" bind:checked={cfg.featured} /> {t('pe.featured')}</label>
             <Field label={t('pe.tagline')} wide><input bind:value={cfg.tagline} /></Field>
             <Field label={t('pe.tags')} hint={t('pe.tagsHint')} wide><input bind:value={tagsStr} /></Field>
@@ -1369,6 +1384,11 @@
   .card {
     display: grid;
     gap: var(--space-3) var(--space-4);
+  }
+  .javahint {
+    grid-column: 1 / -1;
+    font-size: var(--fs-sm);
+    margin: -4px 0 0;
   }
   .card textarea {
     resize: vertical;

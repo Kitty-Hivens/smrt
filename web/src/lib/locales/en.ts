@@ -132,6 +132,7 @@ export const en = {
   'pe.loaderName': 'Loader',
   'pe.loaderVersion': 'Loader version',
   'pe.java': 'Java',
+  'pe.javaHint': 'This pack most likely needs Java {want}.',
   'pe.featured': 'Featured',
   'pe.tagline': 'Tagline',
   'pe.tags': 'Tags',
