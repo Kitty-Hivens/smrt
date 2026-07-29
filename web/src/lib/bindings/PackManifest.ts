@@ -23,7 +23,19 @@ channel?: VersionChannel,
  * The structural diff endpoint complements it -- this is the "why", the
  * diff is the "what".
  */
-changelog?: string, generated_at: string, 
+changelog?: string, 
+/**
+ * The same notes per language, keyed by a language tag (`en`, `ru`).
+ *
+ * `changelog` stays what a client reads when it can match nothing here, so
+ * every existing client keeps working and nothing has to guess which
+ * language an untagged string is written in -- the tagged map includes that
+ * language too, and the untagged copy is the compatibility shim. Open by
+ * design: a mirror serving a community that speaks neither of the panel's
+ * own languages is the ordinary case for a self-hosted registry, not an
+ * exception. Additive, so the schema version stays at 2.
+ */
+changelog_i18n?: { [key in string]: string }, generated_at: string, 
 /**
  * Content fingerprint: a stable hash of what actually lands in an instance
  * (artifact hashes + install flags + loader/java/mc), independent of the

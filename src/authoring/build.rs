@@ -20,7 +20,8 @@ use tracing::info;
 /// write anything. `pack_version` defaults to the next auto-numbered
 /// `<base>.<counter>` (see `resolve_auto_version`); `channel` is stored on the
 /// manifest verbatim -- the version string carries no channel semantics;
-/// `changelog` is the curator's release notes, stored as given.
+/// `changelog` is the curator's release notes, stored as given; `changelog_i18n`
+/// carries the same notes per language tag (see `PackManifest::changelog_i18n`).
 /// `classifications` is the pack's side/policy map (`resolve::classify_pack`),
 /// keyed by filename; an absent entry reads as unclassified.
 /// A finished build: the manifest, plus which mods the network could not answer
@@ -43,6 +44,7 @@ pub async fn build_manifest(
     pack_version: Option<&str>,
     channel: VersionChannel,
     changelog: Option<String>,
+    changelog_i18n: Option<std::collections::BTreeMap<String, String>>,
     mirror_base: &str,
     classifications: &HashMap<String, Classification>,
     registry: &Registry,
@@ -139,6 +141,7 @@ pub async fn build_manifest(
             pack_version,
             channel: Some(channel),
             changelog,
+            changelog_i18n,
             // the pre-publish check is the caller's to record: it decides whether
             // a finding stops the publish, and a dry run never gates at all
             checks: None,
@@ -520,6 +523,7 @@ mod tests {
             dir.path(),
             Some("0.0.0"),
             VersionChannel::Beta,
+            None,
             None,
             "https://mirror.example",
             &HashMap::new(),

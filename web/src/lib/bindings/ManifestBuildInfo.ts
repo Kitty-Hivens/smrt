@@ -25,4 +25,8 @@ fingerprint?: string,
 /**
  * Curator-authored release notes, where the build carries them.
  */
-changelog?: string, mods_count: number, assets_count: number, };
+changelog?: string, 
+/**
+ * The same notes per language tag; see `PackManifest::changelog_i18n`.
+ */
+changelog_i18n?: { [key in string]: string }, mods_count: number, assets_count: number, };

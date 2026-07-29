@@ -84,6 +84,13 @@ means the two builds share a fingerprint and the diff is a relabel. The diff
 is the "what"; the curator's `changelog` on each build (manifest and versions
 listing) is the "why" -- render both when present.
 
+Release notes may also carry `changelog_i18n`, the same text keyed by language
+tag (`{"en": "...", "ru": "..."}`). Prefer the user's language from that map;
+fall back to `changelog`, which is always the note in one of the languages the
+map holds and is what a client that ignores the map has always read. A tag the
+curator left blank is absent from the map rather than present and empty, so a
+missing key means "not written", never "written as nothing".
+
 ## Downloading an instance
 
 For each `mods[]` / `assets[]` entry, dispatch on `source.type`:

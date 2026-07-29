@@ -98,6 +98,9 @@ pub struct BuildRequest {
     pub pack_version: Option<String>,
     pub channel: VersionChannel,
     pub changelog: Option<String>,
+    /// The same notes per language tag, where the curator wrote more than one
+    /// (see `PackManifest::changelog_i18n`).
+    pub changelog_i18n: Option<std::collections::BTreeMap<String, String>>,
     /// Publish over a blocking pre-publish finding (#108). Never quiet: the job
     /// log says it, the audit trail records who asked, and the built manifest
     /// carries the findings it was published over.
@@ -425,6 +428,7 @@ async fn run_build(
         req.pack_version.as_deref(),
         req.channel,
         req.changelog,
+        req.changelog_i18n.clone(),
         &config.mirror_base,
         &classifications,
         registry,
@@ -634,6 +638,7 @@ mod tests {
             pack_version: None,
             channel: VersionChannel::Beta,
             changelog: None,
+            changelog_i18n: None,
             override_checks: false,
             from_commit: None,
             actor: None,

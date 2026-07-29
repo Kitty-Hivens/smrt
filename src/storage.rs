@@ -1111,6 +1111,8 @@ struct ManifestHead {
     channel: Option<VersionChannel>,
     #[serde(default)]
     changelog: Option<String>,
+    #[serde(default)]
+    changelog_i18n: Option<std::collections::BTreeMap<String, String>>,
     generated_at: String,
     #[serde(default)]
     fingerprint: Option<String>,
@@ -1131,6 +1133,7 @@ fn build_info_from_head(head: ManifestHead) -> ManifestBuildInfo {
         date_published: head.generated_at,
         fingerprint: head.fingerprint,
         changelog: head.changelog,
+        changelog_i18n: head.changelog_i18n,
         mods_count: head.mods.len() as u64,
         assets_count: head.assets.len() as u64,
     }
@@ -1499,6 +1502,7 @@ mod tests {
             pack_version: version.into(),
             channel: None,
             changelog: None,
+            changelog_i18n: None,
             generated_at: generated_at.into(),
             fingerprint: Some(format!("fp-{version}")),
             checks: None,

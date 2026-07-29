@@ -411,6 +411,8 @@ export const ru: Dict = {
   'bld.version': 'Версия пака',
   'bld.channel': 'Канал',
   'bld.changelog': 'Заметки к сборке',
+  'bld.langWritten': 'написано',
+  'bld.langEmpty': 'на этом языке ничего не написано',
   'bld.changelogPlaceholder': 'Что изменилось и зачем (CommonMark, необязательно)',
   'bld.versionPlaceholder': '(авто: база.N)',
   'bld.blocked': 'Не опубликовано: пак не запустится',
