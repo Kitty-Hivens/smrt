@@ -167,10 +167,18 @@ fn input(path: &str, value: &Value) -> In {
         Value::String(s) if is_prose(path) => In::Text(TextPrelim::new(s.clone()).into()),
         Value::String(s) => In::Any(Any::String(s.as_str().into())),
         Value::Bool(b) => In::Any(Any::Bool(*b)),
-        Value::Number(n) => In::Any(match n.as_i64() {
-            Some(i) => Any::BigInt(i),
-            None => Any::Number(n.as_f64().unwrap_or_default()),
-        }),
+        // Every number goes in as a double, including the whole ones.
+        //
+        // The other half of this panel reads the same config over REST, where a
+        // browser's JSON.parse gives it doubles -- so the document has to give
+        // doubles too, or the two halves disagree about the same field. Yjs
+        // decodes yrs's BigInt as a JavaScript BigInt, which is a value JSON
+        // cannot serialize at all: the editor merged an update and then threw on
+        // the next save, with the config's own owner id as the poison.
+        //
+        // Nothing a pack config carries comes near the range where a double
+        // stops being exact -- the largest is a GitHub uid.
+        Value::Number(n) => In::Any(Any::Number(n.as_f64().unwrap_or_default())),
         Value::Null => In::Any(Any::Null),
     }
 }
@@ -206,13 +214,26 @@ fn out_value<T: ReadTxn>(out: &Out, txn: &T) -> Value {
     }
 }
 
+/// The integer a double exactly is, when it is one. `None` for a fraction, an
+/// infinity, a NaN, or a magnitude past where a double still counts by ones.
+fn whole(n: f64) -> Option<i64> {
+    (n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_992.0).then_some(n as i64)
+}
+
 fn any_value(any: &Any) -> Value {
     match any {
         Any::Null | Any::Undefined => Value::Null,
         Any::Bool(b) => Value::Bool(*b),
-        Any::Number(n) => serde_json::Number::from_f64(*n)
-            .map(Value::Number)
+        // A whole double comes back as a whole number, not as `21.0`. The value
+        // is on its way into a `PackConfig`, where `java_major` is a u32 and a
+        // float refuses to deserialize -- so a round trip through the document
+        // would fail on a field nobody touched.
+        Any::Number(n) => whole(*n)
+            .map(|i| Value::Number(i.into()))
+            .or_else(|| serde_json::Number::from_f64(*n).map(Value::Number))
             .unwrap_or(Value::Null),
+        // Still read: documents this process is already holding were seeded
+        // before numbers went in as doubles, and they outlive the change.
         Any::BigInt(i) => Value::Number((*i).into()),
         Any::String(s) => Value::String(s.to_string()),
         Any::Array(items) => Value::Array(items.iter().map(any_value).collect()),
@@ -478,6 +499,71 @@ mod tests {
             description.contains("A pack."),
             "and what was there already: {description}"
         );
+    }
+
+    // The panel merged an update and then threw on the next save: yjs decodes
+    // yrs's BigInt as a JavaScript BigInt, and JSON.stringify cannot serialize
+    // one at all. Every whole number in a config went in as a BigInt, so the
+    // pack's own owner id was enough to poison the editor.
+    #[test]
+    fn no_number_reaches_the_browser_as_a_bigint() {
+        let m = DeclaredMod {
+            filename: "Sable.jar".into(),
+            ..serde_json::from_value(serde_json::json!({
+                "filename": "Sable.jar",
+                "source": {"type": "smrt_cache", "sha1": "a".repeat(40)}
+            }))
+            .unwrap()
+        };
+        let doc = PackDoc::from_config(&config(vec![m])).unwrap();
+        let txn = doc.doc.transact();
+
+        let mut found = Vec::new();
+        for (key, out) in doc.root.iter(&txn) {
+            walk(key, &out, &txn, &mut found);
+        }
+        assert!(
+            found.is_empty(),
+            "these arrive as BigInt and break JSON.stringify in the panel: {found:?}"
+        );
+
+        fn walk<T: ReadTxn>(at: &str, out: &Out, txn: &T, found: &mut Vec<String>) {
+            match out {
+                Out::Any(Any::BigInt(_)) => found.push(at.to_string()),
+                Out::Any(Any::Array(items)) => {
+                    if items.iter().any(|a| matches!(a, Any::BigInt(_))) {
+                        found.push(at.to_string());
+                    }
+                }
+                Out::YMap(map) => {
+                    for (key, out) in map.iter(txn) {
+                        walk(&format!("{at}.{key}"), &out, txn, found);
+                    }
+                }
+                Out::YArray(array) => {
+                    for (i, out) in array.iter(txn).enumerate() {
+                        walk(&format!("{at}.{i}"), &out, txn, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // A whole double must come back a whole number: the value is on its way into
+    // a PackConfig, where java_major is a u32 and `21.0` refuses to deserialize.
+    #[test]
+    fn whole_numbers_survive_the_round_trip_as_integers() {
+        let doc = PackDoc::from_config(&config(vec![])).unwrap();
+        let out = back(&doc);
+        assert_eq!(out.java_major, config(vec![]).java_major);
+        assert_eq!(out.owner, config(vec![]).owner);
+
+        assert_eq!(whole(21.0), Some(21));
+        assert_eq!(whole(211033194.0), Some(211033194));
+        assert_eq!(whole(0.5), None);
+        assert_eq!(whole(f64::NAN), None);
+        assert_eq!(whole(f64::INFINITY), None);
     }
 
     // Different scalars are not a collision at all -- the everyday case the

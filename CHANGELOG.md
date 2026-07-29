@@ -6,6 +6,17 @@ version section when a release is tagged.
 
 ## Unreleased
 
+### Fixed
+
+- Live editing no longer poisons the panel with a value JSON cannot carry.
+  Every whole number in a config went into the shared document as a yrs
+  BigInt, which yjs decodes in the browser as a JavaScript `BigInt` --
+  so an editor merged an update and then threw
+  `BigInt value can't be serialized in JSON` on the next save, with the pack's
+  own Java version enough to trigger it. Numbers now cross as doubles, which
+  is what the same config already is when the panel reads it over REST, and
+  come back as whole numbers so a `u32` field still deserializes.
+
 ### Added
 
 - Modrinth-shaped version model for packs: plain `base.counter` version
