@@ -15,6 +15,7 @@
 import * as Y from 'yjs';
 import { readConfig, textPatch, writeConfig } from '../src/lib/packdoc.ts';
 import { JAVA_MAJORS, suggestedJava } from '../src/lib/java.ts';
+import { changedPaths } from '../src/lib/touched.svelte.ts';
 
 let failures = 0;
 const check = (name, cond, detail = '') => {
@@ -151,6 +152,50 @@ check('versions compare piecewise, not as strings',
   'lexically "1.9" > "1.18", which is how a naive compare puts 1.9 on Java 17');
 check('an unparseable version suggests nothing', suggestedJava('', 'forge') === null && suggestedJava('snapshot', 'forge') === null);
 check('the offered list holds what old packs need', [8, 11, 16, 17, 21].every((v) => JAVA_MAJORS.includes(v)));
+
+// ── who changed what ────────────────────────────────────────────────────────
+// A marker is only useful if it points at the thing that moved. Reporting the
+// whole config, or the whole mods list, is an address nobody can act on.
+{
+  const base = {
+    display_name: 'Industrial',
+    pack_meta: { description_md: 'A pack.', gallery_urls: [] },
+    mods: [{ filename: 'jei.jar', default_enabled: true }, { filename: 'ae2.jar', default_enabled: true }],
+  };
+  const clone = () => JSON.parse(JSON.stringify(base));
+
+  const scalar = clone(); scalar.display_name = 'Industrial II';
+  check('a changed scalar is reported at its own path',
+    JSON.stringify(changedPaths(base, scalar)) === '["display_name"]',
+    JSON.stringify(changedPaths(base, scalar)));
+
+  const nested = clone(); nested.pack_meta.description_md = 'A pack. Heavy tech.';
+  check('a nested field is reported at its full path',
+    JSON.stringify(changedPaths(base, nested)) === '["pack_meta.description_md"]',
+    JSON.stringify(changedPaths(base, nested)));
+
+  const row = clone(); row.mods[1].default_enabled = false;
+  check('an edited row is reported as the row, not the whole list',
+    JSON.stringify(changedPaths(base, row)) === '["mods.1"]',
+    JSON.stringify(changedPaths(base, row)));
+
+  const added = clone(); added.mods.push({ filename: 'thermal.jar' });
+  check('an added row is one path, not every field in it',
+    JSON.stringify(changedPaths(base, added)) === '["mods.2"]',
+    JSON.stringify(changedPaths(base, added)));
+
+  const removed = clone(); removed.mods.pop();
+  check('a removed row is reported too', JSON.stringify(changedPaths(base, removed)) === '["mods.1"]',
+    JSON.stringify(changedPaths(base, removed)));
+
+  check('an unchanged config reports nothing', changedPaths(base, clone()).length === 0);
+
+  const two = clone();
+  two.display_name = 'X'; two.mods[0].default_enabled = false;
+  check('two independent changes are two paths',
+    JSON.stringify(changedPaths(base, two).sort()) === '["display_name","mods.0"]',
+    JSON.stringify(changedPaths(base, two)));
+}
 
 console.log(failures ? `\n${failures} failed` : '\nall good');
 process.exit(failures ? 1 : 0);

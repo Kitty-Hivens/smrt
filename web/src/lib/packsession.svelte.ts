@@ -24,8 +24,8 @@ export type PackSession = {
   /// Put what is on screen into the document. A no-op when nothing differs, so
   /// it is safe to call on every keystroke and on every remote change.
   push: (cfg: PackConfig) => void;
-  /// Take an update from the pack's room.
-  receive: (base64: string) => void;
+  /// Take an update from the pack's room, and say who sent it.
+  receive: (base64: string, by: string) => void;
   /// The document as a config, with the server's fields from the loaded one.
   read: () => PackConfig;
   close: () => void;
@@ -48,12 +48,13 @@ function encode(bytes: Uint8Array): string {
 /// supplies the server-owned fields the document deliberately does not carry.
 ///
 /// `onRemote` fires after someone else's change is merged, with the merged
-/// config: the editor adopts it rather than re-reading, which is the difference
-/// between seeing a colleague type and being interrupted by a reload.
+/// config and whose change it was: the editor adopts it rather than re-reading,
+/// which is the difference between seeing a colleague type and being
+/// interrupted by a reload, and it can say whose work just appeared.
 export async function openPackSession(
   packId: string,
   base: PackConfig,
-  onRemote: (merged: PackConfig) => void,
+  onRemote: (merged: PackConfig, by: string) => void,
 ): Promise<PackSession> {
   const doc = new Y.Doc();
 
@@ -77,10 +78,10 @@ export async function openPackSession(
     push(cfg) {
       if (!closed) writeConfig(doc, cfg, LOCAL);
     },
-    receive(base64) {
+    receive(base64, by) {
       if (closed) return;
       Y.applyUpdate(doc, decode(base64), REMOTE);
-      onRemote(readConfig(doc, base));
+      onRemote(readConfig(doc, base), by);
     },
     read: () => readConfig(doc, base),
     close() {

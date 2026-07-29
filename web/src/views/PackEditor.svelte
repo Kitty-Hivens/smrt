@@ -8,6 +8,7 @@
   import { arrive, stagger } from '../lib/motion.svelte';
   import { openPackSession, type PackSession } from '../lib/packsession.svelte';
   import { JAVA_MAJORS, suggestedJava } from '../lib/java';
+  import { changedPaths, createTouches } from '../lib/touched.svelte';
   import type { LoaderVersions, MinecraftVersions, SpoofReport } from '../lib/types';
   import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
   import { isDebug } from '../lib/roles';
@@ -275,6 +276,40 @@
     return t('pe.javaHint', { want: String(want) });
   });
 
+  // What the others have touched lately, for the markers. Swept on a timer:
+  // without it the map grows for as long as the editor is open, and a decayed
+  // entry would keep being filtered on every render.
+  const touches = createTouches();
+  $effect(() => {
+    const timer = setInterval(() => touches.sweep(), 2000);
+    return () => clearInterval(timer);
+  });
+  /// A path as something a person reads. The first segment is the part -- the
+  /// rest ("mods.3", "pack_meta.description_md") is an address for the marker,
+  /// not for the sentence, which would only get longer without getting clearer.
+  const fieldLabel = (path: string) => {
+    const head = path.split('.')[0];
+    const known = [
+      'display_name', 'tagline', 'minecraft_version', 'java_major', 'loader',
+      'tags', 'featured', 'version', 'mods', 'assets', 'pack_meta',
+    ];
+    return t(`pe.field.${known.includes(head) ? head : 'other'}` as never);
+  };
+
+  /// The recent changes, as sentences. Three at most: a longer list is not read,
+  /// and the ones under it are the older ones.
+  const touchLines = $derived(
+    touches.live.slice(0, 3).map((entry) => ({
+      path: entry.path,
+      who:
+        entry.who.length === 1
+          ? entry.who[0]
+          : entry.who.length === 2
+            ? entry.who.join(' & ')
+            : t('pe.touchedByN', { n: String(entry.who.length) }),
+    })),
+  );
+
   // The handshake claim and its drift. Loaded on demand: it asks a game server,
   // which is slower than everything else here and pointless for a pack that
   // names none.
@@ -330,6 +365,15 @@
     lastSig = sig();
   }
 
+  /// Someone else's merged change. Adopting it is the same act as any other
+  /// adoption; the difference is that it came from a person, so what moved and
+  /// who moved it is worth a moment on screen.
+  function adoptRemote(next: PackConfig, by: string) {
+    const before = cfg ? ($state.snapshot(cfg) as unknown as Record<string, unknown>) : null;
+    adopt(next);
+    if (before) touches.record(changedPaths(before as never, next as never), by);
+  }
+
   async function load() {
     loading = true;
     try {
@@ -339,7 +383,7 @@
       // Join the pack's document and take what it holds: someone may be editing
       // right now, and their work is newer than the file this just read.
       session?.close();
-      session = await openPackSession(packId, c, adopt);
+      session = await openPackSession(packId, c, adoptRemote);
       adopt(session.read());
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) {
@@ -371,7 +415,7 @@
       // one it seeds from the reverted config rather than keeping a seat at a
       // table that is gone.
       session?.close();
-      session = await openPackSession(packId, c, adopt);
+      session = await openPackSession(packId, c, adoptRemote);
       adopt(session.read());
       // a revert replaces the server's config outright, so whatever this editor
       // was in conflict with is gone
@@ -455,7 +499,7 @@
       // back with the result -- the difference between watching a colleague work
       // and being interrupted by a reload.
       if (event.kind === 'doc') {
-        session?.receive(event.update);
+        session?.receive(event.update, event.by);
         return;
       }
       streamRev = event.rev;
@@ -563,7 +607,7 @@
       rev = saved.rev;
       // The pack exists now, so the document does too: from here on edits are
       // merged rather than saved against a base.
-      if (!session) session = await openPackSession(packId, saved.config, adopt);
+      if (!session) session = await openPackSession(packId, saved.config, adoptRemote);
       // The mirror answers with the config it stored, dependencies and all. That
       // answer used to be discarded, so a pulled library existed on disk and was
       // invisible here until a reload. Only the pulled rows are taken: they are
@@ -1001,6 +1045,18 @@
      duration comes from the stylesheet's own token, which reduced motion
      zeroes. -->
 <div class="hd" in:arrive|global>
+  <!-- What the others just touched (#115 follow-on). A field over the last few
+       seconds, not a person: a paragraph several people are writing has no
+       owner, so the set is named and the count stands in past two. It decays,
+       because "5 people over an hour" is not the fact anyone needs. -->
+  {#if touchLines.length}
+    <div class="touched" aria-live="polite">
+      <span class="faint">{t('pe.touchedTitle')}</span>
+      {#each touchLines as line (line.path)}
+        <span class="touch">{line.who} &middot; {fieldLabel(line.path)}</span>
+      {/each}
+    </div>
+  {/if}
   <h2 class="ttl mono">{packId}<span class="faint">/{t('pe.edit')}</span></h2>
   <TabStrip value={tab} tabs={tabItems} ariaLabel={t('pe.edit')} onChange={(v) => (tab = v as Tab)} />
   <div class="spacer"></div>
@@ -1561,6 +1617,24 @@
   .ok {
     color: var(--ok);
     font-size: var(--fs-sm);
+  }
+  .touched {
+    flex-basis: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-2) var(--space-3);
+    font-size: var(--fs-sm);
+    order: 99; /* under the title row, whatever else the header holds */
+  }
+  .touch {
+    padding: 1px 8px;
+    border: 1px solid var(--seam-bright);
+    border-radius: 999px;
+    color: var(--fg-dim);
+    /* arrives rather than blinks, and stands still under reduced motion --
+       the duration token is zeroed there, like everything else */
+    animation: row-in var(--dur-enter) var(--ease-out) backwards;
   }
   .javahint {
     grid-column: 1 / -1;
