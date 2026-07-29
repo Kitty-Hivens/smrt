@@ -259,6 +259,7 @@ export const en = {
   'pe.alsoHere': 'also here: {who}',
   'pe.alsoHereHint': 'These people have this pack open. A save of theirs will arrive here.',
   'pe.movedBy': '{who} saved this pack.',
+  'pe.committedBy': '{who} committed this pack.',
   'pe.movedHint': 'Your edits are untouched. Resolve them and this version will be underneath.',
   'pe.saveRetry': 'Retry',
   'pe.unsavedLeave': 'The last save was rejected. Close anyway and lose those edits?',
@@ -390,6 +391,19 @@ export const en = {
   'mrp.search': 'Search Modrinth...',
   'mrp.searching': 'searching...',
   'mrp.noResults': 'No results.',
+
+  'hist.commit': 'Commit',
+  'hist.messagePlaceholder': 'What changed, and why',
+  'hist.uncommitted': '{n} change(s) since the last commit',
+  'hist.by': 'by {who}',
+  'hist.clean': 'Nothing changed since the last commit',
+  'hist.none': 'This pack has no commits yet',
+  'hist.with': 'with {who}',
+  'hist.buildThis': 'build this',
+  'hist.restore': 'restore',
+  'hist.restored': 'Restored {id} as a new commit',
+  'hist.hint':
+    'A build is made from a commit, not from what is on screen: with edits merging live, building the working state could ship a half-typed word. Restoring writes an older state forward as a new commit rather than erasing what came after it.',
 
   'bld.build': 'Build pack',
   'bld.building': 'building...',

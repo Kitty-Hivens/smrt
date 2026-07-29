@@ -2,10 +2,32 @@
   import { api } from '../lib/api';
   import { notifyFail } from '../lib/toasts.svelte';
   import { t } from '../lib/i18n.svelte';
-  import type { JobStatus } from '../lib/types';
+  import type { Commit, CommitStatus, JobStatus } from '../lib/types';
   import JobLog from './JobLog.svelte';
+  import PackHistory from './PackHistory.svelte';
 
-  let { packId }: { packId: string } = $props();
+  let { packId, historyTick = 0 }: { packId: string; historyTick?: number } = $props();
+
+  // The history, read here because a build is made from a commit (#122) -- the
+  // state that decides whether the build button can do anything is the same
+  // state the history shows.
+  let status = $state<CommitStatus | null>(null);
+  let log = $state<Commit[]>([]);
+
+  async function refreshHistory() {
+    try {
+      [status, log] = await Promise.all([api.commitStatus(packId), api.commits(packId)]);
+    } catch {
+      // a pack with no history yet answers nothing useful; the console still works
+    }
+  }
+
+  $effect(() => {
+    // re-read when the pack changes, and when anyone in the pack commits
+    void packId;
+    void historyTick;
+    void refreshHistory();
+  });
 
   let jobId = $state<string | null>(null);
   let busy = $state(false);
@@ -18,7 +40,7 @@
   // refusal an override can actually answer.
   let blocked = $state<string[]>([]);
 
-  async function build(overrideChecks = false) {
+  async function build(overrideChecks = false, fromCommit?: string) {
     busy = true;
     jobId = null;
     blocked = [];
@@ -28,6 +50,7 @@
         channel,
         changelog: changelog.trim() || undefined,
         overrideChecks,
+        fromCommit,
       });
       jobId = job_id;
     } catch (e) {
@@ -36,9 +59,12 @@
     }
   }
 
-  async function finished(status: JobStatus) {
+  async function finished(jobStatus: JobStatus) {
     busy = false;
-    if (status !== 'failed' || !jobId) return;
+    // A build that landed published a commit's state; the history view says
+    // which, so it is re-read rather than left showing the state before.
+    void refreshHistory();
+    if (jobStatus !== 'failed' || !jobId) return;
     try {
       blocked = (await api.jobStatus(jobId)).blocked ?? [];
     } catch {
@@ -48,6 +74,14 @@
 </script>
 
 <div class="bc">
+  <PackHistory
+    {packId}
+    {status}
+    {log}
+    {busy}
+    onChanged={refreshHistory}
+    onBuildCommit={(id) => build(false, id)}
+  />
   <div class="bar">
     <button class="primary" onclick={() => build()} disabled={busy}>
       {busy ? t('bld.building') : t('bld.build')}
