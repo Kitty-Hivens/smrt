@@ -1,10 +1,11 @@
 //! Version comparison: ordering artifacts and matching a declared version window.
 //!
-//! Deliberately conservative. It compares only plain dotted-numeric versions;
-//! anything with a classifier or an embedded prefix is left unanswered rather than
-//! risk a false "out of window", because the whole value of the validator is that
-//! a flag it raises is real. A caller never acts on a guess about a version string
-//! it could not actually read.
+//! Deliberately conservative. It compares plain dotted-numeric versions, with
+//! semver build metadata dropped as the specification requires; anything with a
+//! classifier or an embedded prefix is left unanswered rather than risk a false
+//! "out of window", because the whole value of the validator is that a flag it
+//! raises is real. A caller never acts on a guess about a version string it
+//! could not actually read.
 //!
 //! Lives in the registry (the lower layer) because both the resolver's window
 //! check and the registry's own artifact ordering ride on it.
@@ -12,9 +13,10 @@
 use std::cmp::Ordering;
 
 /// Compare two versions iff both are plain dotted-numeric (`1`, `1.2`,
-/// `1.12.2`, an optional leading `v`). Any non-numeric segment (a `-beta`
-/// classifier, an embedded MC prefix such as `1.12.2-4.1.0`, a git hash)
-/// yields `None`. Missing trailing components read as 0, so `1.2` == `1.2.0`.
+/// `1.12.2`, an optional leading `v`), ignoring any `+build` metadata. Any
+/// non-numeric segment (a `-beta` classifier, an embedded MC prefix such as
+/// `1.12.2-4.1.0`, a git hash) yields `None`. Missing trailing components read
+/// as 0, so `1.2` == `1.2.0`.
 pub fn cmp(a: &str, b: &str) -> Option<Ordering> {
     let (pa, pb) = (parse(a)?, parse(b)?);
     let n = pa.len().max(pb.len());
@@ -33,7 +35,16 @@ pub fn cmp(a: &str, b: &str) -> Option<Ordering> {
 }
 
 fn parse(s: &str) -> Option<Vec<u64>> {
-    let s = s.trim().strip_prefix(['v', 'V']).unwrap_or(s.trim());
+    let s = s.trim();
+    // Semver build metadata, which the specification requires be ignored when
+    // comparing. Minecraft mods use it to carry the game version they were
+    // built for -- `0.6.13+mc1.21.1` -- and both the declared version and the
+    // range a dependant writes carry it, so refusing to read it left the
+    // commonest real comparison unanswered. A pack shipped Sodium 0.6.13 under
+    // a dependant demanding `[0.8.12+mc1.21.1,)` and the mirror said nothing,
+    // because neither side parsed; the loader refused to start the game.
+    let s = s.split('+').next().unwrap_or(s);
+    let s = s.strip_prefix(['v', 'V']).unwrap_or(s);
     if s.is_empty() {
         return None;
     }
@@ -134,7 +145,7 @@ fn interval(version: &str, r: &str) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::in_range;
+    use super::{cmp, in_range};
 
     #[test]
     fn maven_intervals() {
@@ -181,5 +192,35 @@ mod tests {
     fn shorter_version_pads_with_zero() {
         assert_eq!(in_range("1.2", "[1.2.0,)"), Some(true));
         assert_eq!(in_range("1.2.0", "[1.2,)"), Some(true));
+    }
+
+    // The case that reached a player: a pack shipped Sodium 0.6.13 while a
+    // dependant demanded [0.8.12,), and neither string parsed, so the mirror
+    // reported nothing and the loader refused to start. Both sides carry the
+    // game version as semver build metadata, which the specification says to
+    // ignore when comparing.
+    #[test]
+    fn build_metadata_is_ignored_the_way_semver_says() {
+        assert_eq!(in_range("0.6.13+mc1.21.1", "[0.8.12,)"), Some(false));
+        assert_eq!(
+            in_range("0.6.13+mc1.21.1", "[0.8.12+mc1.21.1,)"),
+            Some(false)
+        );
+        assert_eq!(
+            in_range("0.8.12+mc1.21.1", "[0.8.12+mc1.21.1,)"),
+            Some(true)
+        );
+        assert_eq!(
+            cmp("0.6.13+mc1.21.1", "0.6.13"),
+            Some(std::cmp::Ordering::Equal)
+        );
+    }
+
+    // A Modrinth file label is not a declared version, and reading one would be
+    // the guess this module exists to refuse. It stays unanswered.
+    #[test]
+    fn a_file_label_is_still_not_a_version() {
+        assert_eq!(in_range("mc1.21.1-0.6.13-neoforge", "[0.8.12,)"), None);
+        assert_eq!(cmp("mc1.21.1-0.6.13-neoforge", "0.8.12"), None);
     }
 }
