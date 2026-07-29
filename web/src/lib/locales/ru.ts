@@ -128,6 +128,8 @@ export const ru: Dict = {
   'pe.basics': 'Основное',
   'pe.displayName': 'Название',
   'pe.mcVersion': 'Версия Minecraft',
+  'pe.mcUnknown': 'Зеркало не знает такой версии Minecraft.',
+  'pe.mcUnknownStale': 'Зеркало не знает такой версии Minecraft, но его список сейчас устарел.',
   'pe.loaderName': 'Загрузчик',
   'pe.loaderVersion': 'Версия загрузчика',
   'pe.java': 'Java',

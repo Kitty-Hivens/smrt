@@ -8,6 +8,7 @@
   import { arrive, stagger } from '../lib/motion.svelte';
   import { openPackSession, type PackSession } from '../lib/packsession.svelte';
   import { JAVA_MAJORS, suggestedJava } from '../lib/java';
+  import type { MinecraftVersions } from '../lib/types';
   import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
   import { isDebug } from '../lib/roles';
   import type {
@@ -214,6 +215,30 @@
   // published build versions, for "revert config to build" (config edits autosave
   // with no undo, so the last built state is the recovery point). The picker is an
   // action menu -- `revertPick` resets to the placeholder after each choice.
+  // The Minecraft versions the mirror knows. Best-effort: the field is free
+  // text either way, so a list that failed to load costs an affordance rather
+  // than the ability to edit.
+  let mcVersions = $state<MinecraftVersions | null>(null);
+  api
+    .minecraftVersions()
+    .then((v) => (mcVersions = v))
+    .catch(() => {});
+  /// What the picker offers: releases, newest first. Snapshots are in the list
+  /// the hint checks against but not in the offer -- there are eight hundred of
+  /// them and nobody builds a pack on one by picking it from a menu.
+  const mcReleases = $derived(
+    (mcVersions?.versions ?? []).filter((v) => v.version_type === 'release').map((v) => v.version),
+  );
+  /// Said when the mirror has never heard of the version typed. Not an error:
+  /// a version released an hour ago is exactly the case where the operator is
+  /// right and the list is behind.
+  const mcHint = $derived.by(() => {
+    if (!cfg || !mcVersions || mcVersions.versions.length === 0) return null;
+    const typed = cfg.minecraft_version.trim();
+    if (!typed || mcVersions.versions.some((v) => v.version === typed)) return null;
+    return t(mcVersions.stale ? 'pe.mcUnknownStale' : 'pe.mcUnknown');
+  });
+
   const javaOptions = JAVA_MAJORS.map((v) => ({ value: String(v), label: String(v) }));
   /// What this pack most likely needs, when that disagrees with what it says.
   const javaHint = $derived.by(() => {
@@ -999,8 +1024,15 @@
             <Field label={t('pe.displayName')} error={say(requiredError(cfg.display_name))}>
               <input bind:value={cfg.display_name} />
             </Field>
+            <!-- A list that is not a cage: the datalist offers the releases a
+                 pack is normally built against, and the field still takes
+                 anything -- a snapshot, or a version released an hour ago that
+                 the mirror has not heard of. Unknown is said, not refused. -->
             <Field label={t('pe.mcVersion')} error={say(requiredError(cfg.minecraft_version))}>
-              <input bind:value={cfg.minecraft_version} />
+              <input bind:value={cfg.minecraft_version} list="mc-versions" />
+              <datalist id="mc-versions">
+                {#each mcReleases as v (v)}<option value={v}></option>{/each}
+              </datalist>
             </Field>
             <Field label={t('pe.loaderName')}>
               <Select full bind:value={cfg.loader.name} options={loaderOptions} ariaLabel={t('pe.loaderName')} />
@@ -1023,6 +1055,9 @@
                 }}
               />
             </Field>
+            {#if mcHint}
+              <p class="javahint muted">{mcHint}</p>
+            {/if}
             {#if javaHint}
               <p class="javahint muted">{javaHint}</p>
             {/if}

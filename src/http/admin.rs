@@ -71,6 +71,7 @@ fn authoring_router(state: AppState) -> Router {
             "/v1/authoring/packs/{pack_id}/config",
             get(get_pack_config).put(put_pack_config),
         )
+        .route("/v1/meta/minecraft", get(get_minecraft_versions))
         .route("/v1/authoring/packs/{pack_id}/events", get(pack_events))
         .route(
             "/v1/authoring/packs/{pack_id}/doc",
@@ -923,6 +924,21 @@ async fn pack_events(
     Ok(Sse::new(events)
         .keep_alive(KeepAlive::default())
         .into_response())
+}
+
+/// Every Minecraft version a pack can be built against (#126).
+///
+/// Served from the mirror's own copy so opening the editor does not depend on
+/// somebody else's service, and so an outage narrows the offer to what was last
+/// known rather than emptying it -- an empty picker sends the operator back to
+/// typing, which is what this replaced.
+async fn get_minecraft_versions(
+    State(state): State<AppState>,
+) -> Result<Json<crate::authoring::MinecraftVersions>, ApiError> {
+    crate::authoring::minecraft_versions(&state.storage, &state.modrinth)
+        .await
+        .map(Json)
+        .map_err(ApiError::Internal)
 }
 
 /// How long the mirror waits for the typing to stop before writing the merged

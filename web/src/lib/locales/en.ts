@@ -129,6 +129,8 @@ export const en = {
   'pe.basics': 'Basics',
   'pe.displayName': 'Display name',
   'pe.mcVersion': 'Minecraft version',
+  'pe.mcUnknown': 'The mirror does not know this Minecraft version.',
+  'pe.mcUnknownStale': 'The mirror does not know this Minecraft version -- though its list is out of date right now.',
   'pe.loaderName': 'Loader',
   'pe.loaderVersion': 'Loader version',
   'pe.java': 'Java',

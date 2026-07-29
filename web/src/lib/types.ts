@@ -115,3 +115,20 @@ export interface JobResult {
   blocked?: string[];
   result?: DryRun | null;
 }
+
+// GET /v1/meta/minecraft -- the version list the editor offers, from the
+// mirror's copy. `stale` means upstream was unreachable and this is the last
+// known list, which is a better answer than an empty picker.
+export interface GameVersion {
+  version: string;
+  version_type: string;
+  date: string;
+  major: boolean;
+}
+
+export interface MinecraftVersions {
+  versions: GameVersion[];
+  fetched_at: string;
+  fetched_unix: number;
+  stale: boolean;
+}
