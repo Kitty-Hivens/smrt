@@ -81,6 +81,11 @@ struct BuildParams {
     /// of the flag is that the decision is recorded rather than prevented.
     #[serde(default)]
     override_checks: bool,
+    /// Publish over a version that already exists (#146). Refused without it,
+    /// because rewriting a published version changes what people already have
+    /// under that name.
+    #[serde(default)]
+    overwrite_version: bool,
     /// Build this commit rather than the head of the pack's history (#122).
     /// Absent -> the newest commit, which is what "build this pack" means.
     from_commit: Option<String>,
@@ -133,6 +138,7 @@ async fn build_pack(
             changelog,
             changelog_i18n,
             override_checks: p.override_checks,
+            overwrite_version: p.overwrite_version,
             from_commit,
             actor: Some(identity),
         },

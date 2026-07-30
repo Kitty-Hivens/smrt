@@ -219,10 +219,20 @@ impl Storage {
     /// Write a built manifest to `packs/<id>/manifests/<version>.json`. The
     /// authoring layer computes the manifest; persistence lives here so the
     /// on-disk layout has a single owner shared by the CLI and the panel.
+    /// `overwrite` is the deliberate replacement of an already-published
+    /// version, which is refused by default (#146).
+    ///
+    /// Auto-numbering never collides -- it takes the next counter past the
+    /// highest published -- so this only fires when someone names a version by
+    /// hand. Rewriting one is not a small thing: a launcher that already has
+    /// that version and caches by version keeps the old content, the commit a
+    /// manifest names as its origin stops being what shipped, and every diff
+    /// that touches the version changes meaning retroactively.
     pub async fn save_manifest(
         &self,
         pack_id: &str,
         manifest: &PackManifest,
+        overwrite: bool,
     ) -> Result<(), ApiError> {
         if !is_safe_id(pack_id) {
             return Err(ApiError::BadRequest("invalid pack id".into()));
@@ -236,6 +246,13 @@ impl Storage {
             .join(pack_id)
             .join("manifests")
             .join(format!("{}.json", manifest.pack_version));
+        if !overwrite && fs::try_exists(&path).await.unwrap_or(false) {
+            return Err(ApiError::Conflict(format!(
+                "{} {} is already published; publishing over it would change what \
+                 people already downloaded under that name",
+                manifest.pack_id, manifest.pack_version
+            )));
+        }
         let bytes = serde_json::to_vec_pretty(manifest)
             .map_err(|e| ApiError::Internal(anyhow::anyhow!("manifest json encode: {e}")))?;
         atomic_write(&path, &bytes).await
@@ -1358,6 +1375,45 @@ mod tests {
         }
     }
 
+    // #146: auto-numbering never collides, so this only fires when a version is
+    // named by hand -- and then it is worth stopping, because a rewritten
+    // version changes what anyone already holding it downloaded under that name.
+    #[tokio::test]
+    async fn republishing_a_version_is_refused_unless_asked_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let first = manifest("0.1.0", "2026-05-22T00:00:00Z", 1);
+        s.save_manifest("Industrial", &first, false).await.unwrap();
+
+        let second = manifest("0.1.0", "2026-05-23T00:00:00Z", 2);
+        let err = s
+            .save_manifest("Industrial", &second, false)
+            .await
+            .expect_err("the version is taken");
+        assert!(
+            matches!(err, ApiError::Conflict(ref m) if m.contains("0.1.0")),
+            "names the version: {err}"
+        );
+        // and what was published is untouched by the refusal
+        assert_eq!(
+            s.load_manifest_version("Industrial", "0.1.0")
+                .await
+                .unwrap()
+                .generated_at,
+            "2026-05-22T00:00:00Z"
+        );
+
+        // asked for explicitly, it goes through
+        s.save_manifest("Industrial", &second, true).await.unwrap();
+        assert_eq!(
+            s.load_manifest_version("Industrial", "0.1.0")
+                .await
+                .unwrap()
+                .generated_at,
+            "2026-05-23T00:00:00Z"
+        );
+    }
+
     #[tokio::test]
     async fn pack_config_round_trips() {
         let dir = tempfile::tempdir().unwrap();
@@ -1540,18 +1596,21 @@ mod tests {
         s.save_manifest(
             "Industrial",
             &manifest("2026.05.22.2", "2026-05-22T10:00:00Z", 3),
+            false,
         )
         .await
         .unwrap();
         s.save_manifest(
             "Industrial",
             &manifest("SNAPSHOT-0.0.0-2026.07.18", "2026-07-18T09:00:00Z", 4),
+            false,
         )
         .await
         .unwrap();
         s.save_manifest(
             "Industrial",
             &manifest("SNAPSHOT-0.0.0-2026.07.18.1", "2026-07-18T11:00:00Z", 5),
+            false,
         )
         .await
         .unwrap();
@@ -1600,7 +1659,7 @@ mod tests {
         // a modern build: semver label, channel stored on the manifest
         let mut m = manifest("0.0.3", "2026-07-19T10:00:00Z", 2);
         m.channel = Some(VersionChannel::Alpha);
-        s.save_manifest("Industrial", &m).await.unwrap();
+        s.save_manifest("Industrial", &m, false).await.unwrap();
         s.set_latest_manifest("Industrial", "0.0.3").await.unwrap();
 
         let info = s.latest_build_info("Industrial").await.unwrap().unwrap();
@@ -1670,7 +1729,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let s = Storage::new(dir.path().to_path_buf());
         for v in ["2026.05.22.10", "2026.05.22.2"] {
-            s.save_manifest("Industrial", &manifest(v, "2026-05-22T00:00:00Z", 1))
+            s.save_manifest("Industrial", &manifest(v, "2026-05-22T00:00:00Z", 1), false)
                 .await
                 .unwrap();
         }
