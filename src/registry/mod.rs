@@ -25,6 +25,81 @@ mod tests {
     // meant downloading and opening it -- which is why it only ever grew. The
     // harvest already has the file open; this is that readout surviving even
     // when no identity could be derived.
+    // #145 stores two halves: what an artifact's required mixins must resolve,
+    // and what each artifact provides to resolve it with. Both are only useful
+    // if "cannot answer" stays distinguishable from "no".
+    #[test]
+    fn a_digest_answers_membership_and_absence_says_so() {
+        let r = Registry::open_in_memory().unwrap();
+        r.with_conn_mut(|c| {
+            let m = upsert::upsert_mod_by_alias(c, &[("modid", "sodium")], NOW)?;
+            let v = upsert::upsert_mod_version(
+                c,
+                m,
+                "0.8.12",
+                &["neoforge"],
+                &"a".repeat(40),
+                1,
+                None,
+                None,
+                NOW,
+            )?;
+
+            // never read: the answer is "unknown", not "missing"
+            assert_eq!(
+                queries::artifact_has_class(c, v, "net/caffeinemc/Anything")?,
+                None
+            );
+
+            upsert::set_class_digest(
+                c,
+                v,
+                &[
+                    "net/caffeinemc/mods/sodium/client/render/SodiumWorldRenderer".to_string(),
+                    "net/caffeinemc/mods/sodium/client/SodiumClientMod".to_string(),
+                ],
+            )?;
+            assert_eq!(
+                queries::artifact_has_class(
+                    c,
+                    v,
+                    "net/caffeinemc/mods/sodium/client/render/SodiumWorldRenderer"
+                )?,
+                Some(true)
+            );
+            // the class the new Sodium moved -- the whole point of the check
+            assert_eq!(
+                queries::artifact_has_class(
+                    c,
+                    v,
+                    "net/caffeinemc/mods/sodium/client/gui/SodiumGameOptions"
+                )?,
+                Some(false)
+            );
+
+            upsert::set_mixin_needs(
+                c,
+                v,
+                &[(
+                    "sable.mixins.json".to_string(),
+                    "net/caffeinemc/mods/sodium/client/gui/SodiumGameOptions".to_string(),
+                )],
+            )?;
+            assert_eq!(
+                queries::mixin_needs(c, v)?,
+                vec![(
+                    "sable.mixins.json".to_string(),
+                    "net/caffeinemc/mods/sodium/client/gui/SodiumGameOptions".to_string()
+                )]
+            );
+            // a re-harvest states the set again rather than adding to it
+            upsert::set_mixin_needs(c, v, &[])?;
+            assert!(queries::mixin_needs(c, v)?.is_empty());
+            Ok(())
+        })
+        .unwrap();
+    }
+
     #[test]
     fn a_jar_the_harvest_could_not_identify_still_says_what_it_is() {
         let r = Registry::open_in_memory().unwrap();

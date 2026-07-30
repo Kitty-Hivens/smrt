@@ -4,6 +4,7 @@ import type { CapabilityOverlap } from "./CapabilityOverlap";
 import type { ForcedClientEdge } from "./ForcedClientEdge";
 import type { LoaderMismatch } from "./LoaderMismatch";
 import type { MissingDep } from "./MissingDep";
+import type { MixinGap } from "./MixinGap";
 import type { SideDisagreement } from "./SideDisagreement";
 import type { VersionIssue } from "./VersionIssue";
 
@@ -49,6 +50,11 @@ version_issues: Array<VersionIssue>,
  * bridge them -- they will not load at all (#50).
  */
 loader_mismatch: Array<LoaderMismatch>, 
+/**
+ * A required mixin whose target the pack's copy of the host no longer
+ * carries (#145). The pack starts loading and dies during init.
+ */
+mixin_gaps: Array<MixinGap>, 
 /**
  * Foreign-loader artifacts a present connector carries. Not a problem: they
  * load. Listed because it is worth knowing which mods in a forge pack are

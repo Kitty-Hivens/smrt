@@ -778,7 +778,7 @@ fn is_content_class(c: &ClassInfo) -> bool {
 
 /// The owning prefix for a binary class name: its package, trimmed to the first
 /// two segments (three under a broad root). `None` for a default-package class.
-fn package_prefix(binary: &str) -> Option<String> {
+pub(crate) fn package_prefix(binary: &str) -> Option<String> {
     let slash = binary.rfind('/')?;
     let pkg = &binary[..slash];
     if pkg.is_empty() {
@@ -795,7 +795,7 @@ fn package_prefix(binary: &str) -> Option<String> {
 
 /// True when a binary name sits under a platform/library namespace (matched at a
 /// `/` boundary so `net/minecraftforge` matches but `net/minecraftforgeX` does not).
-fn is_platform(binary: &str) -> bool {
+pub(crate) fn is_platform(binary: &str) -> bool {
     STOP_PREFIXES.iter().any(|p| starts_with_segment(binary, p))
 }
 

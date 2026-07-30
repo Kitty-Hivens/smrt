@@ -43,6 +43,12 @@ const MOD_DESCRIPTORS: &[&str] = &[
     "Lnet/neoforged/fml/common/Mod;",
 ];
 
+/// The Mixin annotation. A mixin names what it patches either as class
+/// constants in `value` (`@Mixin(Foo.class)`) or as source names in `targets`
+/// (`@Mixin(targets = "net.foo.Bar")`), the latter for a target the mixin
+/// cannot reference at compile time.
+const MIXIN_DESCRIPTOR: &str = "Lorg/spongepowered/asm/mixin/Mixin;";
+
 /// Class-level dist annotations across loader eras: Forge 1.7/1.8-1.12
 /// `@SideOnly(Side.X)`, modern Forge/NeoForge `@OnlyIn(Dist.X)`, Fabric
 /// `@Environment(EnvType.X)`. The enum constant name tells the side.
@@ -144,6 +150,14 @@ pub struct ClassInfo {
     pub sided_proxy: bool,
     /// True when the class implements a coremod loading-plugin interface.
     pub loading_plugin: bool,
+    /// Binary names this class patches, from its `@Mixin` annotation (#145).
+    /// Empty for a class that is not a mixin.
+    ///
+    /// Read from the annotation rather than from `referenced`, which also holds
+    /// every helper and signature type the class touches -- a mixin legitimately
+    /// references things the pack does not have to carry, and only its targets
+    /// must actually be present.
+    pub mixin_targets: Vec<String>,
 }
 
 /// Constant-pool entries, reduced to what derivation reads. `Skip` is the dead
@@ -349,6 +363,7 @@ pub fn parse_class(bytes: &[u8]) -> Option<ClassInfo> {
     let mut mod_id: Option<String> = None;
     let mut acceptable_remote_versions: Option<String> = None;
     let mut dist: Option<Dist> = None;
+    let mut mixin_targets: Vec<String> = Vec::new();
     let attr_count = c.u2()?;
     for _ in 0..attr_count {
         let name_index = c.u2()?;
@@ -372,6 +387,7 @@ pub fn parse_class(bytes: &[u8]) -> Option<ClassInfo> {
             if dist.is_none() {
                 dist = scanned.dist;
             }
+            mixin_targets.extend(scanned.mixin_targets);
         }
     }
 
@@ -382,6 +398,7 @@ pub fn parse_class(bytes: &[u8]) -> Option<ClassInfo> {
         .iter()
         .any(|i| LOADING_PLUGIN_INTERFACES.contains(&i.as_str()));
     Some(ClassInfo {
+        mixin_targets,
         conditional: is_conditional(&cp),
         sided_proxy: has_marker(&cp, SIDED_PROXY_DESCRIPTORS),
         loading_plugin,
@@ -524,6 +541,7 @@ struct ModAnnotation {
 struct ScannedAnnotations {
     mod_annotation: Option<ModAnnotation>,
     dist: Option<Dist>,
+    mixin_targets: Vec<String>,
 }
 
 /// Scan an annotations attribute body for the annotations derivation reads: a
@@ -569,6 +587,28 @@ fn scan_annotations(body: &[u8], cp: &[Cp]) -> ScannedAnnotations {
                 }
             }
             out.mod_annotation = Some(ann);
+        } else if type_desc == MIXIN_DESCRIPTOR {
+            for (name_index, value) in pairs {
+                match (utf8(cp, name_index), value) {
+                    // @Mixin(Foo.class) / @Mixin({A.class, B.class})
+                    (Some("value"), Some(v)) => {
+                        for idx in class_indices(&v) {
+                            if let Some(name) = utf8(cp, idx).and_then(descriptor_binary_name) {
+                                out.mixin_targets.push(name);
+                            }
+                        }
+                    }
+                    // @Mixin(targets = "net.foo.Bar") -- a source name
+                    (Some("targets"), Some(v)) => {
+                        for idx in string_indices(&v) {
+                            if let Some(name) = utf8(cp, idx).filter(|s| !s.is_empty()) {
+                                out.mixin_targets.push(name.replace('.', "/"));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
         } else if DIST_DESCRIPTORS.contains(&type_desc) && out.dist.is_none() {
             // the side rides in the `value` element's enum constant name:
             // Side.CLIENT / Dist.CLIENT / EnvType.CLIENT, and the server-side
@@ -587,12 +627,46 @@ fn scan_annotations(body: &[u8], cp: &[Cp]) -> ScannedAnnotations {
     out
 }
 
+/// Every class-constant index in a value, flattening a one-element array and a
+/// bare value into the same list -- `@Mixin(Foo.class)` and `@Mixin({Foo.class})`
+/// are the same declaration written two ways.
+fn class_indices(v: &ElemValue) -> Vec<u16> {
+    match v {
+        ElemValue::Class(i) => vec![*i],
+        ElemValue::Array(items) => items.iter().flatten().flat_map(class_indices).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Every String-constant index in a value, flattened the same way.
+fn string_indices(v: &ElemValue) -> Vec<u16> {
+    match v {
+        ElemValue::Prim(b's', i) => vec![*i],
+        ElemValue::Array(items) => items.iter().flatten().flat_map(string_indices).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// `Lnet/foo/Bar;` -> `net/foo/Bar`. `None` for anything that is not a plain
+/// object descriptor (an array or a primitive is never a mixin target).
+fn descriptor_binary_name(desc: &str) -> Option<String> {
+    desc.strip_prefix('L')?
+        .strip_suffix(';')
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 /// A captured element value: a primitive/String constant (`tag`, const-pool
-/// index), an enum constant (`type_name_index`, `const_name_index`), or
-/// `None` for structured values we only skip past.
+/// index), an enum constant (`const_name_index`), a class constant (the index
+/// of its field descriptor), or an array of the same. `None` for the shapes
+/// still only skipped past.
 enum ElemValue {
     Prim(u8, u16),
     Enum(u16),
+    /// `Foo.class` -- the index of a Utf8 holding a field descriptor
+    /// (`Lnet/foo/Bar;`). Read because a mixin names its targets this way.
+    Class(u16),
+    Array(Vec<Option<ElemValue>>),
 }
 
 /// Read one `annotation` structure, capturing `(type_index, pairs)` where each
@@ -627,8 +701,8 @@ fn read_element_value(c: &mut Cur) -> Option<Option<ElemValue>> {
             Some(Some(ElemValue::Enum(const_name_index)))
         }
         b'c' => {
-            c.u2()?; // class_info_index
-            Some(None)
+            let class_info_index = c.u2()?;
+            Some(Some(ElemValue::Class(class_info_index)))
         }
         b'@' => {
             read_annotation(c)?; // nested annotation
@@ -636,10 +710,11 @@ fn read_element_value(c: &mut Cur) -> Option<Option<ElemValue>> {
         }
         b'[' => {
             let n = c.u2()?;
+            let mut items = Vec::with_capacity(n as usize);
             for _ in 0..n {
-                read_element_value(c)?;
+                items.push(read_element_value(c)?);
             }
-            Some(None)
+            Some(Some(ElemValue::Array(items)))
         }
         _ => None,
     }
@@ -771,6 +846,21 @@ pub(crate) mod fixtures {
         b
     }
 
+    fn class_val(desc_index: u16) -> Vec<u8> {
+        let mut b = vec![b'c'];
+        b.extend_from_slice(&desc_index.to_be_bytes());
+        b
+    }
+
+    fn array_val(items: &[Vec<u8>]) -> Vec<u8> {
+        let mut b = vec![b'['];
+        b.extend_from_slice(&(items.len() as u16).to_be_bytes());
+        for i in items {
+            b.extend_from_slice(i);
+        }
+        b
+    }
+
     fn enum_val(type_name: u16, const_name: u16) -> Vec<u8> {
         let mut b = vec![b'e'];
         b.extend_from_slice(&type_name.to_be_bytes());
@@ -808,6 +898,10 @@ pub(crate) mod fixtures {
         /// `("Lnet/minecraftforge/api/distmarker/OnlyIn;", "CLIENT")`.
         pub(crate) dist: Option<(&'a str, &'a str)>,
         pub(crate) sided_proxy: bool,
+        /// Targets for an `@Mixin` annotation: class constants (`Foo.class`).
+        pub(crate) mixin_value: &'a [&'a str],
+        /// Targets for `@Mixin(targets = ...)`, written as source names.
+        pub(crate) mixin_targets: &'a [&'a str],
     }
 
     /// Assemble a class from a [`ClassSpec`] -- the one builder every
@@ -851,6 +945,29 @@ pub(crate) mod fixtures {
                 let n = w.utf8("acceptableRemoteVersions");
                 let v = w.utf8(arv);
                 pairs.push((n, prim(b's', v)));
+            }
+            anns.push(annotation(desc, &pairs));
+        }
+        if !spec.mixin_value.is_empty() || !spec.mixin_targets.is_empty() {
+            let desc = w.utf8("Lorg/spongepowered/asm/mixin/Mixin;");
+            let mut pairs: Vec<(u16, Vec<u8>)> = Vec::new();
+            if !spec.mixin_value.is_empty() {
+                let n = w.utf8("value");
+                let items: Vec<Vec<u8>> = spec
+                    .mixin_value
+                    .iter()
+                    .map(|t| class_val(w.utf8(&format!("L{t};"))))
+                    .collect();
+                pairs.push((n, array_val(&items)));
+            }
+            if !spec.mixin_targets.is_empty() {
+                let n = w.utf8("targets");
+                let items: Vec<Vec<u8>> = spec
+                    .mixin_targets
+                    .iter()
+                    .map(|t| prim(b's', w.utf8(t)))
+                    .collect();
+                pairs.push((n, array_val(&items)));
             }
             anns.push(annotation(desc, &pairs));
         }
@@ -1142,5 +1259,67 @@ mod tests {
         assert!(parse_class(&[]).is_none());
         // right magic, truncated body
         assert!(parse_class(&0xCAFE_BABEu32.to_be_bytes()).is_none());
+    }
+}
+
+#[cfg(test)]
+mod mixin_tests {
+    use super::fixtures::{ClassSpec, build_class_spec};
+    use super::*;
+
+    fn targets(spec: &ClassSpec) -> Vec<String> {
+        parse_class(&build_class_spec(spec)).unwrap().mixin_targets
+    }
+
+    #[test]
+    fn a_mixin_names_its_targets_as_class_constants() {
+        assert_eq!(
+            targets(&ClassSpec {
+                this: "mod/mixin/SodiumWorldRendererMixin",
+                mixin_value: &["net/caffeinemc/mods/sodium/client/render/SodiumWorldRenderer"],
+                ..ClassSpec::default()
+            }),
+            ["net/caffeinemc/mods/sodium/client/render/SodiumWorldRenderer"]
+        );
+    }
+
+    #[test]
+    fn a_target_the_mixin_cannot_reference_is_a_source_name() {
+        // @Mixin(targets = "net.foo.Bar") -- used for a package-private or
+        // otherwise unreferenceable class; stored dotted, read as binary
+        assert_eq!(
+            targets(&ClassSpec {
+                this: "mod/mixin/HiddenMixin",
+                mixin_targets: &["net.foo.Bar$Inner"],
+                ..ClassSpec::default()
+            }),
+            ["net/foo/Bar$Inner"]
+        );
+    }
+
+    #[test]
+    fn one_mixin_may_patch_several_classes() {
+        let mut got = targets(&ClassSpec {
+            this: "mod/mixin/BothMixin",
+            mixin_value: &["a/A", "b/B"],
+            mixin_targets: &["c.C"],
+            ..ClassSpec::default()
+        });
+        got.sort();
+        assert_eq!(got, ["a/A", "b/B", "c/C"]);
+    }
+
+    #[test]
+    fn a_class_that_is_not_a_mixin_names_nothing() {
+        // and in particular the types it merely references are not targets: a
+        // mixin's helpers need not be present for it to apply
+        let info = parse_class(&build_class_spec(&ClassSpec {
+            this: "mod/Plain",
+            refs: &["some/Helper"],
+            ..ClassSpec::default()
+        }))
+        .unwrap();
+        assert!(info.mixin_targets.is_empty());
+        assert!(info.referenced.contains("some/Helper"));
     }
 }

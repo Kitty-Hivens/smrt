@@ -58,6 +58,9 @@ pub struct ResolveReport {
     /// Declared artifacts this pack's loader cannot run, with nothing present to
     /// bridge them -- they will not load at all (#50).
     pub loader_mismatch: Vec<LoaderMismatch>,
+    /// A required mixin whose target the pack's copy of the host no longer
+    /// carries (#145). The pack starts loading and dies during init.
+    pub mixin_gaps: Vec<MixinGap>,
     /// Foreign-loader artifacts a present connector carries. Not a problem: they
     /// load. Listed because it is worth knowing which mods in a forge pack are
     /// actually fabric mods riding the bridge -- pull the connector and they all
@@ -151,6 +154,26 @@ pub struct ActiveConflict {
     pub b: String,
     pub hard: bool,
     pub source: String,
+}
+
+/// A jar's `required` mixin config names a class that the pack's own copy of the
+/// mod owning it does not have.
+///
+/// Fatal, and invisible in every declaration: both mods that hit it declared an
+/// open lower bound on the host, which every version satisfies. The loader
+/// throws during init and blames whichever mod first reached the missing class,
+/// so the crash report names a bystander.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct MixinGap {
+    /// The jar whose mixin config asks for it.
+    pub filename: String,
+    /// The config that declares it (`sable.mixins.json`).
+    pub config: String,
+    /// The missing class, as a binary name.
+    pub needed: String,
+    /// The pack's jar that owns the class's package and does not carry it.
+    pub owner: String,
 }
 
 /// A capability more than one present mod provides.
@@ -860,6 +883,45 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
     unresolved.sort();
     unresolved.dedup();
 
+    // #145: a required mixin whose target the pack's own copy of the host lost.
+    // Only judged where the pack itself owns the class's package: everything
+    // else is the game's, or a mod that is simply absent, which is a different
+    // finding with its own name.
+    let by_mod: HashMap<i64, &Present> = present.iter().map(|p| (p.mod_id, p)).collect();
+    let mut mixin_gaps: Vec<MixinGap> = Vec::new();
+    for p in &present {
+        let Some(mv) = p.mod_version_id else { continue };
+        for (config, needed) in queries::mixin_needs(conn, mv)? {
+            if crate::authoring::bytecode::is_platform(&needed) {
+                continue;
+            }
+            let Some(prefix) = crate::authoring::bytecode::package_prefix(&needed) else {
+                continue;
+            };
+            let Some(owner_mod) = queries::owner_mod_for_prefix(conn, &prefix)? else {
+                continue; // nobody owns it, or several do -- not answerable
+            };
+            if owner_mod == p.mod_id {
+                continue; // its own class
+            }
+            let Some(owner) = by_mod.get(&owner_mod) else {
+                continue; // the owner is not in this pack
+            };
+            let Some(owner_mv) = owner.mod_version_id else {
+                continue; // never read: cannot answer
+            };
+            if queries::artifact_has_class(conn, owner_mv, &needed)? == Some(false) {
+                mixin_gaps.push(MixinGap {
+                    filename: p.filename.clone(),
+                    config: config.clone(),
+                    needed,
+                    owner: owner.filename.clone(),
+                });
+            }
+        }
+    }
+    mixin_gaps.sort_by(|x, y| (&x.filename, &x.needed).cmp(&(&y.filename, &y.needed)));
+
     Ok(ResolveReport {
         declared_mods: cfg.mods.len(),
         // a Modrinth pin the mirror has not harvested is resolved too -- it is a
@@ -872,6 +934,7 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
         version_issues,
         loader_mismatch,
         loader_bridged,
+        mixin_gaps,
         unresolved,
         version_windows_unchecked: unchecked,
         coremods,

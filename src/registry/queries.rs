@@ -531,6 +531,53 @@ pub fn relations_from(conn: &Connection, from_mod_id: i64) -> Result<Vec<Relatio
     Ok(out)
 }
 
+/// What an artifact's required mixins must be able to resolve (#145), as
+/// `(config, needed binary name)`.
+pub fn mixin_needs(conn: &Connection, mod_version_id: i64) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT config, needed FROM mixin_need WHERE mod_version_id = ?1
+         ORDER BY config, needed",
+    )?;
+    let rows = stmt
+        .query_map([mod_version_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Whether an artifact carries a class. `None` when the mirror has never had
+/// the artifact's bytes, which is "cannot answer" and never "no".
+pub fn artifact_has_class(
+    conn: &Connection,
+    mod_version_id: i64,
+    binary_name: &str,
+) -> Result<Option<bool>> {
+    let blob: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT class_digest FROM mod_version WHERE id = ?1",
+            [mod_version_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
+    let Some(blob) = blob.filter(|b| !b.is_empty() && b.len() % 8 == 0) else {
+        return Ok(None);
+    };
+    let want = super::upsert::class_hash(binary_name).to_be_bytes();
+    // the digest is written sorted, so membership is a binary search over
+    // 8-byte records rather than a walk
+    let n = blob.len() / 8;
+    let (mut lo, mut hi) = (0usize, n);
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        match blob[mid * 8..mid * 8 + 8].cmp(&want[..]) {
+            std::cmp::Ordering::Less => lo = mid + 1,
+            std::cmp::Ordering::Greater => hi = mid,
+            std::cmp::Ordering::Equal => return Ok(Some(true)),
+        }
+    }
+    Ok(Some(false))
+}
+
 /// For the self-hosted jar `sha1`, its mod's Modrinth `(project_id, version_id)`
 /// counterpart to diff against: the mod's Modrinth project alias plus any sibling
 /// file that carries a `modrinth_version_id` (the genuine build). `None` when the
