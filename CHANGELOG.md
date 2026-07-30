@@ -35,6 +35,16 @@ version section when a release is tagged.
 
 ### Added
 
+- A publish stops when a jar's required mixin patches a class the pack no longer
+  carries. Twice in one day a published pack died during init on exactly this,
+  and neither case was visible in any declaration -- both mods declare an open
+  lower bound on their host, which every version satisfies, and nothing in the
+  metadata says "I reach into this class". The mirror now reads what each jar's
+  required mixin configs must resolve, records what each artifact provides, and
+  refuses the build when the pack's own copy of the host has lost it. The finding
+  names the jar that asks, the class that is gone, and whose copy lacks it -- the
+  three things the crash report cannot, since the loader blames whichever mod
+  first reached the missing class.
 - Release notes on a build can be written per language. A build carries
   `changelog_i18n` beside `changelog` -- the same notes keyed by language tag --
   and a launcher renders whichever matches its user, falling back to the
