@@ -190,6 +190,12 @@ edges, and which public packs ship it. `/v1/files/{sha1}` is the Modrinth
   can resolve the project icon themselves -- and should fall back to the
   jar-embedded icon by sha1 when Modrinth is unreachable (the mirror caches
   the jars either way).
+- `/v1/modrinth/icon/{project_id}` -- the icon of a Modrinth project the mirror
+  indexes, fetched once and served from here. The mirror does not rehost
+  Modrinth's jars, but a project icon is a few kilobytes of picture rather than
+  the mod, and serving it means a page does not fetch images off someone else's
+  CDN. Refreshed monthly; 404 when the project has no icon, or has one in a kind
+  the mirror does not serve back.
 - `/v1/users/{uid}/avatar` -- GitHub avatars proxied through the mirror, so a
   page never hands viewer IPs to a third party.
 

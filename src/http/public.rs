@@ -41,6 +41,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/featured", get(get_featured))
         .route("/v1/cache/{prefix}/{filename}", get(get_cache_jar))
         .route("/v1/cache/icon/{sha1}", get(get_cache_icon))
+        .route("/v1/modrinth/icon/{project_id}", get(get_project_icon))
         .route("/v1/cache/inventory", get(get_cache_inventory))
         .route("/v1/community", get(list_community))
         .route("/v1/mods/{key}", get(get_mod_detail))
@@ -628,6 +629,74 @@ pub(crate) async fn get_cache_icon(
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ],
         img,
+    )
+        .into_response())
+}
+
+/// A Modrinth project's icon, served from the mirror rather than from
+/// Modrinth's CDN.
+///
+/// The panel used to receive the upstream url and put it straight into an
+/// `<img>`, which meant every viewer's browser announced itself to a third
+/// party once per icon on the page. The avatar proxy next door exists for
+/// exactly that reason and this is the same act: fetch it once, keep it, serve
+/// it from here.
+///
+/// Public, like every other picture the mirror serves. It costs an outbound
+/// fetch only on a miss -- afterwards it is a file. A project the mirror cannot
+/// resolve, or whose icon is a kind not served back, answers 404 and the caller
+/// falls back to the jar's own icon or a letter.
+#[utoipa::path(
+    get,
+    path = "/v1/modrinth/icon/{project_id}",
+    tag = "public",
+    params(("project_id" = String, Path, description = "Modrinth project id or slug")),
+    responses(
+        (status = 200, description = "The project's icon, held by the mirror"),
+        (status = 404, description = "No icon for that project")
+    )
+)]
+pub(crate) async fn get_project_icon(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let (bytes, content_type) = match state.storage.read_project_icon(&project_id).await {
+        Some(held) => held,
+        None => {
+            let url = state
+                .modrinth
+                .project_icon(&project_id)
+                .await
+                .map_err(|_| ApiError::NotFound)?
+                .ok_or(ApiError::NotFound)?;
+            let (bytes, content_type) = state
+                .modrinth
+                .fetch_image(&url)
+                .await
+                .map_err(|_| ApiError::NotFound)?;
+            state
+                .storage
+                .store_project_icon(&project_id, &bytes, &content_type)
+                .await;
+            // read back rather than trust the upstream string: what is served is
+            // one of the kinds the mirror is willing to serve, or nothing
+            state
+                .storage
+                .read_project_icon(&project_id)
+                .await
+                .ok_or(ApiError::NotFound)?
+        }
+    };
+    Ok((
+        [
+            (header::CONTENT_TYPE, content_type),
+            // a day, not forever: unlike a jar's icon this one can change upstream
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+            // third-party bytes; pin the type so nothing can be sniffed into
+            // something active
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        bytes,
     )
         .into_response())
 }

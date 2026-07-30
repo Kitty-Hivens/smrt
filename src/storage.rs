@@ -795,6 +795,70 @@ impl Storage {
         }
     }
 
+    /// A Modrinth project's icon as this mirror holds it, if it is still fresh.
+    ///
+    /// The mirror does not rehost Modrinth's jars -- that is the archival policy
+    /// -- but a project icon is a few kilobytes of picture, not the mod, and
+    /// holding it is what keeps a viewer's browser from fetching it off someone
+    /// else's CDN. The same argument the avatar proxy already makes.
+    ///
+    /// Unlike a jar's icon this one can change upstream, so a copy older than
+    /// [`PROJECT_ICON_MAX_AGE`] reads as absent and is fetched again.
+    pub async fn read_project_icon(&self, project: &str) -> Option<(Vec<u8>, &'static str)> {
+        let dir = self.project_icon_dir(project)?;
+        for (ext, content_type) in ICON_KINDS {
+            let path = dir.join(format!("{project}.{ext}"));
+            let Ok(meta) = fs::metadata(&path).await else {
+                continue;
+            };
+            let fresh = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age < PROJECT_ICON_MAX_AGE);
+            if !fresh {
+                continue;
+            }
+            if let Ok(bytes) = fs::read(&path).await {
+                return Some((bytes, content_type));
+            }
+        }
+        None
+    }
+
+    /// Keep a project's icon. Best-effort, like the jar icons: a copy that
+    /// cannot be written costs the next viewer one fetch.
+    pub async fn store_project_icon(&self, project: &str, bytes: &[u8], content_type: &str) {
+        let Some(ext) = ICON_KINDS
+            .iter()
+            .find(|(_, ct)| *ct == content_type)
+            .map(|(ext, _)| *ext)
+        else {
+            return; // a kind we do not serve back; see ICON_KINDS
+        };
+        let Some(dir) = self.project_icon_dir(project) else {
+            return;
+        };
+        if fs::create_dir_all(&dir).await.is_err() {
+            return;
+        }
+        if let Err(e) = fs::write(dir.join(format!("{project}.{ext}")), bytes).await {
+            tracing::warn!(project, error = %e, "could not keep a project icon");
+        }
+    }
+
+    /// Project ids are Modrinth's own base62 handles; a slug may also arrive.
+    /// Anything that could leave the directory, or is not a plausible handle at
+    /// all, gets no path -- this becomes a filename.
+    fn project_icon_dir(&self, project: &str) -> Option<PathBuf> {
+        let sane = !project.is_empty()
+            && project.len() <= 64
+            && project
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        sane.then(|| self.root.join("icons").join("modrinth"))
+    }
+
     /// Drop whatever was remembered about a jar's icon. A taken-down jar must
     /// not keep serving the picture that came out of it.
     pub async fn forget_icon(&self, sha1: &str) {
@@ -1394,13 +1458,22 @@ pub(crate) fn sha1_shard(sha1: &str) -> &str {
 /// a single source of truth. `None` for a non-40-hex sha1.
 /// The image kinds `jar_icon` can hand back, as `(extension, content type)`.
 /// One home for the mapping both directions.
-const ICON_KINDS: [(&str, &str); 3] = [
+/// SVG is deliberately absent: an svg served from our own origin is a document
+/// that can carry script, and these bytes come from somewhere else. A project
+/// whose icon is an svg falls back to the jar's icon or a letter, which is what
+/// a missing icon has always done.
+const ICON_KINDS: [(&str, &str); 4] = [
     ("png", "image/png"),
     ("jpg", "image/jpeg"),
     ("gif", "image/gif"),
+    ("webp", "image/webp"),
 ];
 /// Marker extension for "this jar was opened and carries no icon".
 const NO_ICON: &str = "none";
+/// How long a project icon copied from upstream is served before it is fetched
+/// again. A jar's icon cannot change -- the jar is its hash -- but a project's
+/// can, so this one has a shelf life.
+const PROJECT_ICON_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30 * 86_400);
 
 /// What the icon cache knows about a jar.
 pub enum IconRead {
@@ -1901,6 +1974,65 @@ mod tests {
             matches!(s.read_cached_icon(&sha1).await, IconRead::Unknown),
             "a taken-down jar keeps serving its icon"
         );
+    }
+
+    // A project icon is a few kilobytes of picture, not the mod: holding it is
+    // what keeps a viewer's browser from announcing itself to somebody else's
+    // CDN once per icon on the page.
+    #[tokio::test]
+    async fn a_project_icon_is_held_and_ages_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        assert!(s.read_project_icon("AANobbMI").await.is_none());
+
+        s.store_project_icon("AANobbMI", b"webp-ish", "image/webp")
+            .await;
+        let (bytes, content_type) = s.read_project_icon("AANobbMI").await.unwrap();
+        assert_eq!(bytes, b"webp-ish");
+        assert_eq!(content_type, "image/webp");
+
+        // a copy older than the shelf life reads as absent, so it is fetched
+        // again rather than served forever from whenever it was first taken
+        let held = dir.path().join("icons/modrinth/AANobbMI.webp");
+        let long_ago = std::time::SystemTime::now()
+            - PROJECT_ICON_MAX_AGE
+            - std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&held)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+        assert!(
+            s.read_project_icon("AANobbMI").await.is_none(),
+            "a copy past its shelf life must not be served"
+        );
+    }
+
+    // An svg from somewhere else, served from our own origin, is a document that
+    // can carry script. It is not stored, so it is never served back.
+    #[tokio::test]
+    async fn an_icon_kind_the_mirror_will_not_serve_is_not_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        s.store_project_icon("AANobbMI", b"<svg onload=alert(1)>", "image/svg+xml")
+            .await;
+        assert!(s.read_project_icon("AANobbMI").await.is_none());
+    }
+
+    // The id becomes a filename, so anything that could leave the directory --
+    // or is not a plausible handle at all -- gets no path.
+    #[tokio::test]
+    async fn a_project_id_that_is_not_a_handle_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        for bad in ["../../etc/passwd", "a/b", "", "with space", "dot.dot"] {
+            s.store_project_icon(bad, b"png-ish", "image/png").await;
+            assert!(
+                s.read_project_icon(bad).await.is_none(),
+                "{bad} must not become a path"
+            );
+        }
     }
 
     // Answering "do we hold this jar" by listing the cache made one boolean cost
