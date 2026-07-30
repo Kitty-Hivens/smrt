@@ -1133,15 +1133,26 @@ struct ManifestHead {
     generated_at: String,
     #[serde(default)]
     fingerprint: Option<String>,
+    minecraft: MinecraftSpec,
+    loader: LoaderSpec,
     #[serde(default)]
-    mods: Vec<serde::de::IgnoredAny>,
+    mods: Vec<SizedEntry>,
     #[serde(default)]
-    assets: Vec<serde::de::IgnoredAny>,
+    assets: Vec<SizedEntry>,
+}
+
+/// A manifest entry read for its weight alone: counting the list and adding up
+/// what it downloads are the same pass, so the listing takes both from it.
+#[derive(serde::Deserialize)]
+struct SizedEntry {
+    #[serde(default)]
+    size_bytes: u64,
 }
 
 /// The stored channel wins; a manifest from before the field falls back to
 /// the legacy string rule.
 fn build_info_from_head(head: ManifestHead) -> ManifestBuildInfo {
+    let weigh = |entries: &[SizedEntry]| entries.iter().map(|e| e.size_bytes).sum::<u64>();
     ManifestBuildInfo {
         version_type: head
             .channel
@@ -1153,6 +1164,9 @@ fn build_info_from_head(head: ManifestHead) -> ManifestBuildInfo {
         changelog_i18n: head.changelog_i18n,
         mods_count: head.mods.len() as u64,
         assets_count: head.assets.len() as u64,
+        minecraft_version: head.minecraft.version,
+        loader: head.loader,
+        size_bytes: weigh(&head.mods) + weigh(&head.assets),
     }
 }
 
@@ -1651,6 +1665,37 @@ mod tests {
         // a pack with no builds yields no latest, not an error
         assert_eq!(s.latest_manifest_version("Ghost").await.unwrap(), None);
         assert!(s.latest_build_info("Ghost").await.unwrap().is_none());
+    }
+
+    // What a build targets, and what installing it costs, are read off the
+    // listing -- otherwise showing "this update moves you to 1.20.1" means
+    // fetching every manifest in the list to find out.
+    #[tokio::test]
+    async fn a_build_says_what_it_targets_and_what_it_weighs() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let mut m = manifest("1.0.0", "2026-07-30T10:00:00Z", 3);
+        for (i, entry) in m.mods.iter_mut().enumerate() {
+            entry.size_bytes = 1_000 * (i as u64 + 1);
+        }
+        m.assets.push(AssetEntry {
+            dest: "config/foo.cfg".into(),
+            sha1: "sha-asset".into(),
+            size_bytes: 500,
+            required: true,
+            source: Source::SmrtCache { url: "u".into() },
+            display: None,
+        });
+        s.save_manifest("Industrial", &m, false).await.unwrap();
+
+        let builds = s.list_manifest_builds("Industrial").await.unwrap();
+        let build = &builds[0];
+        assert_eq!(build.minecraft_version, "1.12.2");
+        assert_eq!(build.loader.name, "forge");
+        assert_eq!(build.loader.version, "14.23.5.2922");
+        // every file the build lists, mods and assets alike
+        assert_eq!(build.size_bytes, 1_000 + 2_000 + 3_000 + 500);
+        assert_eq!(build.assets_count, 1);
     }
 
     #[tokio::test]

@@ -48,6 +48,12 @@ GET /v1/packs/{id}/manifest/{version}      # a specific build
    curator-authored release notes where given -- plus `fingerprint`,
    `mods_count`, `assets_count`). `latest` names the build the latest pointer
    serves. Filter by `version_type` to hide prereleases.
+   Each build also states what it targets and what it costs:
+   `minecraft_version` and `loader` (`{name, version}`), so "this update moves
+   you to 1.20.1" is answerable from the listing rather than by fetching every
+   manifest in it, and `size_bytes`, the sum of every mod and asset the build
+   lists -- optional entries included, since what one player fetches depends on
+   what they enable.
 4. **Ordering**, when a client must sort labels itself: numeric tuple
    comparison within a version base (`0.4.10` > `0.4.2`; lexicographic sort
    is wrong); across bases or historical labels, order by `date_published`.
