@@ -7,6 +7,7 @@ pub mod admin;
 pub mod apidoc;
 pub mod auth;
 pub mod error;
+pub mod etag;
 pub mod jobs;
 pub mod member;
 pub mod panel;
@@ -18,6 +19,7 @@ pub use error::ApiError;
 use crate::accounts::Identity;
 use crate::state::AppState;
 use axum::Router;
+use tower_http::compression::{CompressionLayer, DefaultPredicate, Predicate};
 
 /// Ceiling on a single request body, shared by every write path that takes a
 /// whole file (cache jars, pack static assets, member uploads, the bootstrap
@@ -56,6 +58,30 @@ pub(crate) async fn audit(
     }
 }
 
+/// Response compression for everything the mirror answers in text.
+///
+/// It lives here rather than in the reverse proxy because the mirror is the
+/// product and the proxy is one deployment's choice: a self-hoster behind
+/// Caddy, behind nothing, or behind a proxy nobody configured would otherwise
+/// ship manifests and registry listings as plain text. A manifest is tens of
+/// kilobytes of repetitive JSON, which is the shape that compresses best.
+///
+/// What is left alone matters as much as what is not. The default predicate
+/// already skips tiny bodies, images and event streams -- compressing an SSE
+/// body would hold each line in an encoder buffer instead of delivering it,
+/// which is the one thing a live log must not do. Added to that: jars and the
+/// archives, because a zip re-compresses to roughly its own size and the CPU
+/// spent proving it is the whole cost.
+fn compression() -> tower_http::compression::CompressionLayer<impl Predicate + Clone> {
+    use tower_http::compression::predicate::NotForContentType;
+    CompressionLayer::new().compress_when(
+        DefaultPredicate::new()
+            .and(NotForContentType::const_new("application/java-archive"))
+            .and(NotForContentType::const_new("application/zip"))
+            .and(NotForContentType::const_new("application/octet-stream")),
+    )
+}
+
 /// The full application router: public reads, admin writes + authoring, build
 /// jobs, the panel auth endpoints, and the embedded panel under `/admin`.
 pub fn router(state: AppState) -> Router {
@@ -68,6 +94,10 @@ pub fn router(state: AppState) -> Router {
         .merge(jobs::router(state.clone()))
         .merge(panel::router())
         .merge(apidoc::router())
+        // inside compression, so a tag names the answer rather than one
+        // encoding of it, and a 304 leaves nothing to encode
+        .layer(axum::middleware::from_fn(etag::tag_json))
+        .layer(compression())
 }
 
 #[cfg(test)]
@@ -180,6 +210,62 @@ mod tests {
             "a pack-static request must reach the handler; got {:?}",
             String::from_utf8_lossy(&body)
         );
+    }
+
+    /// Ask a one-route service wearing the real compression layer for a body of
+    /// `content_type`, and report what it came back encoded as.
+    async fn encoding_of(content_type: &'static str) -> Option<String> {
+        use axum::body::Body;
+        use axum::http::{Request, header};
+        use axum::response::IntoResponse;
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        // comfortably past the layer's minimum size, and compressible
+        let payload = "smrt".repeat(64);
+        let app = Router::new()
+            .route(
+                "/x",
+                get(move || async move {
+                    ([(header::CONTENT_TYPE, content_type)], payload).into_response()
+                }),
+            )
+            .layer(compression());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/x")
+                    .header(header::ACCEPT_ENCODING, "gzip")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        resp.headers()
+            .get(header::CONTENT_ENCODING)
+            .map(|v| v.to_str().unwrap().to_string())
+    }
+
+    #[tokio::test]
+    async fn json_travels_compressed() {
+        assert_eq!(encoding_of("application/json").await.as_deref(), Some("gzip"));
+    }
+
+    // A jar is a zip: re-compressing it buys nothing and costs a pass over every
+    // byte the mirror serves, which is the bulk of its traffic.
+    #[tokio::test]
+    async fn an_archive_is_served_as_it_lies() {
+        assert_eq!(encoding_of("application/java-archive").await, None);
+        assert_eq!(encoding_of("application/zip").await, None);
+        assert_eq!(encoding_of("application/octet-stream").await, None);
+    }
+
+    // The one case where compression would not just waste work but break the
+    // feature: a build log delivered a line at a time must not be held back to
+    // fill an encoder's buffer.
+    #[tokio::test]
+    async fn a_live_stream_is_never_compressed() {
+        assert_eq!(encoding_of("text/event-stream").await, None);
     }
 
     #[test]
