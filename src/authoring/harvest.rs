@@ -18,6 +18,7 @@ use super::archive::read_zip_entry;
 use super::bytecode;
 use super::classfile::parse_class;
 use super::curator::{JarFacts, McModInfo, clean_mc_version, mcmod_modids, parse_mcmod_info};
+use super::mixinscan;
 use super::modmeta;
 use super::modrinth::{Modrinth, Project};
 use crate::registry::model::{RelKind, Severity, Source};
@@ -403,6 +404,9 @@ pub struct JarReadout {
     /// Every modid the jar's mcmod.info declares -- more than one when the jar
     /// bundles several mods. Empty when the jar has no mcmod.info.
     pub mcmod_modids: Vec<String>,
+    /// What this jar's `required` mixin configs must be able to resolve (#145).
+    /// Empty for a jar with no required config, which is most of them.
+    pub required_mixins: Vec<mixinscan::RequiredMixins>,
 }
 
 /// Open a jar's zip ONCE and derive every fact the harvest needs from it: the
@@ -417,6 +421,7 @@ pub fn read_jar(bytes: &[u8]) -> JarReadout {
         modmeta: modmeta::ModMeta::default(),
         mcmod: None,
         mcmod_modids: Vec::new(),
+        required_mixins: Vec::new(),
     };
     let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
         return empty();
@@ -431,6 +436,8 @@ pub fn read_jar(bytes: &[u8]) -> JarReadout {
     let mut has_fabric = false;
     let mut impl_version: Option<String> = None;
     let mut signals = bytecode::JarSignals::default();
+    let mut mixin_configs: std::collections::HashMap<String, Vec<u8>> =
+        std::collections::HashMap::new();
     for i in 0..zip.len() {
         let Ok(mut entry) = zip.by_index(i) else {
             continue;
@@ -450,6 +457,10 @@ pub fn read_jar(bytes: &[u8]) -> JarReadout {
         }
         if bytecode::is_mixin_config_name(&name) {
             signals.mixin_configs += 1;
+            if let Ok(raw) = read_zip_entry(&mut entry, size, &name) {
+                mixin_configs.insert(name.clone(), raw);
+            }
+            continue;
         }
         match name.as_str() {
             "mcmod.info" => {
@@ -518,12 +529,19 @@ pub fn read_jar(bytes: &[u8]) -> JarReadout {
     } else {
         None
     };
+    let required_mixins = mixinscan::from_parts(
+        mods_toml.as_deref(),
+        fabric_json.as_deref(),
+        &mixin_configs,
+        &classes,
+    );
     JarReadout {
         facts: JarFacts { loader },
         bytecode,
         modmeta,
         mcmod,
         mcmod_modids: mcmod_raw.as_deref().map(mcmod_modids).unwrap_or_default(),
+        required_mixins,
     }
 }
 

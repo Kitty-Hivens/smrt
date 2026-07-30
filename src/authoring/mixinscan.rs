@@ -20,8 +20,9 @@
 //! layer that knows what else the pack ships.
 
 use super::archive::read_zip_entry;
-use super::classfile::parse_class;
+use super::classfile::{ClassInfo, parse_class};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::io::{Cursor, Read, Seek};
 
 /// One `required` mixin config, and every class its mixins must be able to
@@ -103,9 +104,59 @@ pub fn scan_jar(jar_bytes: &[u8]) -> Vec<RequiredMixins> {
     let Ok(mut zip) = zip::ZipArchive::new(Cursor::new(jar_bytes)) else {
         return Vec::new();
     };
+    let mods_toml = read_entry(&mut zip, "META-INF/neoforge.mods.toml")
+        .or_else(|| read_entry(&mut zip, "META-INF/mods.toml"));
+    let fabric_json = read_entry(&mut zip, "fabric.mod.json");
+
+    let mut configs: HashMap<String, Vec<u8>> = HashMap::new();
+    let mut classes: Vec<ClassInfo> = Vec::new();
+    for i in 0..zip.len() {
+        let Ok(mut entry) = zip.by_index(i) else {
+            continue;
+        };
+        if !entry.is_file() {
+            continue;
+        }
+        let name = entry.name().to_string();
+        let size = entry.size();
+        let Ok(bytes) = read_zip_entry(&mut entry, size, &name) else {
+            continue;
+        };
+        if name.ends_with(".class") {
+            if let Some(info) = parse_class(&bytes) {
+                classes.push(info);
+            }
+        } else if super::bytecode::is_mixin_config_name(&name) {
+            configs.insert(name, bytes);
+        }
+    }
+    from_parts(
+        mods_toml.as_deref(),
+        fabric_json.as_deref(),
+        &configs,
+        &classes,
+    )
+}
+
+/// The same reading, from pieces a caller has already taken out of the jar.
+///
+/// The harvest opens each jar once and parses every class as it goes; making it
+/// open the zip a second time to ask this question would undo the reason
+/// `read_jar` exists.
+pub fn from_parts(
+    mods_toml: Option<&[u8]>,
+    fabric_json: Option<&[u8]>,
+    configs: &HashMap<String, Vec<u8>>,
+    classes: &[ClassInfo],
+) -> Vec<RequiredMixins> {
+    let by_name: HashMap<&str, &ClassInfo> =
+        classes.iter().map(|c| (c.this_class.as_str(), c)).collect();
     let mut out = Vec::new();
-    for name in config_names(&mut zip) {
-        let Some(cfg) = read_json::<MixinConfigJson, _>(&mut zip, &name) else {
+    for name in declared_config_names(mods_toml, fabric_json) {
+        let Some(raw) = configs.get(&name) else {
+            continue; // a config the metadata names and the jar does not carry
+        };
+        let Ok(cfg) = serde_json::from_slice::<MixinConfigJson>(raw) else {
             continue;
         };
         if !cfg.required {
@@ -114,17 +165,13 @@ pub fn scan_jar(jar_bytes: &[u8]) -> Vec<RequiredMixins> {
         let mut needs: Vec<String> = Vec::new();
         let prefix = cfg.package.trim().replace('.', "/");
         for simple in cfg.mixins.iter().chain(&cfg.client).chain(&cfg.server) {
-            let path = mixin_class_path(&prefix, simple);
-            let Some(bytes) = read_entry(&mut zip, &path) else {
+            let path = mixin_class_name(&prefix, simple);
+            let Some(info) = by_name.get(path.as_str()) else {
                 continue; // a class the config names and the jar does not carry
             };
-            let Some(info) = parse_class(&bytes) else {
-                continue;
-            };
-            let own = info.this_class.clone();
-            for t in info.mixin_targets.into_iter().chain(info.referenced) {
-                if t != own && !needs.contains(&t) {
-                    needs.push(t);
+            for t in info.mixin_targets.iter().chain(&info.referenced) {
+                if *t != info.this_class && !needs.contains(t) {
+                    needs.push(t.clone());
                 }
             }
         }
@@ -141,7 +188,7 @@ pub fn scan_jar(jar_bytes: &[u8]) -> Vec<RequiredMixins> {
 /// The config filenames a jar declares, from whichever metadata it ships. A
 /// multi-loader jar carries both, and the same config named twice is one
 /// config.
-fn config_names<R: Read + Seek>(zip: &mut zip::ZipArchive<R>) -> Vec<String> {
+fn declared_config_names(mods_toml: Option<&[u8]>, fabric_json: Option<&[u8]>) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     let mut push = |n: String| {
         let n = n.trim().to_string();
@@ -149,20 +196,18 @@ fn config_names<R: Read + Seek>(zip: &mut zip::ZipArchive<R>) -> Vec<String> {
             names.push(n);
         }
     };
-    for meta in ["META-INF/neoforge.mods.toml", "META-INF/mods.toml"] {
-        if let Some(bytes) = read_entry(zip, meta)
-            && let Ok(text) = std::str::from_utf8(&bytes)
-            && let Ok(parsed) = toml::from_str::<ModsTomlMixins>(text)
-        {
-            for e in parsed.mixins {
-                if let Some(c) = e.config {
-                    push(c);
-                }
+    if let Some(bytes) = mods_toml
+        && let Ok(text) = std::str::from_utf8(bytes)
+        && let Ok(parsed) = toml::from_str::<ModsTomlMixins>(text)
+    {
+        for e in parsed.mixins {
+            if let Some(c) = e.config {
+                push(c);
             }
         }
     }
-    if let Some(bytes) = read_entry(zip, "fabric.mod.json")
-        && let Ok(parsed) = serde_json::from_slice::<FabricModJson>(&bytes)
+    if let Some(bytes) = fabric_json
+        && let Ok(parsed) = serde_json::from_slice::<FabricModJson>(bytes)
     {
         for m in parsed.mixins {
             push(match m {
@@ -174,14 +219,14 @@ fn config_names<R: Read + Seek>(zip: &mut zip::ZipArchive<R>) -> Vec<String> {
     names
 }
 
-/// `package` + the config's entry for one mixin. The entry is a name relative
-/// to the package and may itself be dotted for a nested package.
-fn mixin_class_path(prefix: &str, simple: &str) -> String {
+/// `package` + the config's entry for one mixin, as a binary class name. The
+/// entry is relative to the package and may itself be dotted for a nested one.
+fn mixin_class_name(prefix: &str, simple: &str) -> String {
     let simple = simple.trim().replace('.', "/");
     if prefix.is_empty() {
-        format!("{simple}.class")
+        simple
     } else {
-        format!("{prefix}/{simple}.class")
+        format!("{prefix}/{simple}")
     }
 }
 
@@ -189,13 +234,6 @@ fn read_entry<R: Read + Seek>(zip: &mut zip::ZipArchive<R>, name: &str) -> Optio
     let mut entry = zip.by_name(name).ok()?;
     let size = entry.size();
     read_zip_entry(&mut entry, size, name).ok()
-}
-
-fn read_json<T: for<'de> Deserialize<'de>, R: Read + Seek>(
-    zip: &mut zip::ZipArchive<R>,
-    name: &str,
-) -> Option<T> {
-    serde_json::from_slice(&read_entry(zip, name)?).ok()
 }
 
 #[cfg(test)]
@@ -347,6 +385,13 @@ mod tests {
     fn scan_a_real_jar() {
         let path = std::env::var("SMRT_MIXIN_JAR").expect("SMRT_MIXIN_JAR");
         let bytes = std::fs::read(&path).expect("readable jar");
+        // the harvest reads this from pieces it already has; the two paths must
+        // not be allowed to drift apart
+        assert_eq!(
+            crate::authoring::harvest::read_jar(&bytes).required_mixins,
+            scan_jar(&bytes),
+            "read_jar and scan_jar disagree"
+        );
         for c in scan_jar(&bytes) {
             println!("{} -- {} class(es) needed", c.config, c.needs.len());
             for t in &c.needs {
