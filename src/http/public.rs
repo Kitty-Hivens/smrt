@@ -6,12 +6,11 @@ use crate::registry::queries;
 use crate::state::AppState;
 use axum::body::Body;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use std::collections::{HashMap, HashSet};
-use tokio_util::io::ReaderStream;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -449,6 +448,7 @@ pub(crate) async fn get_pack_diff(
 )]
 pub(crate) async fn get_pack_static(
     State(state): State<AppState>,
+    method: Method,
     headers: HeaderMap,
     Path((pack_id, rel_path)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
@@ -457,7 +457,7 @@ pub(crate) async fn get_pack_static(
     if tokio::fs::metadata(&path).await.is_err() {
         return Err(ApiError::NotFound);
     }
-    serve_file(&path, content_type_for(&rel_path)).await
+    serve_file(&method, &headers, &path, content_type_for(&rel_path)).await
 }
 
 /// Draft packs are private -- readable only by their owner (or an admin), so a
@@ -555,6 +555,8 @@ pub(crate) async fn get_featured(
 )]
 pub(crate) async fn get_cache_jar(
     State(state): State<AppState>,
+    method: Method,
+    headers: HeaderMap,
     Path((prefix, filename)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
     let sha1 = filename
@@ -568,7 +570,7 @@ pub(crate) async fn get_cache_jar(
     if tokio::fs::metadata(&path).await.is_err() {
         return Err(ApiError::NotFound);
     }
-    serve_file(&path, "application/java-archive").await
+    serve_file(&method, &headers, &path, "application/java-archive").await
 }
 
 // A cached mod's own embedded icon (mcmod.info logoFile / pack.png / fabric icon),
@@ -676,25 +678,61 @@ pub(crate) async fn get_user_avatar(
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-async fn serve_file(path: &std::path::Path, content_type: &str) -> Result<Response, ApiError> {
-    let file = tokio::fs::File::open(path)
-        .await
-        .map_err(|_| ApiError::NotFound)?;
-    let meta = file
-        .metadata()
+/// Serve a file off disk, resumably.
+///
+/// A pack is hundreds of megabytes of jars fetched one at a time over whatever
+/// connection the player has. Without ranges a download that dies at 90% starts
+/// again from zero, which is the difference between a slow install and one that
+/// never finishes on a bad line. The conditional headers come with it: a client
+/// that already holds the file re-checks it without refetching it.
+///
+/// The range arithmetic is delegated rather than hand-rolled -- suffix ranges,
+/// unsatisfiable ranges, `If-Range` against a changed file and `HEAD` are all
+/// places to get it subtly wrong, and a subtly wrong range serves the wrong
+/// bytes rather than failing. The content type stays ours: it is decided per
+/// route (`content_type_for`, and the fixed archive type for a cache jar) and
+/// must not silently become whatever the extension guesses.
+async fn serve_file(
+    method: &Method,
+    headers: &HeaderMap,
+    path: &std::path::Path,
+    content_type: &str,
+) -> Result<Response, ApiError> {
+    use tower::ServiceExt;
+    use tower_http::services::ServeFile;
+
+    // What the file service needs to answer conditionally; the rest of the
+    // request is this handler's business and was already acted on.
+    const CONDITIONAL: [header::HeaderName; 4] = [
+        header::RANGE,
+        header::IF_RANGE,
+        header::IF_MODIFIED_SINCE,
+        header::IF_UNMODIFIED_SINCE,
+    ];
+    let mut probe = axum::extract::Request::builder()
+        .method(method.clone())
+        .uri("/");
+    for name in CONDITIONAL {
+        if let Some(value) = headers.get(&name) {
+            probe = probe.header(name, value);
+        }
+    }
+    let probe = probe
+        .body(Body::empty())
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+    let served = ServeFile::new(path)
+        .oneshot(probe)
         .await
         .map_err(|e| ApiError::Internal(e.into()))?;
-    let stream = ReaderStream::new(file);
-    let body = Body::from_stream(stream);
-    Ok((
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, content_type.to_string()),
-            (header::CONTENT_LENGTH, meta.len().to_string()),
-        ],
-        body,
-    )
-        .into_response())
+    if served.status() == StatusCode::NOT_FOUND {
+        return Err(ApiError::NotFound);
+    }
+    let mut resp = served.map(Body::new);
+    if let Ok(value) = header::HeaderValue::from_str(content_type) {
+        resp.headers_mut().insert(header::CONTENT_TYPE, value);
+    }
+    Ok(resp)
 }
 
 fn content_type_for(rel_path: &str) -> &'static str {
@@ -721,4 +759,77 @@ fn now_rfc3339() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Ask for `path` the way a client would, optionally naming a byte range.
+    async fn read(path: &std::path::Path, range: Option<&str>) -> Response {
+        let mut headers = HeaderMap::new();
+        if let Some(r) = range {
+            headers.insert(header::RANGE, r.parse().unwrap());
+        }
+        serve_file(&Method::GET, &headers, path, "application/java-archive")
+            .await
+            .expect("the file is there")
+    }
+
+    async fn body_of(resp: Response) -> Vec<u8> {
+        axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec()
+    }
+
+    fn a_file(contents: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("artifact.jar");
+        std::fs::write(&path, contents).unwrap();
+        (dir, path)
+    }
+
+    #[tokio::test]
+    async fn a_whole_file_comes_back_whole_and_offers_ranges() {
+        let (_dir, path) = a_file(b"0123456789");
+        let resp = read(&path, None).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get(header::ACCEPT_RANGES).unwrap(), "bytes");
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/java-archive",
+            "the type is the route's to decide, not the extension's to guess"
+        );
+        assert_eq!(body_of(resp).await, b"0123456789");
+    }
+
+    // The point of the whole thing: a download that died at 90% asks for the
+    // rest rather than starting over.
+    #[tokio::test]
+    async fn a_download_resumes_where_it_stopped() {
+        let (_dir, path) = a_file(b"0123456789");
+        let resp = read(&path, Some("bytes=7-")).await;
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes 7-9/10"
+        );
+        assert_eq!(body_of(resp).await, b"789");
+    }
+
+    #[tokio::test]
+    async fn a_range_is_the_bytes_it_names() {
+        let (_dir, path) = a_file(b"0123456789");
+        assert_eq!(body_of(read(&path, Some("bytes=2-5")).await).await, b"2345");
+        // counted from the end
+        assert_eq!(body_of(read(&path, Some("bytes=-3")).await).await, b"789");
+    }
+
+    #[tokio::test]
+    async fn a_range_past_the_end_is_refused_rather_than_answered() {
+        let (_dir, path) = a_file(b"0123456789");
+        let resp = read(&path, Some("bytes=50-60")).await;
+        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    }
 }

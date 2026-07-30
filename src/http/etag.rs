@@ -15,12 +15,12 @@
 //! is weak (`W/`) because it identifies the data rather than one particular
 //! encoding of it -- the same answer gzipped and unzipped is the same answer.
 
+use axum::body::HttpBody as _;
 use axum::body::{Body, to_bytes};
 use axum::extract::Request;
 use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
-use axum::body::HttpBody as _;
 use sha1::{Digest, Sha1};
 
 /// Bodies past this are answered as they are, untagged. Hashing is linear in
@@ -113,13 +113,17 @@ mod tests {
 
     fn app() -> Router {
         Router::new()
-            .route("/j", get(|| async { axum::Json(serde_json::json!({"a": 1})) }))
-            .route("/act", post(|| async { axum::Json(serde_json::json!({"a": 1})) }))
+            .route(
+                "/j",
+                get(|| async { axum::Json(serde_json::json!({"a": 1})) }),
+            )
+            .route(
+                "/act",
+                post(|| async { axum::Json(serde_json::json!({"a": 1})) }),
+            )
             .route(
                 "/plain",
-                get(|| async {
-                    ([(header::CONTENT_TYPE, "text/plain")], "hello").into_response()
-                }),
+                get(|| async { ([(header::CONTENT_TYPE, "text/plain")], "hello").into_response() }),
             )
             .layer(axum::middleware::from_fn(tag_json))
     }

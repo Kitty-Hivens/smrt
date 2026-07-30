@@ -1661,7 +1661,6 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
- "tokio-util",
  "toml",
  "toml_edit",
  "tower",

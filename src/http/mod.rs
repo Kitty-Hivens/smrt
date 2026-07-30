@@ -78,8 +78,28 @@ fn compression() -> tower_http::compression::CompressionLayer<impl Predicate + C
         DefaultPredicate::new()
             .and(NotForContentType::const_new("application/java-archive"))
             .and(NotForContentType::const_new("application/zip"))
-            .and(NotForContentType::const_new("application/octet-stream")),
+            .and(NotForContentType::const_new("application/octet-stream"))
+            .and(NotAPart),
     )
+}
+
+/// A range names bytes of the representation the client receives, so encoding
+/// one after slicing it would describe the answer with the wrong ruler -- the
+/// client would splice compressed bytes into a file at offsets counted in
+/// plain ones.
+#[derive(Clone, Copy)]
+struct NotAPart;
+
+impl Predicate for NotAPart {
+    fn should_compress<B>(&self, response: &axum::http::Response<B>) -> bool
+    where
+        B: axum::body::HttpBody,
+    {
+        response.status() != axum::http::StatusCode::PARTIAL_CONTENT
+            && !response
+                .headers()
+                .contains_key(axum::http::header::CONTENT_RANGE)
+    }
 }
 
 /// The full application router: public reads, admin writes + authoring, build
@@ -248,7 +268,10 @@ mod tests {
 
     #[tokio::test]
     async fn json_travels_compressed() {
-        assert_eq!(encoding_of("application/json").await.as_deref(), Some("gzip"));
+        assert_eq!(
+            encoding_of("application/json").await.as_deref(),
+            Some("gzip")
+        );
     }
 
     // A jar is a zip: re-compressing it buys nothing and costs a pass over every
@@ -266,6 +289,47 @@ mod tests {
     #[tokio::test]
     async fn a_live_stream_is_never_compressed() {
         assert_eq!(encoding_of("text/event-stream").await, None);
+    }
+
+    // A resumed download splices the answer into a file at the offsets it asked
+    // for. Encoding the slice after cutting it would count those offsets in one
+    // ruler and deliver bytes measured in another.
+    #[tokio::test]
+    async fn a_partial_answer_is_never_compressed() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode, header};
+        use axum::response::IntoResponse;
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        let payload = "smrt".repeat(64);
+        let app = Router::new()
+            .route(
+                "/x",
+                get(move || async move {
+                    (
+                        StatusCode::PARTIAL_CONTENT,
+                        [
+                            (header::CONTENT_TYPE, "text/plain"),
+                            (header::CONTENT_RANGE, "bytes 0-255/1024"),
+                        ],
+                        payload,
+                    )
+                        .into_response()
+                }),
+            )
+            .layer(compression());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/x")
+                    .header(header::ACCEPT_ENCODING, "gzip")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(resp.headers().get(header::CONTENT_ENCODING).is_none());
     }
 
     #[test]
