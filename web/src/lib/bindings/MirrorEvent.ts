@@ -3,4 +3,4 @@
 /**
  * Something that happened to the mirror as a whole.
  */
-export type MirrorEvent = { "kind": "registry", what: string, } | { "kind": "pack", pack_id: string, what: string, } | { "kind": "moderation", what: string, };
+export type MirrorEvent = { "kind": "registry", what: string, } | { "kind": "pack", pack_id: string, what: string, } | { "kind": "moderation", what: string, } | { "kind": "catalog", what: string, };

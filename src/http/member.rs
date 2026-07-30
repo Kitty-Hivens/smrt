@@ -305,6 +305,7 @@ async fn fork_pack(
             Some(req.source.clone()),
         )
         .await?;
+    state.events.pack(&target, "created");
     Ok((StatusCode::CREATED, Json(cfg)))
 }
 

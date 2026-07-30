@@ -10,7 +10,7 @@
 //!
 //! So the mirror says so. One process-wide channel carries the handful of things
 //! that make a view wrong -- the mod index moved, a pack published, the
-//! moderation queue changed -- and a subscriber refetches the one view that
+//! moderation queue or a curated list changed -- and a subscriber refetches the one view that
 //! cares. The event is a nudge, not the data: it says what moved and enough to
 //! tell whether you care, and the refetch that follows is the same read as
 //! before, usually answered `304`.
@@ -45,6 +45,10 @@ pub enum MirrorEvent {
     /// is not a member's business, and the count alone would still say how busy
     /// the queue is.
     Moderation { what: String },
+    /// The curated surfaces around the packs -- the server list, the featured
+    /// selection. Not a pack and not the index, but the same problem: two
+    /// operators looking at the same page, one of them editing it.
+    Catalog { what: String },
 }
 
 impl MirrorEvent {
@@ -64,6 +68,7 @@ impl MirrorEvent {
             MirrorEvent::Registry { .. } => "registry",
             MirrorEvent::Pack { .. } => "pack",
             MirrorEvent::Moderation { .. } => "moderation",
+            MirrorEvent::Catalog { .. } => "catalog",
         }
     }
 }
@@ -88,8 +93,8 @@ impl MirrorEvents {
         let _ = self.tx.send(event);
     }
 
-    /// Shorthands for the three kinds, so a call site says what happened rather
-    /// than assembling a struct to say it.
+    /// Shorthands for the kinds, so a call site says what happened rather than
+    /// assembling a struct to say it.
     pub fn registry(&self, what: &str) {
         self.publish(MirrorEvent::Registry {
             what: what.to_string(),
@@ -105,6 +110,12 @@ impl MirrorEvents {
 
     pub fn moderation(&self, what: &str) {
         self.publish(MirrorEvent::Moderation {
+            what: what.to_string(),
+        });
+    }
+
+    pub fn catalog(&self, what: &str) {
+        self.publish(MirrorEvent::Catalog {
             what: what.to_string(),
         });
     }

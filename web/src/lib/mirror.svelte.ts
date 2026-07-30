@@ -17,6 +17,7 @@
 let registry = $state(0);
 let packs = $state(0);
 let moderation = $state(0);
+let catalog = $state(0);
 
 let source: EventSource | null = null;
 /// Whether this connection has ever been established. A reconnect is not the
@@ -28,6 +29,7 @@ function bumpAll() {
   registry++;
   packs++;
   moderation++;
+  catalog++;
 }
 
 export const mirror = {
@@ -39,6 +41,10 @@ export const mirror = {
   },
   get moderation() {
     return moderation;
+  },
+  /// The curated lists around the packs: servers, featured.
+  get catalog() {
+    return catalog;
   },
 
   /// Start listening. Only for a signed-in caller -- the stream needs a session,
@@ -55,6 +61,7 @@ export const mirror = {
     src.addEventListener('registry', () => registry++);
     src.addEventListener('pack', () => packs++);
     src.addEventListener('moderation', () => moderation++);
+    src.addEventListener('catalog', () => catalog++);
     // The browser reconnects on its own; the `open` above is what turns that
     // reconnection into a refresh. Nothing to log -- a dropped stream is a
     // normal event on a laptop lid.

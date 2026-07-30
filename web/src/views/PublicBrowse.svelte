@@ -95,9 +95,9 @@
     }
   }
 
-  // the catalog is what a publish changes, so the mirror says when to re-read it
+  // a publish changes the catalog; the featured selection changes what leads it
   $effect(() => {
-    if (mirror.packs > 0) load();
+    if (mirror.packs + mirror.catalog > 0) load();
   });
 </script>
 

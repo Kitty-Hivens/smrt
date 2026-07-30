@@ -1,6 +1,7 @@
 // Thin fetch client. Same-origin: the mirror serves both the panel and the
 // API. credentials:'include' carries the session cookie set at login.
 
+import { nextPageUrl } from './pagelink';
 import type {
   AuditRow,
   AuthoringPacksListing,
@@ -97,6 +98,28 @@ function revisionOf(r: Response): string | null {
   if (!raw) return null;
   const tag = raw.replace(/^W\//, '').replace(/^"|"$/g, '');
   return tag || null;
+}
+
+// One page of a listing, and the address of the next where there is one. The
+// mirror pages by cursor and names the next page in a `Link` header, so a caller
+// walks by following that address rather than by counting rows it has seen.
+export interface Page<T> {
+  rows: T[];
+  next: string | null;
+}
+
+async function getPage<T>(path: string): Promise<Page<T>> {
+  activity.begin();
+  try {
+    const r = await fetch(path, {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+    });
+    if (!r.ok) throw await toError(r);
+    return { rows: (await r.json()) as T[], next: nextPageUrl(r.headers.get('Link')) };
+  } finally {
+    activity.end();
+  }
 }
 
 async function getJson<T>(path: string): Promise<T> {
@@ -608,7 +631,10 @@ export const api = {
     ),
 
   listUsers: () => getJson<UserRow[]>('/v1/users'),
-  auditLog: () => getJson<AuditRow[]>('/v1/audit'),
+  // The trail is long and only grows, so it is read a page at a time: this is
+  // the first page, and `auditPage` follows the address it comes back with.
+  auditLog: (limit = 60) => getPage<AuditRow>(`/v1/audit?limit=${limit}`),
+  auditPage: (url: string) => getPage<AuditRow>(url),
   setUserRole: (uid: number, role: string) =>
     send('POST', `/v1/users/${uid}/role`, { role }),
   setVisibility: (id: string, visibility: Visibility) =>

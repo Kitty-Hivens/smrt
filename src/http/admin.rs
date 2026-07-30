@@ -290,6 +290,7 @@ async fn save_server(
     Json(entry): Json<ServerEntry>,
 ) -> Result<(StatusCode, Json<ServerEntry>), ApiError> {
     state.storage.save_server(&entry).await?;
+    state.events.catalog("servers");
     Ok((StatusCode::CREATED, Json(entry)))
 }
 
@@ -564,6 +565,7 @@ async fn delete_server(
     Path(server_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     state.storage.delete_server(&server_id).await?;
+    state.events.catalog("servers");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -694,6 +696,7 @@ async fn save_featured(
     Json(featured): Json<Featured>,
 ) -> Result<(StatusCode, Json<Featured>), ApiError> {
     state.storage.save_featured(&featured).await?;
+    state.events.catalog("featured");
     Ok((StatusCode::CREATED, Json(featured)))
 }
 
@@ -1904,6 +1907,7 @@ async fn duplicate_pack(
         .storage
         .duplicate_pack(&pack_id, &req.target_id, req.loader, owner, None)
         .await?;
+    state.events.pack(&req.target_id, "created");
     Ok((StatusCode::CREATED, Json(cfg)))
 }
 

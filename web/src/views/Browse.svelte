@@ -63,7 +63,7 @@
   // this view is the whole mirror at a glance -- the catalog, the registry and
   // the cache -- so either kind of change makes it stale
   $effect(() => {
-    if (mirror.packs + mirror.registry > 0) loadAll();
+    if (mirror.packs + mirror.registry + mirror.catalog > 0) loadAll();
   });
 
   // The list behind the editor is stale the moment editing ends, and editing now
