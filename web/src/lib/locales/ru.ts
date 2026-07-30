@@ -2,6 +2,7 @@ import type { Dict } from './en';
 
 export const ru: Dict = {
   'app.checkingSession': 'Проверка сессии...',
+  'app.partGone': 'Эта часть панели не загрузилась. Перезагрузите страницу.',
   'common.loading': 'Загрузка...',
 
   'nav.browse': 'Каталог',
