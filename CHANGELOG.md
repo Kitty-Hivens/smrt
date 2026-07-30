@@ -8,6 +8,13 @@ version section when a release is tagged.
 
 ### Fixed
 
+- The handshake claim says up front when it cannot be built. It is copied from
+  what a server advertises in its status ping, and a NeoForge or Fabric server
+  advertises nothing -- modern loaders negotiate after connecting, over
+  registered channels rather than a declared list. The mirror already refused
+  correctly; the panel now says so before the button rather than after, and
+  explains why the claim does not port to a loader whose channels are live pipes
+  instead of assertions.
 - Republishing a version that already exists is refused unless it is asked for.
   Auto-numbering never collides -- it takes the next counter past the highest
   published -- so this only fires when a version is named by hand, which is

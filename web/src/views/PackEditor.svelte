@@ -5,6 +5,7 @@
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { advertisesModList } from '../lib/handshake';
   import { arrive, stagger } from '../lib/motion.svelte';
   import { openPackSession, type PackSession } from '../lib/packsession.svelte';
   import { JAVA_MAJORS, suggestedJava } from '../lib/java';
@@ -321,6 +322,10 @@
   // The handshake claim and its drift. Loaded on demand: it asks a game server,
   // which is slower than everything else here and pointless for a pack that
   // names none.
+  // Whether a claim can be derived at all for this pack's loader (#148). A
+  // NeoForge or Fabric server puts no mod list in its ping, so there is nothing
+  // to copy -- and that is knowable from the config, before anyone presses.
+  const canSpoof = $derived(advertisesModList(cfg?.loader?.name ?? ''));
   let spoof = $state<SpoofReport | null>(null);
   let spoofBusy = $state(false);
 
@@ -1375,6 +1380,10 @@
              and the difference is visible before a player finds it. -->
         <Section title={t('pe.spoof.title')}>
           <p class="muted hint">{t('pe.spoof.hint')}</p>
+          {#if !canSpoof}
+            <p class="muted">{t('pe.spoof.notAdvertised', { loader: cfg.loader.name })}</p>
+            <p class="muted hint">{t('pe.spoof.notAdvertisedWhy')}</p>
+          {/if}
           {#if spoof}
             {#if spoof.unasked}
               <p class="muted">{spoof.unasked}</p>
@@ -1400,8 +1409,14 @@
             {/if}
           {/if}
           <div class="spoofbar">
-            <button onclick={checkSpoof} disabled={spoofBusy}>{t('pe.spoof.check')}</button>
-            <button class="primary" onclick={generateSpoof} disabled={spoofBusy || !spoof?.current}>
+            <button onclick={checkSpoof} disabled={spoofBusy || !canSpoof}>
+              {t('pe.spoof.check')}
+            </button>
+            <button
+              class="primary"
+              onclick={generateSpoof}
+              disabled={spoofBusy || !canSpoof || !spoof?.current}
+            >
               {t('pe.spoof.generate')}
             </button>
           </div>

@@ -16,6 +16,7 @@ import * as Y from 'yjs';
 import { readConfig, textPatch, writeConfig } from '../src/lib/packdoc.ts';
 import { JAVA_MAJORS, suggestedJava } from '../src/lib/java.ts';
 import { changedPaths } from '../src/lib/touched.svelte.ts';
+import { advertisesModList } from '../src/lib/handshake.ts';
 
 let failures = 0;
 const check = (name, cond, detail = '') => {
@@ -195,6 +196,18 @@ check('the offered list holds what old packs need', [8, 11, 16, 17, 21].every((v
   check('two independent changes are two paths',
     JSON.stringify(changedPaths(base, two).sort()) === '["display_name","mods.0"]',
     JSON.stringify(changedPaths(base, two)));
+}
+
+// #148: whether a handshake claim can be derived at all, from the loader alone.
+{
+  check('a 1.12.2 forge server advertises its mod list', advertisesModList('forge') === true);
+  check('so does a fork that inherits one', advertisesModList('cleanroom') === true);
+  check('and the modernised 1.7.10 loader', advertisesModList('lwjgl3ify') === true);
+  // the case that sends people pressing a button that cannot work
+  check('a neoforge server advertises nothing', advertisesModList('neoforge') === false);
+  check('nor does fabric', advertisesModList('fabric') === false);
+  check('a loader nobody named is not assumed to advertise', advertisesModList('') === false);
+  check('the answer does not depend on spelling', advertisesModList('  NeoForge ') === false);
 }
 
 console.log(failures ? `\n${failures} failed` : '\nall good');
