@@ -10,6 +10,7 @@ pub mod error;
 pub mod etag;
 pub mod jobs;
 pub mod member;
+pub mod page;
 pub mod panel;
 pub mod public;
 pub mod registry;
@@ -72,7 +73,7 @@ pub(crate) async fn audit(
 /// which is the one thing a live log must not do. Added to that: jars and the
 /// archives, because a zip re-compresses to roughly its own size and the CPU
 /// spent proving it is the whole cost.
-fn compression() -> tower_http::compression::CompressionLayer<impl Predicate + Clone> {
+fn compression() -> tower_http::compression::CompressionLayer<impl Predicate> {
     use tower_http::compression::predicate::NotForContentType;
     CompressionLayer::new().compress_when(
         DefaultPredicate::new()

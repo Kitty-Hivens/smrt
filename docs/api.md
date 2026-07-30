@@ -130,6 +130,34 @@ entries `default_enabled` (absent = true) is the install-time default. The
 by its Modrinth `project_id` when the source is Modrinth, else by the entry's
 `slug` field when present, else by `filename`.
 
+**Resuming a download**: files served by the mirror (`/v1/cache/...`,
+`/v1/packs/{id}/static/...`) answer `Range`, so a transfer that died at 90%
+asks for the rest instead of starting over. Send `Range: bytes=<got>-` and
+expect `206` with `Content-Range`; a range past the end answers `416`.
+`If-Range` (against the file's `Last-Modified`) makes the resume conditional,
+so a file that changed under you comes back whole rather than spliced.
+
+## Reading cheaply
+
+Three things the whole `/v1` surface does, worth wiring into a client once:
+
+- **Compression.** Send `Accept-Encoding: gzip` (or `br`). Manifests and
+  listings are repetitive JSON and compress by roughly an order of magnitude.
+  Jars, zips and live event streams are served uncompressed on purpose.
+- **Conditional GET.** Every JSON read carries an `ETag`. Send it back as
+  `If-None-Match` and an unchanged answer costs `304 Not Modified` with no
+  body -- which is the cheap way to poll. The tag is weak: it identifies the
+  data, not the encoding it arrived in.
+- **Paging.** Listings that grow without bound -- `/v1/registry/mods`,
+  `/v1/cache/inventory`, `/v1/audit` -- accept `?limit=<n>` (capped at 500).
+  Without it they answer whole, as they always have. With it, the response
+  carries `Link: <...>; rel="next"` when there is more; follow that URL
+  verbatim -- it repeats your filters and carries an opaque cursor. The body
+  shape does not change between the paged and unpaged forms. Paging is keyset,
+  not offset: rows arriving while you walk land outside the page you are
+  reading rather than shifting it. A cursor pointing at a row that has since
+  been merged away ends the walk; start over rather than trusting a stale one.
+
 ## Mods, files, hashes
 
 ```

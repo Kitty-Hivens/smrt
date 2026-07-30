@@ -7,21 +7,23 @@
 //! operator tolerates the few-second wait. Streaming it as a job is a Phase 2
 //! nicety, not needed here.
 
+use super::page::PageQuery;
 use super::{ApiError, audit};
 use crate::accounts::Identity;
 use crate::authoring::HarvestStatus;
 use crate::authoring::{JarDiff, diff_jars, reconstruct_config};
 use crate::domain::DeclaredAsset;
 use crate::registry::model::{
-    BuildModRow, BuildSummary, EligibleArtifact, GraphData, GraphSlice, ModSummary, ModUse,
+    BuildModRow, BuildSummary, EligibleArtifact, GraphData, GraphSlice, ModUse,
     ModrinthProjectName, OrphanJar, RegistryStats, RelKind, ReleaseRow, Severity, UnassignedJar,
     VersionRow,
 };
 use crate::registry::{authored, queries};
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, Uri};
 use axum::middleware::from_fn_with_state;
+use axum::response::Response;
 use axum::routing::{get, post, put};
 use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
@@ -327,7 +329,9 @@ struct ModsQuery {
 async fn get_mods(
     State(state): State<AppState>,
     Query(q): Query<ModsQuery>,
-) -> Result<Json<Vec<ModSummary>>, ApiError> {
+    Query(page): Query<PageQuery>,
+    uri: Uri,
+) -> Result<Response, ApiError> {
     // empty query params arrive as Some("") -- treat blank as "no filter"
     let blank = |s: &Option<String>| {
         s.as_deref()
@@ -336,12 +340,22 @@ async fn get_mods(
             .map(str::to_string)
     };
     let (q_, loader_, mc_) = (blank(&q.q), blank(&q.loader), blank(&q.mc));
-    Ok(Json(
-        run_query(&state, move |c| {
-            queries::list_mods(c, q_.as_deref(), loader_.as_deref(), mc_.as_deref())
-        })
-        .await?,
-    ))
+    let after = page
+        .cursor()
+        .and_then(|parts| parts.first()?.parse::<i64>().ok());
+    let take = page.probe();
+    let rows = run_query(&state, move |c| {
+        queries::list_mods(
+            c,
+            q_.as_deref(),
+            loader_.as_deref(),
+            mc_.as_deref(),
+            after,
+            take,
+        )
+    })
+    .await?;
+    Ok(page.answer(rows, &uri, |m| vec![m.mod_id.to_string()]))
 }
 
 async fn get_versions_by_id(

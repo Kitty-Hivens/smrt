@@ -738,33 +738,68 @@ impl Storage {
     }
 
     pub async fn list_cache_inventory(&self) -> Result<Vec<CacheInventoryEntry>, ApiError> {
+        self.cache_inventory_after(None, None).await
+    }
+
+    /// The cache in sha1 order, starting after `after` and stopping at `take`.
+    ///
+    /// A jar lives under the first two characters of its own hash, so sha1 order
+    /// is directory order: a page that starts mid-hash opens the directories
+    /// from that point on and stops as soon as it is full, instead of walking
+    /// the whole cache and throwing away everything before the cursor. On a
+    /// mirror holding thousands of jars, that is the difference between a page
+    /// costing a page and a page costing the cache.
+    pub async fn cache_inventory_after(
+        &self,
+        after: Option<&str>,
+        take: Option<usize>,
+    ) -> Result<Vec<CacheInventoryEntry>, ApiError> {
         let cache_dir = self.root.join("cache");
         let mut out = Vec::new();
         let mut prefix_dirs = match fs::read_dir(&cache_dir).await {
             Ok(e) => e,
             Err(_) => return Ok(out),
         };
+        let mut prefixes = Vec::new();
         while let Some(prefix_entry) = prefix_dirs.next_entry().await.map_err(io_err)? {
-            if !prefix_entry.file_type().await.map_err(io_err)?.is_dir() {
-                continue;
+            if prefix_entry.file_type().await.map_err(io_err)?.is_dir() {
+                prefixes.push(prefix_entry);
+            }
+        }
+        prefixes.sort_by_key(|e| e.file_name());
+        for prefix_entry in prefixes {
+            // whole directories that sort before the cursor hold nothing the
+            // caller has not already been given
+            if let Some(cursor) = after {
+                let name = prefix_entry.file_name();
+                if name.to_string_lossy().as_ref() < &cursor[..cursor.len().min(2)] {
+                    continue;
+                }
             }
             let mut jars = fs::read_dir(prefix_entry.path()).await.map_err(io_err)?;
+            let mut here = Vec::new();
             while let Some(jar) = jars.next_entry().await.map_err(io_err)? {
                 let name = jar.file_name();
                 let name = name.to_string_lossy();
                 if let Some(sha1) = name.strip_suffix(".jar")
                     && is_hex(sha1)
                     && sha1.len() == 40
+                    && after.is_none_or(|cursor| sha1 > cursor)
                 {
                     let meta = jar.metadata().await.map_err(io_err)?;
-                    out.push(CacheInventoryEntry {
+                    here.push(CacheInventoryEntry {
                         sha1: sha1.to_string(),
                         size_bytes: meta.len(),
                     });
                 }
             }
+            here.sort_by(|a, b| a.sha1.cmp(&b.sha1));
+            out.append(&mut here);
+            if take.is_some_and(|n| out.len() >= n) {
+                out.truncate(take.unwrap_or(out.len()));
+                return Ok(out);
+            }
         }
-        out.sort_by(|a, b| a.sha1.cmp(&b.sha1));
         Ok(out)
     }
 
@@ -1665,6 +1700,50 @@ mod tests {
         // a pack with no builds yields no latest, not an error
         assert_eq!(s.latest_manifest_version("Ghost").await.unwrap(), None);
         assert!(s.latest_build_info("Ghost").await.unwrap().is_none());
+    }
+
+    // A jar sits under the first two characters of its own hash, so a page of
+    // the inventory opens the directories from the cursor on and stops when it
+    // is full, rather than walking the whole cache to throw most of it away.
+    #[tokio::test]
+    async fn the_cache_inventory_reads_a_page_at_a_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let shas: Vec<String> = ["00", "01", "7f", "aa", "ff"]
+            .iter()
+            .map(|prefix| format!("{prefix}{}", "0".repeat(38)))
+            .collect();
+        for sha1 in &shas {
+            let prefix = dir.path().join("cache").join(&sha1[..2]);
+            std::fs::create_dir_all(&prefix).unwrap();
+            std::fs::write(prefix.join(format!("{sha1}.jar")), b"jar").unwrap();
+        }
+
+        let whole = s.list_cache_inventory().await.unwrap();
+        assert_eq!(
+            whole.iter().map(|e| e.sha1.clone()).collect::<Vec<_>>(),
+            shas,
+            "unpaged, the inventory is the whole cache in hash order"
+        );
+
+        let mut walked = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let page = s
+                .cache_inventory_after(after.as_deref(), Some(2))
+                .await
+                .unwrap();
+            if page.is_empty() {
+                break;
+            }
+            assert!(page.len() <= 2);
+            after = page.last().map(|e| e.sha1.clone());
+            walked.extend(page.into_iter().map(|e| e.sha1));
+        }
+        assert_eq!(
+            walked, shas,
+            "paged, it is the same cache in the same order"
+        );
     }
 
     // What a build targets, and what installing it costs, are read off the

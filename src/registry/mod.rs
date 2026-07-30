@@ -416,7 +416,7 @@ mod tests {
     fn list_mods_carries_an_icon_source() {
         let r = fixture();
         r.with_conn(|c| {
-            let mods = queries::list_mods(c, None, None, None)?;
+            let mods = queries::list_mods(c, None, None, None, None, None)?;
             let apple = mods
                 .iter()
                 .find(|m| m.name == "appleskin")
@@ -665,27 +665,27 @@ mod tests {
         r.with_conn(|c| {
             // unfiltered: every harvested mod, named by its modid (no canonical
             // name set in the fixture)
-            let all = queries::list_mods(c, None, None, None)?;
+            let all = queries::list_mods(c, None, None, None, None, None)?;
             let names: Vec<_> = all.iter().map(|m| m.name.as_str()).collect();
             assert!(names.contains(&"appleskin"));
             assert!(names.contains(&"multimod"));
             assert_eq!(all.len(), 6);
             // a loader filter keeps `any` + that loader's artifacts
-            let fabric = queries::list_mods(c, None, Some("fabric"), None)?;
+            let fabric = queries::list_mods(c, None, Some("fabric"), None, None, None)?;
             let fnames: Vec<_> = fabric.iter().map(|m| m.name.as_str()).collect();
             assert!(fnames.contains(&"multimod")); // forge+fabric jar
             assert!(fnames.contains(&"tweak")); // any
             assert!(!fnames.contains(&"appleskin")); // forge-only
             // a name query matches the modid alias
-            let apple = queries::list_mods(c, Some("apple"), None, None)?;
+            let apple = queries::list_mods(c, Some("apple"), None, None, None, None)?;
             assert_eq!(apple.len(), 1);
             assert_eq!(apple[0].name, "appleskin");
             // loader filter is case-insensitive (pack loader "Forge" -> "forge")
-            let upper = queries::list_mods(c, None, Some("Forge"), None)?;
+            let upper = queries::list_mods(c, None, Some("Forge"), None, None, None)?;
             assert!(upper.iter().any(|m| m.name == "appleskin"));
             // and walks the family DAG: a cleanroom pack sees forge-only mods
             // (cleanroom inherits forge) plus its own + any, not fabric-only ones
-            let cr = queries::list_mods(c, None, Some("cleanroom"), None)?;
+            let cr = queries::list_mods(c, None, Some("cleanroom"), None, None, None)?;
             let crn: Vec<_> = cr.iter().map(|m| m.name.as_str()).collect();
             assert!(crn.contains(&"appleskin"), "forge mod visible to cleanroom");
             assert!(crn.contains(&"crmod"), "cleanroom-only mod visible");
@@ -696,6 +696,44 @@ mod tests {
                 multi.loaders,
                 vec!["fabric".to_string(), "forge".to_string()]
             );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // Paging must be a way of reading the same listing, not a different one:
+    // walked two at a time it yields every mod exactly once, in the order the
+    // whole listing has, and each page carries the same facet chips.
+    #[test]
+    fn browser_list_mods_pages_the_listing_it_would_have_answered() {
+        let r = fixture();
+        r.with_conn(|c| {
+            let whole = queries::list_mods(c, None, None, None, None, None)?;
+            let mut walked = Vec::new();
+            let mut after = None;
+            loop {
+                let page = queries::list_mods(c, None, None, None, after, Some(2))?;
+                if page.is_empty() {
+                    break;
+                }
+                assert!(page.len() <= 2, "a page is the size it was asked for");
+                after = page.last().map(|m| m.mod_id);
+                walked.extend(page);
+            }
+            assert_eq!(
+                walked.iter().map(|m| m.mod_id).collect::<Vec<_>>(),
+                whole.iter().map(|m| m.mod_id).collect::<Vec<_>>()
+            );
+            // the facets are per page but say the same thing
+            let multi = walked.iter().find(|m| m.name == "multimod").unwrap();
+            assert_eq!(
+                multi.loaders,
+                vec!["fabric".to_string(), "forge".to_string()]
+            );
+
+            // a filtered listing pages within the filter
+            let one = queries::list_mods(c, None, Some("cleanroom"), None, None, Some(1))?;
+            assert_eq!(one.len(), 1);
             Ok(())
         })
         .unwrap();
@@ -750,10 +788,10 @@ mod tests {
         .unwrap();
         r.with_conn(|c| {
             // the mc set folds into both the summary facet and the version row
-            let hit = queries::list_mods(c, None, None, Some("1.12.2"))?;
+            let hit = queries::list_mods(c, None, None, Some("1.12.2"), None, None)?;
             assert_eq!(hit.len(), 1);
             assert_eq!(hit[0].mc_versions, vec!["1.12.2".to_string()]);
-            assert!(queries::list_mods(c, None, None, Some("1.20.1"))?.is_empty());
+            assert!(queries::list_mods(c, None, None, Some("1.20.1"), None, None)?.is_empty());
             let vs = queries::versions_of_mod(c, "modid", "biomesoplenty")?;
             assert_eq!(vs[0].mc_versions, vec!["1.12.2".to_string()]);
             Ok(())
@@ -776,7 +814,7 @@ mod tests {
         })
         .unwrap();
         r.with_conn(|c| {
-            let hits = queries::list_mods(c, Some("iron_chests"), None, None)?;
+            let hits = queries::list_mods(c, Some("iron_chests"), None, None, None, None)?;
             assert_eq!(
                 hits.len(),
                 1,

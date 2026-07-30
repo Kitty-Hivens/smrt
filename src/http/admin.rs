@@ -1,5 +1,5 @@
 use super::ApiError;
-use crate::accounts::{AuditRow, Identity, UploadRow, UserRow};
+use crate::accounts::{Identity, UploadRow, UserRow};
 use crate::authoring::{
     ResolveReport, ValidateReport, modrinth, pack_graph, reconstruct_config, resolve_pack, validate,
 };
@@ -8,10 +8,13 @@ use crate::registry::model::GraphData;
 use crate::state::AppState;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
-use axum::http::{HeaderMap, HeaderName, StatusCode, header};
+use axum::http::{HeaderMap, HeaderName, StatusCode, Uri, header};
 use axum::middleware::from_fn_with_state;
+use axum::response::Response;
 use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
+
+use super::page::PageQuery;
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 
@@ -138,13 +141,26 @@ fn authoring_router(state: AppState) -> Router {
 use super::audit;
 use crate::authoring::spoof::SPOOF_DEST;
 
-/// The recent audit trail, newest first -- the operator's "who did what" view.
-async fn get_audit_log(State(state): State<AppState>) -> Result<Json<Vec<AuditRow>>, ApiError> {
+/// The audit trail, newest first -- the operator's "who did what" view.
+///
+/// Unpaged it answers the most recent 200, which is what it always did and all
+/// the view shows. With `limit` it pages, and the trail becomes readable past
+/// its head: the entry anyone goes looking for is usually not among the last
+/// two hundred.
+async fn get_audit_log(
+    State(state): State<AppState>,
+    Query(page): Query<PageQuery>,
+    uri: Uri,
+) -> Result<Response, ApiError> {
+    let before = page
+        .cursor()
+        .and_then(|parts| parts.first()?.parse::<i64>().ok());
+    let take = page.probe().unwrap_or(200) as i64;
     let acc = state.accounts.clone();
-    let rows = tokio::task::spawn_blocking(move || acc.list_audit(200))
+    let rows = tokio::task::spawn_blocking(move || acc.list_audit(take, before))
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("audit task: {e}")))??;
-    Ok(Json(rows))
+    Ok(page.answer(rows, &uri, |r| vec![r.id.to_string()]))
 }
 
 // ── handlers ───────────────────────────────────────────────────────────────

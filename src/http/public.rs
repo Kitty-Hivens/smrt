@@ -1,12 +1,13 @@
 use super::ApiError;
+use super::page::{PageQuery, next_link};
 use crate::authoring::jar_icon;
 use crate::domain::*;
 use crate::registry::model::{FileDetail, ModDetail};
 use crate::registry::queries;
 use crate::state::AppState;
 use axum::body::Body;
-use axum::extract::{Path, State};
-use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -625,13 +626,26 @@ pub(crate) async fn get_cache_icon(
 )]
 pub(crate) async fn get_cache_inventory(
     State(state): State<AppState>,
-) -> Result<Json<CacheInventory>, ApiError> {
-    let entries = state.storage.list_cache_inventory().await?;
-    Ok(Json(CacheInventory {
+    Query(page): Query<PageQuery>,
+    uri: Uri,
+) -> Result<Response, ApiError> {
+    let after = page.cursor().and_then(|parts| parts.first().cloned());
+    let entries = state
+        .storage
+        .cache_inventory_after(after.as_deref(), page.probe())
+        .await?;
+    // the envelope stays the envelope; only the rows in it are a page
+    let (entries, next) = page.split(entries, |e| vec![e.sha1.clone()]);
+    let mut resp = Json(CacheInventory {
         schema_version: SCHEMA_VERSION,
         generated_at: now_rfc3339(),
         entries,
-    }))
+    })
+    .into_response();
+    if let Some(value) = next_link(&uri, next.as_deref()) {
+        resp.headers_mut().insert(header::LINK, value);
+    }
+    Ok(resp)
 }
 
 // ── /v1/users/:uid/avatar ──────────────────────────────────────────────────

@@ -800,7 +800,7 @@ mod tests {
         assert_eq!(checks.blocking.len(), 1);
         assert!(checks.blocking[0].contains("absentmod"));
 
-        let rows = accounts.list_audit(10).unwrap();
+        let rows = accounts.list_audit(10, None).unwrap();
         let row = rows
             .iter()
             .find(|r| r.action == "build.override_checks")
