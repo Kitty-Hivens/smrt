@@ -738,6 +738,79 @@ impl Storage {
             .ok_or_else(|| ApiError::BadRequest("invalid sha1".into()))
     }
 
+    /// What a jar's icon lookup found without opening the jar.
+    ///
+    /// Extraction means reading a whole jar (megabytes) and walking a zip to
+    /// pull out a few kilobytes of image, and the answer never changes: a jar is
+    /// addressed by its own hash, so its icon is a property of that hash. Kept
+    /// beside the cache under `icons/`, in the same two-character shards.
+    ///
+    /// A jar that carries no icon is remembered too. Without that, every request
+    /// for the mods that have none -- and most of them have none -- would go on
+    /// reading and unzipping the jar to rediscover it.
+    pub async fn read_cached_icon(&self, sha1: &str) -> IconRead {
+        let Some(dir) = self.icon_dir(sha1) else {
+            return IconRead::Unknown;
+        };
+        for (ext, content_type) in ICON_KINDS {
+            if let Ok(bytes) = fs::read(dir.join(format!("{sha1}.{ext}"))).await {
+                return IconRead::Image {
+                    bytes,
+                    content_type,
+                };
+            }
+        }
+        if fs::metadata(dir.join(format!("{sha1}.{NO_ICON}")))
+            .await
+            .is_ok()
+        {
+            return IconRead::Absent;
+        }
+        IconRead::Unknown
+    }
+
+    /// Remember what a jar's icon turned out to be -- an image, or nothing.
+    /// Best-effort: a cache that cannot be written costs the next request an
+    /// extraction, which is what every request used to cost.
+    pub async fn store_icon(&self, sha1: &str, icon: Option<(&[u8], &str)>) {
+        let Some(dir) = self.icon_dir(sha1) else {
+            return;
+        };
+        if fs::create_dir_all(&dir).await.is_err() {
+            return;
+        }
+        let (name, bytes): (String, &[u8]) = match icon {
+            Some((bytes, content_type)) => {
+                let ext = ICON_KINDS
+                    .iter()
+                    .find(|(_, ct)| *ct == content_type)
+                    .map(|(ext, _)| *ext)
+                    .unwrap_or("png");
+                (format!("{sha1}.{ext}"), bytes)
+            }
+            None => (format!("{sha1}.{NO_ICON}"), &[]),
+        };
+        if let Err(e) = fs::write(dir.join(name), bytes).await {
+            tracing::warn!(sha1, error = %e, "could not cache an extracted icon");
+        }
+    }
+
+    /// Drop whatever was remembered about a jar's icon. A taken-down jar must
+    /// not keep serving the picture that came out of it.
+    pub async fn forget_icon(&self, sha1: &str) {
+        let Some(dir) = self.icon_dir(sha1) else {
+            return;
+        };
+        for (ext, _) in ICON_KINDS {
+            let _ = fs::remove_file(dir.join(format!("{sha1}.{ext}"))).await;
+        }
+        let _ = fs::remove_file(dir.join(format!("{sha1}.{NO_ICON}"))).await;
+    }
+
+    fn icon_dir(&self, sha1: &str) -> Option<PathBuf> {
+        (sha1.len() == 40 && is_hex(sha1)).then(|| self.root.join("icons").join(sha1_shard(sha1)))
+    }
+
     /// How big the cached jar is, or `None` when the mirror does not hold it.
     ///
     /// A jar's path is its own hash, so this is one `stat` rather than a look
@@ -923,6 +996,8 @@ impl Storage {
         if let Some(path) = cache_jar_path_in(&self.root, sha1) {
             let _ = fs::remove_file(&path).await; // best-effort: may not be cached
         }
+        // the icon came out of those bytes, so it goes with them
+        self.forget_icon(sha1).await;
         self.record_removed(sha1).await
     }
 
@@ -1317,6 +1392,28 @@ pub(crate) fn sha1_shard(sha1: &str) -> &str {
 /// given sha1 lives at `<root>/cache/<sha1[..2]>/<sha1>.jar`. Both the HTTP and
 /// authoring layers build their cache paths on this, so the sharding scheme has
 /// a single source of truth. `None` for a non-40-hex sha1.
+/// The image kinds `jar_icon` can hand back, as `(extension, content type)`.
+/// One home for the mapping both directions.
+const ICON_KINDS: [(&str, &str); 3] = [
+    ("png", "image/png"),
+    ("jpg", "image/jpeg"),
+    ("gif", "image/gif"),
+];
+/// Marker extension for "this jar was opened and carries no icon".
+const NO_ICON: &str = "none";
+
+/// What the icon cache knows about a jar.
+pub enum IconRead {
+    Image {
+        bytes: Vec<u8>,
+        content_type: &'static str,
+    },
+    /// Opened before, and there is no icon in it.
+    Absent,
+    /// Never opened.
+    Unknown,
+}
+
 pub(crate) fn cache_jar_path_in(root: &Path, sha1: &str) -> Option<PathBuf> {
     if sha1.len() != 40 || !is_hex(sha1) {
         return None;
@@ -1740,6 +1837,70 @@ mod tests {
         // a pack with no builds yields no latest, not an error
         assert_eq!(s.latest_manifest_version("Ghost").await.unwrap(), None);
         assert!(s.latest_build_info("Ghost").await.unwrap().is_none());
+    }
+
+    // Extracting an icon means reading a whole jar and walking a zip for a few
+    // kilobytes, and the answer cannot change: the jar is named by its own hash.
+    #[tokio::test]
+    async fn an_icon_is_extracted_once_and_remembered() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let sha1 = "a".repeat(40);
+        assert!(matches!(s.read_cached_icon(&sha1).await, IconRead::Unknown));
+
+        s.store_icon(&sha1, Some((b"\x89PNG-ish", "image/png")))
+            .await;
+        match s.read_cached_icon(&sha1).await {
+            IconRead::Image {
+                bytes,
+                content_type,
+            } => {
+                assert_eq!(bytes, b"\x89PNG-ish");
+                assert_eq!(content_type, "image/png");
+            }
+            _ => panic!("the icon was stored, so it should read back"),
+        }
+
+        // and the type it was stored under survives the round trip
+        let jpg = "b".repeat(40);
+        s.store_icon(&jpg, Some((b"jpeg-ish", "image/jpeg"))).await;
+        assert!(matches!(
+            s.read_cached_icon(&jpg).await,
+            IconRead::Image {
+                content_type: "image/jpeg",
+                ..
+            }
+        ));
+    }
+
+    // Most jars carry no icon at all. Not remembering that is the expensive
+    // case, not the cheap one: every request would re-read the jar to find the
+    // same nothing.
+    #[tokio::test]
+    async fn a_jar_with_no_icon_is_remembered_as_having_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let sha1 = "c".repeat(40);
+        s.store_icon(&sha1, None).await;
+        assert!(matches!(s.read_cached_icon(&sha1).await, IconRead::Absent));
+    }
+
+    // A takedown removes the jar; the picture that came out of it must not
+    // outlive it.
+    #[tokio::test]
+    async fn a_takedown_takes_the_icon_with_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let sha1 = sha1_hex(b"jar");
+        s.save_cache_jar(&sha1, b"jar").await.unwrap();
+        s.store_icon(&sha1, Some((b"png-ish", "image/png"))).await;
+
+        s.takedown(&sha1).await.unwrap();
+        assert!(!s.has_cache_jar(&sha1).await);
+        assert!(
+            matches!(s.read_cached_icon(&sha1).await, IconRead::Unknown),
+            "a taken-down jar keeps serving its icon"
+        );
     }
 
     // Answering "do we hold this jar" by listing the cache made one boolean cost

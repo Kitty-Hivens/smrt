@@ -5,6 +5,7 @@ use crate::domain::*;
 use crate::registry::model::{FileDetail, ModDetail};
 use crate::registry::queries;
 use crate::state::AppState;
+use crate::storage::IconRead;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
@@ -593,14 +594,31 @@ pub(crate) async fn get_cache_icon(
     if sha1.len() != 40 || !sha1.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(ApiError::BadRequest("sha1 must be 40 hex chars".into()));
     }
-    let path = state.storage.cache_jar_path(&sha1[..2], &sha1)?;
-    let bytes = tokio::fs::read(&path)
-        .await
-        .map_err(|_| ApiError::NotFound)?;
-    let icon = tokio::task::spawn_blocking(move || jar_icon(&bytes))
-        .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("icon extract task: {e}")))??;
-    let (img, content_type) = icon.ok_or(ApiError::NotFound)?;
+    // What a jar's icon is never changes -- the jar is addressed by its own
+    // hash -- so it is extracted once and remembered, including the answer
+    // "there is none", which is the common one and used to cost the same
+    // megabytes to rediscover.
+    let (img, content_type) = match state.storage.read_cached_icon(&sha1).await {
+        IconRead::Image {
+            bytes,
+            content_type,
+        } => (bytes, content_type),
+        IconRead::Absent => return Err(ApiError::NotFound),
+        IconRead::Unknown => {
+            let path = state.storage.cache_jar_path(&sha1[..2], &sha1)?;
+            let bytes = tokio::fs::read(&path)
+                .await
+                .map_err(|_| ApiError::NotFound)?;
+            let icon = tokio::task::spawn_blocking(move || jar_icon(&bytes))
+                .await
+                .map_err(|e| ApiError::Internal(anyhow::anyhow!("icon extract task: {e}")))??;
+            state
+                .storage
+                .store_icon(&sha1, icon.as_ref().map(|(b, ct)| (b.as_slice(), *ct)))
+                .await;
+            icon.ok_or(ApiError::NotFound)?
+        }
+    };
     Ok((
         [
             (header::CONTENT_TYPE, content_type),
