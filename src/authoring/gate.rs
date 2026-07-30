@@ -86,6 +86,16 @@ pub fn check(report: &ResolveReport) -> BuildChecks {
         ));
     }
 
+    // #145. Blocking rather than advisory, and not by choice: a required mixin
+    // whose target is gone is not a risk to weigh but a game that stops during
+    // init. There is no version of this that is a deliberate decision.
+    for g in &report.mixin_gaps {
+        blocking.push(format!(
+            "{} patches {}, which the {} in this pack no longer has ({})",
+            g.filename, g.needed, g.owner, g.config,
+        ));
+    }
+
     for c in &report.conflicts {
         advisory.push(format!(
             "{} and {} are marked {} ({}), and both are enabled by default",
@@ -145,7 +155,7 @@ pub fn check(report: &ResolveReport) -> BuildChecks {
 mod tests {
     use super::*;
     use crate::authoring::resolve::{
-        ActiveConflict, ForcedClientEdge, LoaderMismatch, MissingDep, VersionIssue,
+        ActiveConflict, ForcedClientEdge, LoaderMismatch, MissingDep, MixinGap, VersionIssue,
     };
 
     fn empty() -> ResolveReport {
@@ -159,6 +169,7 @@ mod tests {
             version_issues: vec![],
             loader_mismatch: vec![],
             loader_bridged: vec![],
+            mixin_gaps: vec![],
             unresolved: vec![],
             version_windows_unchecked: 0,
             coremods: vec![],
@@ -173,6 +184,28 @@ mod tests {
     // A clean pack carries no block at all: an empty `checks` object on every
     // manifest would be noise, and would make "nothing was found" look like
     // "something was recorded".
+    // #145. Not advisory: a required mixin whose target is gone is a game that
+    // stops during init, and there is no reading of it that is a choice.
+    #[test]
+    fn a_missing_mixin_target_stops_the_publish() {
+        let mut r = empty();
+        r.mixin_gaps = vec![MixinGap {
+            filename: "Sable.jar".into(),
+            config: "sable.mixins.json".into(),
+            needed: "net/caffeinemc/mods/sodium/client/gui/SodiumGameOptions".into(),
+            owner: "sodium.jar".into(),
+        }];
+        let checks = check(&r);
+        assert_eq!(checks.blocking.len(), 1, "blocks: {:?}", checks.blocking);
+        let line = &checks.blocking[0];
+        // names all three: who asks, what is gone, and whose copy lacks it --
+        // the crash report names none of them
+        assert!(line.contains("Sable.jar"), "{line}");
+        assert!(line.contains("SodiumGameOptions"), "{line}");
+        assert!(line.contains("sodium.jar"), "{line}");
+        assert!(line.contains("sable.mixins.json"), "{line}");
+    }
+
     #[test]
     fn a_clean_pack_says_nothing() {
         let checks = check(&empty());
