@@ -6,7 +6,7 @@
   import { dialogs } from '../lib/dialogs.svelte';
   import { href, plainClick, route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
-  import { reload } from '../lib/reload.svelte';
+  import { mirror } from '../lib/mirror.svelte';
   import { isDebug } from '../lib/roles';
   import type { GraphData, GraphSlice } from '../lib/types';
 
@@ -136,9 +136,9 @@
     }
   }
 
-  // the shell's top-bar refresh bumps reload.count; reload when it does
+  // the graph is the registry drawn: a harvest, a merge or a relation moves it
   $effect(() => {
-    if (reload.count > 0) load();
+    if (mirror.registry > 0) load();
   });
 </script>
 

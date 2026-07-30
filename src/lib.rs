@@ -13,6 +13,7 @@ pub mod accounts;
 pub mod authoring;
 pub mod config;
 pub mod domain;
+pub mod events;
 pub mod http;
 pub mod jobs;
 pub mod registry;

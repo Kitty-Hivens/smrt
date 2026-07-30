@@ -27,12 +27,52 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/me/uploads", get(my_uploads))
         .route("/v1/me/forks", post(fork_pack))
         .route("/v1/me/accept-terms", post(accept_terms))
+        .route("/v1/events", get(mirror_events))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BODY))
         .layer(from_fn_with_state(
             state.clone(),
             super::auth::require_session,
         ))
         .with_state(state)
+}
+
+/// What is changing on the mirror, as it changes: the registry index moving, a
+/// pack publishing, the moderation queue filling.
+///
+/// A view listens here instead of asking again on a timer. Polling is both
+/// dearer and slower -- dearer because every view pays for a round trip whether
+/// or not anything happened, slower because whatever happens is invisible until
+/// the next tick. What arrives is a nudge rather than the data: the client
+/// refetches the one view that cares, and that read is the same conditional GET
+/// as before, usually answered `304`.
+///
+/// Session-gated, and filtered again per event: everything the panel already
+/// shows a member is theirs to hear about, while the moderation queue is the
+/// operator's.
+async fn mirror_events(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    use axum::response::sse::{Event, KeepAlive, Sse};
+
+    let mut subscription = state.events.subscribe(identity.role);
+    let stream = async_stream::stream! {
+        while let Some(event) = subscription.next().await {
+            let name = event.name();
+            match serde_json::to_string(&event) {
+                Ok(data) => yield Ok::<Event, std::convert::Infallible>(
+                    Event::default().event(name).data(data),
+                ),
+                // an event that will not serialise is this process's bug, not
+                // the subscriber's problem: drop it and keep the stream alive
+                Err(e) => tracing::warn!(error = %e, "dropping an unserialisable mirror event"),
+            }
+        }
+    };
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))
+        .into_response()
 }
 
 /// The caller's own packs -- the "my packs" view. Draft and community packs the
@@ -159,6 +199,8 @@ async fn upload_jar(
         .await;
     }
 
+    state.events.moderation("queued");
+
     let acc = state.accounts.clone();
     let row = tokio::task::spawn_blocking(move || acc.get_upload(id))
         .await
@@ -263,6 +305,7 @@ async fn fork_pack(
             Some(req.source.clone()),
         )
         .await?;
+    state.events.pack(&target, "created");
     Ok((StatusCode::CREATED, Json(cfg)))
 }
 

@@ -4,7 +4,7 @@
   import { notifyFail } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
   import { href, plainClick, route } from '../lib/route.svelte';
-  import { reload } from '../lib/reload.svelte';
+  import { mirror } from '../lib/mirror.svelte';
   import { t } from '../lib/i18n.svelte';
   import type { ModSummary, PackSummary, ServerEntry, UnassignedJar } from '../lib/types';
   import ServerEditor from './ServerEditor.svelte';
@@ -35,7 +35,6 @@
 
   async function loadAll() {
     loading = true;
-    reload.setBusy(true);
     try {
       const [p, s, md, u, a, rm, ci] = await Promise.all([
         api.adminSummaries(),
@@ -58,13 +57,13 @@
       notifyFail(e);
     } finally {
       loading = false;
-      reload.setBusy(false);
     }
   }
   loadAll();
-  // the shell's top-bar refresh bumps reload.count; reload when it does
+  // this view is the whole mirror at a glance -- the catalog, the registry and
+  // the cache -- so either kind of change makes it stale
   $effect(() => {
-    if (reload.count > 0) loadAll();
+    if (mirror.packs + mirror.registry + mirror.catalog > 0) loadAll();
   });
 
   // The list behind the editor is stale the moment editing ends, and editing now

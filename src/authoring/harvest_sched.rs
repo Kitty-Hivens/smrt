@@ -8,6 +8,7 @@
 use super::harvest;
 use super::harvest::HarvestReport;
 use super::modrinth::Modrinth;
+use crate::events::MirrorEvents;
 use crate::registry::Registry;
 use crate::registry::upsert::now_rfc3339;
 use crate::storage::Storage;
@@ -42,6 +43,9 @@ pub struct HarvestScheduler {
     storage: Arc<Storage>,
     modrinth: Arc<Modrinth>,
     registry: Arc<Registry>,
+    /// Announced to when a run rewrites the index, so a registry view learns it
+    /// went stale instead of finding out on its next refresh.
+    events: Arc<MirrorEvents>,
     wake: Notify,
     /// Set by [`force`] so the worker skips the debounce and harvests at once.
     force_now: AtomicBool,
@@ -58,11 +62,13 @@ impl HarvestScheduler {
         storage: Arc<Storage>,
         modrinth: Arc<Modrinth>,
         registry: Arc<Registry>,
+        events: Arc<MirrorEvents>,
     ) -> Arc<Self> {
         Arc::new(Self {
             storage,
             modrinth,
             registry,
+            events,
             wake: Notify::new(),
             force_now: AtomicBool::new(false),
             dirty: AtomicBool::new(false),
@@ -157,6 +163,7 @@ impl HarvestScheduler {
                     harvest::run_harvest(&storage, &modrinth, registry).await
                 });
                 let result = run.await;
+                let mut harvested = false;
                 let mut st = self.status.lock().expect("harvest status mutex");
                 st.running = false;
                 st.last_finished = Some(now_rfc3339());
@@ -176,6 +183,7 @@ impl HarvestScheduler {
                         );
                         st.last_error = None;
                         st.last_report = Some(rep);
+                        harvested = true;
                     }
                     Ok(Err(e)) => {
                         tracing::warn!(error = %e, "auto-harvest failed");
@@ -185,6 +193,10 @@ impl HarvestScheduler {
                         tracing::error!(error = %join, "auto-harvest task crashed");
                         st.last_error = Some(format!("harvest task crashed: {join}"));
                     }
+                }
+                drop(st);
+                if harvested {
+                    self.events.registry("harvest");
                 }
             }
         });
@@ -200,6 +212,7 @@ mod tests {
             Arc::new(Storage::new(std::env::temp_dir().join("smrt-sched-test"))),
             Arc::new(Modrinth::with_base("http://127.0.0.1:9").unwrap()),
             Arc::new(Registry::open_in_memory().unwrap()),
+            Arc::new(MirrorEvents::default()),
         )
     }
 

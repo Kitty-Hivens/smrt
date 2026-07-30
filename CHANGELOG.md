@@ -70,6 +70,48 @@ version section when a release is tagged.
 
 ### Added
 
+- Reads cost what they are worth. Four things the whole `/v1` surface does now,
+  written up in the API guide:
+  - **Compression.** Manifests and listings are repetitive JSON and went out as
+    plain text -- tens of kilobytes per read. It lives in the mirror rather than
+    in a reverse proxy, because the proxy is one deployment's choice and a
+    self-hoster behind Caddy or behind nothing is still the product's user. Jars
+    and zips are served as they lie (a zip re-compresses to its own size), and
+    so are live event streams, where buffering a line to encode it is the one
+    thing a tail must not do.
+  - **Conditional GET.** Every JSON read carries an `ETag`; send it back as
+    `If-None-Match` and an unchanged answer costs `304` with no body. The tag is
+    the hash of the answer, so it is stable across restarts and across two
+    mirrors serving the same data, and weak, because the same data gzipped and
+    plain is the same data.
+  - **Paging.** `/v1/registry/mods`, `/v1/cache/inventory` and `/v1/audit` take
+    `?limit=` and name the next page in a `Link` header. Keyset rather than
+    offset: rows arriving mid-walk land outside the page being read instead of
+    shifting it. Asked for rather than imposed -- without `limit` each listing
+    answers exactly as before, and the body shape does not change either way.
+    Each now costs what its page costs: the registry listing folded facets over
+    every artifact the mirror holds before answering, and the cache inventory
+    walked the whole cache to discard everything before the cursor. The audit
+    trail is also readable past its most recent 200 entries for the first time,
+    which is where the entry anyone goes looking for usually is.
+  - **Resumable downloads.** Files answer `Range`, so a transfer that died at
+    90% asks for the rest instead of starting over. A cache jar cannot change
+    under a resume at all, being content-addressed; for a static file that can,
+    pairing the range with `If-Unmodified-Since` answers `412` rather than
+    splicing two versions together.
+- A build listing says what it targets and what it weighs: `minecraft_version`,
+  `loader` and `size_bytes` (every mod and asset the build lists, added up) on
+  each entry of `/v1/packs/{id}/manifest/versions`. Telling a player that an
+  update moves them to 1.20.1, off Forge, or costs 400 MB previously meant
+  fetching every manifest in the list to read three fields out of each.
+- `GET /v1/events` (SSE, any signed-in caller): what changed on the mirror, as
+  it changes -- the mod index moved, a pack published, the moderation queue
+  moved. A view listens instead of asking again on a timer, which is both dearer
+  (a round trip whether or not anything happened) and slower (a harvest that
+  finishes just after a poll stays invisible until the next one). The event is a
+  nudge rather than the data: refetch the one view that cares, and that read is
+  the conditional GET above. Filtered by role -- the moderation queue is the
+  operator's -- and live-only, like the per-pack rooms and the job registry.
 - A publish stops when a jar's required mixin patches a class the pack no longer
   carries. Twice in one day a published pack died during init on exactly this,
   and neither case was visible in any declaration -- both mods declare an open

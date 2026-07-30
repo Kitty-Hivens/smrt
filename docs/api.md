@@ -48,6 +48,12 @@ GET /v1/packs/{id}/manifest/{version}      # a specific build
    curator-authored release notes where given -- plus `fingerprint`,
    `mods_count`, `assets_count`). `latest` names the build the latest pointer
    serves. Filter by `version_type` to hide prereleases.
+   Each build also states what it targets and what it costs:
+   `minecraft_version` and `loader` (`{name, version}`), so "this update moves
+   you to 1.20.1" is answerable from the listing rather than by fetching every
+   manifest in it, and `size_bytes`, the sum of every mod and asset the build
+   lists -- optional entries included, since what one player fetches depends on
+   what they enable.
 4. **Ordering**, when a client must sort labels itself: numeric tuple
    comparison within a version base (`0.4.10` > `0.4.2`; lexicographic sort
    is wrong); across bases or historical labels, order by `date_published`.
@@ -124,6 +130,43 @@ entries `default_enabled` (absent = true) is the install-time default. The
 by its Modrinth `project_id` when the source is Modrinth, else by the entry's
 `slug` field when present, else by `filename`.
 
+**Resuming a download**: files served by the mirror (`/v1/cache/...`,
+`/v1/packs/{id}/static/...`) answer `Range`, so a transfer that died at 90%
+asks for the rest instead of starting over. Send `Range: bytes=<got>-` and
+expect `206` with `Content-Range`; a range past the end answers `416`.
+
+Resuming safely: a cache jar is content-addressed, so its bytes cannot change
+under a resume. A static file can, and `If-Range` is **not** honoured -- pair
+the range with `If-Unmodified-Since: <the Last-Modified you started from>` and
+a file that moved answers `412` instead of splicing two versions together.
+Verify the manifest's `sha1` after assembling either way.
+
+## Reading cheaply
+
+Three things the whole `/v1` surface does, worth wiring into a client once:
+
+- **Compression.** Send `Accept-Encoding: gzip` (or `br`). Manifests and
+  listings are repetitive JSON and compress several-fold -- a manifest-shaped
+  body lands around a seventh of its size. Jars, zips and live event streams
+  are served uncompressed on purpose.
+- **Conditional GET.** A JSON read carries an `ETag`. Send it back as
+  `If-None-Match` and an unchanged answer costs `304 Not Modified` with no
+  body -- which is the cheap way to poll. The tag is weak: it identifies the
+  data, not the encoding it arrived in. Tagged means a `200` whose body was
+  built whole; a streamed response, and anything past 8 MiB, is answered
+  untagged rather than hashed on every request, so treat a missing `ETag` as
+  "cannot revalidate this one" rather than as an error.
+- **Paging.** Listings that grow without bound -- `/v1/cache/inventory`, plus
+  the gated `/v1/registry/mods` and `/v1/audit` -- accept `?limit=<n>`
+  (capped at 500).
+  Without it they answer whole, as they always have. With it, the response
+  carries `Link: <...>; rel="next"` when there is more; follow that URL
+  verbatim -- it repeats your filters and carries an opaque cursor. The body
+  shape does not change between the paged and unpaged forms. Paging is keyset,
+  not offset: rows arriving while you walk land outside the page you are
+  reading rather than shifting it. A cursor pointing at a row that has since
+  been merged away ends the walk; start over rather than trusting a stale one.
+
 ## Mods, files, hashes
 
 ```
@@ -169,3 +212,13 @@ SSE) track builds; finished jobs keep answering the status endpoint from
 persisted snapshots across restarts (a job running at a restart reads failed,
 with an explicit interrupted line), while the live SSE tail is
 memory-only.
+
+`GET /v1/events` (SSE, any signed-in caller) is the mirror-wide equivalent:
+what changed, as it changes, so a view listens instead of asking again on a
+timer. Three event names -- `registry` (the mod index moved: a harvest ran, a
+jar was named, two mods merged), `pack` (a build published, a pack deleted or
+changed visibility) and `moderation` (the upload queue moved, operators only).
+Each carries a small JSON body saying which, and is a nudge rather than the
+data: refetch the one view that cares, and that read is the conditional GET
+above, usually answered `304`. In-process, so events are live-only -- a
+reconnecting client reads the world as it is and listens from there.

@@ -133,7 +133,8 @@ pub async fn search_mods(
     // and a foreign-loader hit is still worth showing as foreign.
     let (registry_hits, sha1s) = {
         let (q, mc) = (q.to_string(), pack.mc.map(str::to_string));
-        let hits = registry.with_conn(|c| queries::list_mods(c, Some(&q), None, mc.as_deref()))?;
+        let hits = registry
+            .with_conn(|c| queries::list_mods(c, Some(&q), None, mc.as_deref(), None, None))?;
         let sha1s = registry.with_conn(queries::sha1s_by_mod)?;
         (hits, sha1s)
     };

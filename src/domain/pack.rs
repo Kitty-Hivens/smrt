@@ -171,6 +171,19 @@ pub struct ManifestBuildInfo {
     pub mods_count: u64,
     #[ts(type = "number")]
     pub assets_count: u64,
+    /// What this build runs on. Present per build rather than per pack because
+    /// a pack outlives its target: telling a player that an update moves them
+    /// from 1.12.2 to 1.20.1, or off Forge, is exactly what a version list is
+    /// read for, and answering it from the listing costs one request instead of
+    /// one manifest per build.
+    pub minecraft_version: String,
+    pub loader: LoaderSpec,
+    /// Every file this build lists, added up: what a fresh install downloads.
+    /// Optional entries are counted too -- what an individual player ends up
+    /// fetching depends on what they enable, and that answer only exists in the
+    /// manifest.
+    #[ts(type = "number")]
+    pub size_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, TS, ToSchema)]

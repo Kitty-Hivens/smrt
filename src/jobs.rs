@@ -11,6 +11,7 @@ use crate::authoring::{
 };
 use crate::config::Config;
 use crate::domain::{PackManifest, PackSummary, VersionChannel};
+use crate::events::MirrorEvents;
 use crate::registry::Registry;
 use crate::storage::Storage;
 use serde::Serialize;
@@ -84,6 +85,9 @@ pub struct BuildDeps {
     pub accounts: Arc<Accounts>,
     /// The harvester to wait on (and poke afterwards), where one is running.
     pub harvest: Option<Arc<HarvestScheduler>>,
+    /// Where a publish is announced, so a catalog stops being stale the moment
+    /// the build lands rather than at whoever is looking next refresh.
+    pub events: Arc<MirrorEvents>,
 }
 
 /// What a build was asked to do. One request rather than a row of positional
@@ -256,6 +260,7 @@ impl JobRegistry {
             registry,
             accounts,
             harvest,
+            events,
         } = deps;
         let dry_run = req.dry_run;
         let job = self.create(if dry_run { "preview" } else { "build" }, pack_id);
@@ -289,8 +294,11 @@ impl JobRegistry {
                     handle.finish(Status::Done);
                     // a published build added a build + its mods to harvest -- a
                     // dry run published nothing, so it needn't refresh
-                    if !dry_run && let Some(h) = harvest {
-                        h.poke();
+                    if !dry_run {
+                        events.pack(&handle.pack_id, "published");
+                        if let Some(h) = harvest {
+                            h.poke();
+                        }
                     }
                 }
                 Err(e) => {
@@ -673,6 +681,7 @@ mod tests {
             registry: registry.unwrap_or_else(|| Arc::new(Registry::open_in_memory().unwrap())),
             accounts: accounts(),
             harvest: None,
+            events: Arc::new(MirrorEvents::default()),
         }
     }
 
@@ -800,7 +809,7 @@ mod tests {
         assert_eq!(checks.blocking.len(), 1);
         assert!(checks.blocking[0].contains("absentmod"));
 
-        let rows = accounts.list_audit(10).unwrap();
+        let rows = accounts.list_audit(10, None).unwrap();
         let row = rows
             .iter()
             .find(|r| r.action == "build.override_checks")
@@ -948,5 +957,51 @@ mod tests {
         let published = storage.load_latest_manifest("Test").await.unwrap();
         assert_eq!(published.mods.len(), 1);
         assert_eq!(published.mods[0].filename, "Test.jar");
+    }
+
+    // A publish changes what every catalog view is showing. Saying so is what
+    // spares those views from asking on a timer.
+    #[tokio::test]
+    async fn a_publish_announces_itself_and_a_dry_run_does_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = Arc::new(Storage::new(tmp.path().to_path_buf()));
+        let bytes = b"jar";
+        let sha1 = sha1_of(bytes);
+        storage.save_cache_jar(&sha1, bytes).await.unwrap();
+        storage
+            .save_pack_config("Test", &cfg_with_cache_mod(&sha1))
+            .await
+            .unwrap();
+        let config = Arc::new(test_config(tmp.path().to_path_buf()));
+
+        let events = Arc::new(MirrorEvents::default());
+        let mut listening = events.subscribe(crate::accounts::Role::Member);
+        let with_bus = |storage: Arc<Storage>, config: Arc<Config>| BuildDeps {
+            events: events.clone(),
+            ..deps(storage, config, None)
+        };
+
+        let registry = JobRegistry::default();
+        let preview = registry.spawn_build(
+            "Test".into(),
+            with_bus(storage.clone(), config.clone()),
+            BuildRequest {
+                dry_run: true,
+                ..plain()
+            },
+        );
+        assert_eq!(await_finish(&preview).await, Status::Done);
+
+        let job = registry.spawn_build("Test".into(), with_bus(storage.clone(), config), plain());
+        assert_eq!(await_finish(&job).await, Status::Done);
+
+        // the dry run published nothing, so the first thing heard is the build
+        match listening.next().await.unwrap() {
+            crate::events::MirrorEvent::Pack { pack_id, what } => {
+                assert_eq!(pack_id, "Test");
+                assert_eq!(what, "published");
+            }
+            other => panic!("expected a publish, got {other:?}"),
+        }
     }
 }

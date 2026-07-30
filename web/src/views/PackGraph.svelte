@@ -4,6 +4,7 @@
   import { notifyFail, toasts } from '../lib/toasts.svelte';
   import { href, plainClick, route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { mirror } from '../lib/mirror.svelte';
   import type { GraphData } from '../lib/types';
 
   // The pack's own relation graph: its mods, wired by what the exact artifacts it
@@ -29,6 +30,12 @@
     }
   }
   load();
+
+  // the relations drawn here are registry facts, so a merge, a relation or a
+  // harvest is what makes this picture wrong
+  $effect(() => {
+    if (mirror.registry > 0) load();
+  });
 </script>
 
 <div class="view">
@@ -40,7 +47,6 @@
       <span class="lg" style="--c:var(--ok)">{t('graph.provides')}</span>
       <span class="lg dashed">{t('pe.graphDangling')}</span>
     </div>
-    <button class="sm" onclick={load} disabled={loading}>{t('graph.refresh')}</button>
   </div>
 
   <GraphCanvas {raw} {loading} onError={(m) => toasts.push({ kind: 'error', text: m })}>
@@ -95,9 +101,5 @@
     background: none;
     border-top: 1px dashed var(--fg-faint);
     height: 0;
-  }
-  button.sm {
-    padding: 4px 10px;
-    font-size: var(--fs-sm);
   }
 </style>

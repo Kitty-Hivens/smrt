@@ -3,7 +3,6 @@
   import { api } from '../lib/api';
   import type { Health } from '../lib/types';
   import { href, plainClick, route, visibleSections, type Section } from '../lib/route.svelte';
-  import { reload } from '../lib/reload.svelte';
   import { activity } from '../lib/motion.svelte';
   import { t } from '../lib/i18n.svelte';
   import Avatar from './Avatar.svelte';
@@ -150,19 +149,6 @@
         {/if}
       </div>
       <div class="spacer"></div>
-      <div class="tools">
-        {#if me}
-          <button
-            class="refresh"
-            class:busy={reload.busy}
-            onclick={() => reload.request()}
-            disabled={reload.busy}
-          >
-            <span class="rlabel">{t('shell.refresh')}</span>
-            <span class="spin" aria-hidden="true"></span>
-          </button>
-        {/if}
-      </div>
     </header>
 
     <main class="content scroll">
@@ -393,11 +379,6 @@
   .burger .bl::after {
     top: 5px;
   }
-  .tools {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
   /* a crumb segment you can walk back to reads as a control, not as text */
   .crumblink {
     border: none;
@@ -421,43 +402,6 @@
   }
   .crumb .faint {
     color: var(--fg-faint);
-  }
-  .refresh {
-    position: relative;
-    font-family: var(--mono);
-    font-size: var(--fs-xs);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    padding: 6px 12px;
-  }
-  .refresh .spin {
-    display: none;
-  }
-  .refresh.busy .rlabel {
-    visibility: hidden;
-  }
-  .refresh.busy .spin {
-    display: block;
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    margin: -7px 0 0 -7px;
-    width: 14px;
-    height: 14px;
-    border: 2px solid var(--seam-bright);
-    border-top-color: var(--fg);
-    border-radius: 50%;
-    animation: refresh-spin 0.6s linear infinite;
-  }
-  @keyframes refresh-spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .refresh.busy .spin {
-      animation: none;
-    }
   }
   .content {
     flex: 1;
@@ -585,9 +529,6 @@
     }
     .topbar {
       padding: var(--space-3) var(--space-4);
-    }
-    .tools {
-      flex-basis: 100%;
     }
     .content {
       padding: var(--space-3);

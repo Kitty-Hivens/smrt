@@ -446,15 +446,19 @@ impl Accounts {
         Ok(())
     }
 
-    /// The most recent audit entries, newest first, capped at `limit`. Blocking.
-    pub fn list_audit(&self, limit: i64) -> Result<Vec<AuditRow>> {
+    /// Audit entries newest first, capped at `limit`, starting after `before`.
+    ///
+    /// The trail only grows, so reading further back is reading older ids: the
+    /// id is the sort key and the cursor at once, and a page holds still even
+    /// while new entries land on top of it. Blocking.
+    pub fn list_audit(&self, limit: i64, before: Option<i64>) -> Result<Vec<AuditRow>> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
         let mut stmt = guard.prepare(
             "SELECT id, actor_uid, actor_login, action, target, detail, created_at
-             FROM audit_log ORDER BY id DESC LIMIT ?1",
+             FROM audit_log WHERE (?2 IS NULL OR id < ?2) ORDER BY id DESC LIMIT ?1",
         )?;
         let rows = stmt
-            .query_map(params![limit], |r| {
+            .query_map(params![limit, before], |r| {
                 Ok(AuditRow {
                     id: r.get(0)?,
                     actor_uid: r.get(1)?,
@@ -777,7 +781,7 @@ mod tests {
             .unwrap();
         a.record_audit(42, "octocat", "upload.approve", Some("deadbeef"), None)
             .unwrap();
-        let rows = a.list_audit(10).unwrap();
+        let rows = a.list_audit(10, None).unwrap();
         assert_eq!(rows.len(), 2);
         // newest first
         assert_eq!(rows[0].action, "upload.approve");
@@ -786,5 +790,38 @@ mod tests {
         assert_eq!(rows[1].action, "role.set");
         assert_eq!(rows[1].actor_login, "octocat");
         assert_eq!(rows[1].detail.as_deref(), Some("admin"));
+    }
+
+    // The trail is read backwards a page at a time, and an entry landing while
+    // someone reads must not shift the page under them -- which is why the
+    // cursor is an id rather than an offset.
+    #[test]
+    fn the_trail_reads_back_a_page_at_a_time() {
+        let a = Accounts::open_in_memory().unwrap();
+        for i in 0..5 {
+            a.record_audit(42, "octocat", &format!("act.{i}"), None, None)
+                .unwrap();
+        }
+        let first = a.list_audit(2, None).unwrap();
+        assert_eq!(
+            first.iter().map(|r| r.action.as_str()).collect::<Vec<_>>(),
+            ["act.4", "act.3"]
+        );
+
+        a.record_audit(42, "octocat", "act.new", None, None)
+            .unwrap();
+
+        let second = a.list_audit(2, Some(first[1].id)).unwrap();
+        assert_eq!(
+            second.iter().map(|r| r.action.as_str()).collect::<Vec<_>>(),
+            ["act.2", "act.1"],
+            "the newcomer lands on top of the trail, not into the page being read"
+        );
+        let third = a.list_audit(2, Some(second[1].id)).unwrap();
+        assert_eq!(
+            third.iter().map(|r| r.action.as_str()).collect::<Vec<_>>(),
+            ["act.0"]
+        );
+        assert!(a.list_audit(2, Some(third[0].id)).unwrap().is_empty());
     }
 }

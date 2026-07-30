@@ -18,6 +18,7 @@ import { JAVA_MAJORS, suggestedJava } from '../src/lib/java.ts';
 import { changedPaths } from '../src/lib/touched.svelte.ts';
 import { advertisesModList } from '../src/lib/handshake.ts';
 import { assetPath, isPackFile, ASSET_PREFIX } from '../src/lib/packassets.ts';
+import { nextPageUrl } from '../src/lib/pagelink.ts';
 
 let failures = 0;
 const check = (name, cond, detail = '') => {
@@ -227,6 +228,23 @@ check('the offered list holds what old packs need', [8, 11, 16, 17, 21].every((v
   check('a banner is not an icon', !isPackFile('_pack/banner.png', 'icon'));
   check('and a lookalike elsewhere is neither',
     !isPackFile('resourcepacks/icon.png', 'icon'));
+}
+
+// Walking a paged listing means following the address the mirror hands back. Read
+// it wrong and the walk stops at the first page while looking like it finished.
+{
+  const link = '</v1/audit?limit=60&after=NDI>; rel="next"';
+  check('the next page is the address it names',
+    nextPageUrl(link) === '/v1/audit?limit=60&after=NDI', nextPageUrl(link));
+  check('the last page names nothing after it', nextPageUrl(null) === null);
+  check('a header with no next in it yields none',
+    nextPageUrl('</v1/audit?limit=60>; rel="prev"') === null);
+  check('the next is found among other relations',
+    nextPageUrl('</a>; rel="prev", </b>; rel="next"') === '/b');
+  // the cursor is base64url, so it can carry characters a naive split would eat
+  check('a cursor is taken whole',
+    nextPageUrl('</v1/registry/mods?q=a-b_c&after=eyJhIjoxfQ>; rel="next"')
+      === '/v1/registry/mods?q=a-b_c&after=eyJhIjoxfQ');
 }
 
 console.log(failures ? `\n${failures} failed` : '\nall good');

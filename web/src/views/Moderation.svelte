@@ -3,6 +3,7 @@
   import { notifyFail } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { mirror } from '../lib/mirror.svelte';
   import type { UploadRow } from '../lib/types';
 
   // The operator's moderation queue: pending member jar uploads. Approve promotes
@@ -21,6 +22,11 @@
     }
   }
   load();
+
+  // a member's upload lands here without anyone reloading the page
+  $effect(() => {
+    if (mirror.moderation > 0) load();
+  });
 
   async function approve(u: UploadRow) {
     try {

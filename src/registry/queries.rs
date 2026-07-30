@@ -1265,41 +1265,26 @@ pub fn releases_of_mod_by_id(conn: &Connection, mod_id: i64) -> Result<Vec<Relea
 /// an optional Minecraft version. Each row carries the facets aggregated across
 /// the mod's artifacts so the panel can show loader/mc chips without a per-mod
 /// round-trip.
+///
+/// `after` resumes the listing after a mod id the caller was already given, and
+/// `take` bounds what comes back; both absent is the whole registry, which is
+/// what an unpaged caller asks for.
+///
+/// The cursor is the id alone and the ordering is resolved here rather than by
+/// the caller: the sort key is the name the row sorts under, which is not
+/// always the name the row is displayed by, and a caller reconstructing it from
+/// the answer would silently drift from what the listing actually did. A cursor
+/// naming a mod that has since been merged away ends the listing rather than
+/// resuming mid-way -- the caller starts over, which is the correct read of a
+/// listing that moved under them.
 pub fn list_mods(
     conn: &Connection,
     q: Option<&str>,
     loader: Option<&str>,
     mc: Option<&str>,
+    after: Option<i64>,
+    take: Option<usize>,
 ) -> Result<Vec<ModSummary>> {
-    // facet maps over the whole registry: mod_id -> its loader / mc sets. Folded
-    // in Rust because mc_versions is JSON; the registry is single-operator-sized.
-    let mut loaders_by_mod: HashMap<i64, BTreeSet<String>> = HashMap::new();
-    {
-        let mut stmt = conn.prepare(
-            "SELECT mv.mod_id, t.target
-             FROM mod_version mv JOIN mod_version_target t ON t.mod_version_id = mv.id",
-        )?;
-        let mut rows = stmt.query([])?;
-        while let Some(r) = rows.next()? {
-            let id: i64 = r.get(0)?;
-            let t: String = r.get(1)?;
-            loaders_by_mod.entry(id).or_default().insert(t);
-        }
-    }
-    let mut mc_by_mod: HashMap<i64, BTreeSet<String>> = HashMap::new();
-    {
-        let mut stmt = conn
-            .prepare("SELECT mod_id, mc_versions FROM mod_version WHERE mc_versions IS NOT NULL")?;
-        let mut rows = stmt.query([])?;
-        while let Some(r) = rows.next()? {
-            let id: i64 = r.get(0)?;
-            let set = mc_by_mod.entry(id).or_default();
-            for v in decode_mc(r.get(1)?) {
-                set.insert(v);
-            }
-        }
-    }
-
     let q_like = q.map(|s| format!("%{}%", like_escape(s)));
     let mc_like = mc.map(|s| format!("%\"{}\"%", like_escape(s)));
     // loader matches the family DAG, not just the exact id: a cleanroom/quilt
@@ -1329,10 +1314,20 @@ pub fn list_mods(
            AND (?3 IS NULL OR EXISTS (
                  SELECT 1 FROM mod_version mv
                  WHERE mv.mod_id = m.id AND mv.mc_versions LIKE ?4 ESCAPE '\\'))
-         ORDER BY lower(COALESCE(m.canonical_name, m.slug, '')), m.id",
+           AND (?5 IS NULL
+                OR lower(COALESCE(m.canonical_name, m.slug, ''))
+                   > (SELECT lower(COALESCE(c.canonical_name, c.slug, '')) FROM mods c WHERE c.id = ?5)
+                OR (lower(COALESCE(m.canonical_name, m.slug, ''))
+                    = (SELECT lower(COALESCE(c.canonical_name, c.slug, '')) FROM mods c WHERE c.id = ?5)
+                    AND m.id > ?5))
+         ORDER BY lower(COALESCE(m.canonical_name, m.slug, '')), m.id
+         LIMIT ?6",
     )?;
+    // a negative limit is SQLite for "all of them", which is what an unpaged
+    // caller asked for
+    let take = take.map(|n| n as i64).unwrap_or(-1);
     let rows = stmt
-        .query_map(params![q_like, loader, mc, mc_like], |r| {
+        .query_map(params![q_like, loader, mc, mc_like, after, take], |r| {
             let id: i64 = r.get(0)?;
             let canonical: Option<String> = r.get(1)?;
             let slug: Option<String> = r.get(2)?;
@@ -1360,6 +1355,23 @@ pub fn list_mods(
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
+    if rows.is_empty() {
+        return Ok(rows);
+    }
+    // The facet chips (which loaders, which Minecraft versions) are folded in
+    // Rust because mc_versions is JSON. Scoped to the rows actually going back
+    // when this is a page: read whole-registry, a page of twenty would carry
+    // the cost of every artifact the mirror holds, and paging would make the
+    // listing dearer rather than cheaper. The ids came out of the statement
+    // above -- the database's own integers, not anyone's input.
+    let scope = take.is_positive().then(|| {
+        rows.iter()
+            .map(|m| m.mod_id.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    });
+    let (loaders_by_mod, mc_by_mod) = facets_of(conn, scope.as_deref())?;
+
     Ok(rows
         .into_iter()
         .map(|mut m| {
@@ -1378,6 +1390,48 @@ pub fn list_mods(
             m
         })
         .collect())
+}
+
+/// `mod_id -> its loader targets` and `mod_id -> its Minecraft versions`, over
+/// the whole registry or over the mod ids in `only` (a comma-joined list).
+type Facets = (
+    HashMap<i64, BTreeSet<String>>,
+    HashMap<i64, BTreeSet<String>>,
+);
+
+fn facets_of(conn: &Connection, only: Option<&str>) -> Result<Facets> {
+    let mut loaders_by_mod: HashMap<i64, BTreeSet<String>> = HashMap::new();
+    {
+        let scope = only.map_or(String::new(), |ids| format!("WHERE mv.mod_id IN ({ids})"));
+        let mut stmt = conn.prepare(&format!(
+            "SELECT mv.mod_id, t.target
+             FROM mod_version mv JOIN mod_version_target t ON t.mod_version_id = mv.id
+             {scope}"
+        ))?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            let id: i64 = r.get(0)?;
+            let t: String = r.get(1)?;
+            loaders_by_mod.entry(id).or_default().insert(t);
+        }
+    }
+    let mut mc_by_mod: HashMap<i64, BTreeSet<String>> = HashMap::new();
+    {
+        let scope = only.map_or(String::new(), |ids| format!("AND mod_id IN ({ids})"));
+        let mut stmt = conn.prepare(&format!(
+            "SELECT mod_id, mc_versions FROM mod_version
+             WHERE mc_versions IS NOT NULL {scope}"
+        ))?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            let id: i64 = r.get(0)?;
+            let set = mc_by_mod.entry(id).or_default();
+            for v in decode_mc(r.get(1)?) {
+                set.insert(v);
+            }
+        }
+    }
+    Ok((loaders_by_mod, mc_by_mod))
 }
 
 /// Registry browser: every published build, newest/latest first per pack, with

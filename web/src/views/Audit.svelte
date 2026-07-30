@@ -2,15 +2,20 @@
   import { api } from '../lib/api';
   import { notifyFail } from '../lib/toasts.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { mirror } from '../lib/mirror.svelte';
   import type { AuditRow } from '../lib/types';
 
   let rows = $state<AuditRow[]>([]);
   let loading = $state(true);
+  // the address of the next page, or null once the trail runs out
+  let more = $state<string | null>(null);
 
   async function load() {
     loading = true;
     try {
-      rows = await api.auditLog();
+      const page = await api.auditLog();
+      rows = page.rows;
+      more = page.next;
     } catch (e) {
       notifyFail(e);
     } finally {
@@ -18,6 +23,28 @@
     }
   }
   load();
+
+  // Walk further back. The trail only grows at its head, so a page fetched now
+  // holds still even as new entries land above it -- older entries keep their
+  // place, which is why this appends rather than reloads.
+  async function loadMore() {
+    if (!more || loading) return;
+    loading = true;
+    try {
+      const page = await api.auditPage(more);
+      rows = [...rows, ...page.rows];
+      more = page.next;
+    } catch (e) {
+      notifyFail(e);
+    } finally {
+      loading = false;
+    }
+  }
+
+  // anything anyone does gets written here, so any kind of change dates this view
+  $effect(() => {
+    if (mirror.registry + mirror.packs + mirror.moderation > 0) load();
+  });
 
   // unix seconds -> "YYYY-MM-DD HH:MM" (UTC), enough to place an action in time
   function when(unix: number): string {
@@ -48,6 +75,9 @@
       <div class="empty muted">{t('audit.empty')}</div>
     {/if}
   </div>
+  {#if more}
+    <button class="sm more" onclick={loadMore} disabled={loading}>{t('audit.more')}</button>
+  {/if}
 </div>
 
 <style>
@@ -58,6 +88,9 @@
   }
   .alist {
     overflow: hidden;
+  }
+  .more {
+    align-self: center;
   }
   .arow {
     display: flex;
