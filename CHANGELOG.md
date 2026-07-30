@@ -8,6 +8,17 @@ version section when a release is tagged.
 
 ### Fixed
 
+- Opening the registry or the graph after a deploy no longer fails on a missing
+  file. The panel's chunks are named after a hash of their contents and ship
+  inside the binary, so a deploy replaces the whole set at once -- while a
+  browser was free to cache the shell that names them by its own guesswork, and
+  a cached shell asks for chunks that no longer exist. The parts loaded on
+  demand (the registry browser, the graph) were exactly the ones that failed,
+  and they failed as a MIME-type complaint about a 404 with a body, which named
+  neither cause. The shell is now revalidated on every load, hashed assets are
+  declared immutable, a missing asset answers a bare 404, and a page that was
+  already open when the deploy landed reloads itself once rather than showing
+  the error.
 - A pack's own files are named for the pack, not for one launcher. Icons,
   banners and dropped assets were minted under `_nexira/`, the reference
   deployment's client name, so every pack on every self-hosted mirror carried a

@@ -38,14 +38,45 @@ async fn index() -> Response {
     serve("index.html")
 }
 
+/// A built asset. Missing means the deploy moved on: the panel's assets carry a
+/// content hash in the name, so an asset that is not here is one no current page
+/// should be asking for. Answered as a bare 404 rather than with a body, because
+/// a body makes the browser report a module load as a MIME-type error and hide
+/// the 404 underneath it.
 async fn asset(Path(path): Path<String>) -> Response {
-    serve(&format!("assets/{path}"))
+    let path = format!("assets/{path}");
+    match Assets::get(&path) {
+        Some(file) => (
+            [
+                (header::CONTENT_TYPE, mime_for(&path)),
+                (header::CACHE_CONTROL, IMMUTABLE),
+            ],
+            file.data.into_owned(),
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
+
+/// An asset's name carries a hash of its contents, so the file at a given name
+/// never changes and the browser need never ask about it again.
+const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+
+/// The shell, on the other hand, is the map to those names, and a stale map is
+/// how a browser ends up asking for a chunk that no longer exists: the page
+/// loads, and the first thing it lazily imports 404s. With no header at all a
+/// browser is free to cache it by guesswork, which is exactly what it did.
+/// `no-cache` keeps the copy but revalidates it, so a deploy is picked up on the
+/// next load rather than whenever the guess expires.
+const REVALIDATE: &str = "no-cache";
 
 fn serve(path: &str) -> Response {
     match Assets::get(path) {
         Some(file) => (
-            [(header::CONTENT_TYPE, mime_for(path))],
+            [
+                (header::CONTENT_TYPE, mime_for(path)),
+                (header::CACHE_CONTROL, REVALIDATE),
+            ],
             file.data.into_owned(),
         )
             .into_response(),
@@ -64,5 +95,59 @@ fn mime_for(path: &str) -> &'static str {
         "woff2" => "font/woff2",
         "woff" => "font/woff",
         _ => "application/octet-stream",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    async fn get(uri: &str) -> Response {
+        router()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+    }
+
+    fn caching(resp: &Response) -> Option<&str> {
+        resp.headers()
+            .get(header::CACHE_CONTROL)
+            .map(|v| v.to_str().unwrap())
+    }
+
+    // The shell names the hashed assets, so a browser holding an old copy asks
+    // for chunks a later deploy no longer has. Left to its own devices it caches
+    // the shell by guesswork, which is how a page loads and then fails on the
+    // first thing it lazily imports.
+    #[tokio::test]
+    async fn the_shell_is_revalidated_and_the_assets_are_not() {
+        let shell = get("/").await;
+        assert_eq!(shell.status(), StatusCode::OK);
+        assert_eq!(caching(&shell), Some(REVALIDATE));
+
+        // whatever the built asset happens to be called this build
+        let name = Assets::iter()
+            .map(|f| f.to_string())
+            .find(|f| f.starts_with("assets/") && f.ends_with(".js"))
+            .expect("a built panel has at least one script");
+        let asset = get(&format!("/{name}")).await;
+        assert_eq!(asset.status(), StatusCode::OK);
+        assert_eq!(caching(&asset), Some(IMMUTABLE));
+    }
+
+    // A chunk from a deploy that has moved on must read as gone, not as a file
+    // of the wrong type: with a body, a module request reports a MIME error and
+    // the 404 underneath it never surfaces.
+    #[tokio::test]
+    async fn a_chunk_that_no_longer_exists_is_plainly_gone() {
+        let resp = get("/assets/ModManager-fromLastDeploy.js").await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert!(
+            resp.headers().get(header::CONTENT_TYPE).is_none(),
+            "no body, so nothing for the module loader to mistype"
+        );
     }
 }
