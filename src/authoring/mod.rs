@@ -20,6 +20,7 @@ pub mod harvest_sched;
 pub mod jardiff;
 pub mod loaders;
 pub mod mcping;
+pub mod mixinscan;
 pub mod modmeta;
 pub mod modrinth;
 pub mod packdoc;
