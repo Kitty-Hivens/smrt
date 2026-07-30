@@ -3,9 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Named, so a browser stops guessing at /favicon.ico and being handed the
-         app shell by the SPA fallback. -->
+    <!-- Named, so a browser does not have to guess. The .ico is still served,
+         because bookmark bars, link previews and older browsers ask for that
+         name whatever is declared here. -->
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="32x32" />
     <title>smrt control</title>
     <script>
       // Runs before the stylesheet paints: read the stored choice, resolve
