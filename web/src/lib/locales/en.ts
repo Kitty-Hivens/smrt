@@ -128,6 +128,8 @@ export const en = {
   'pe.bootChoose': 'Choose an instance archive (.zip) and bootstrap',
   'pe.spoof.title': 'Handshake claim',
   'pe.spoof.hint': 'A 1.12.2 server refuses a client whose mod list is not the one it expects. This file makes the client claim the server\'s list; the mirror writes it from what the server actually advertises, so it cannot drift in silence.',
+  'pe.spoof.notAdvertised': 'A {loader} server does not advertise its mod list, so there is nothing to copy.',
+  'pe.spoof.notAdvertisedWhy': 'Modern loaders negotiate after connecting, over registered channels rather than a declared list -- and a channel is a live pipe, not a claim, so presenting one you do not implement gets past negotiation and dies on the first packet.',
   'pe.spoof.check': 'Check against the server',
   'pe.spoof.generate': 'Write it from the server',
   'pe.spoof.confirm': 'Replace the claim this pack ships with the list the server advertises right now?',
