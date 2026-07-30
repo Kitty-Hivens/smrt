@@ -2,6 +2,7 @@ use crate::accounts::Accounts;
 use crate::authoring::{HarvestScheduler, Modrinth};
 use crate::authoring::{PackDocs, PackStream};
 use crate::config::Config;
+use crate::events::MirrorEvents;
 use crate::jobs::JobRegistry;
 use crate::registry::Registry;
 use crate::storage::Storage;
@@ -30,6 +31,9 @@ pub struct AppState {
     /// above, and rebuilt from `config.json` whenever nobody holds one, so it is
     /// a cache of an edit in flight rather than a second source of truth.
     pub docs: Arc<PackDocs>,
+    /// What changed on the mirror, as it changes: the channel a panel view
+    /// listens on instead of asking again on a timer.
+    pub events: Arc<MirrorEvents>,
 }
 
 impl AppState {
@@ -41,7 +45,13 @@ impl AppState {
         let registry = Arc::new(Registry::open(config.storage_dir.join("registry.db"))?);
         let accounts = Arc::new(Accounts::open(config.storage_dir.join("accounts.db"))?);
         let modrinth = Arc::new(Modrinth::new()?);
-        let harvest = HarvestScheduler::new(storage.clone(), modrinth.clone(), registry.clone());
+        let events = Arc::new(MirrorEvents::default());
+        let harvest = HarvestScheduler::new(
+            storage.clone(),
+            modrinth.clone(),
+            registry.clone(),
+            events.clone(),
+        );
         Ok(Self {
             storage,
             modrinth,
@@ -51,6 +61,7 @@ impl AppState {
             jobs: Arc::new(JobRegistry::default()),
             packs: Arc::new(PackStream::default()),
             docs: Arc::new(PackDocs::default()),
+            events,
             accounts,
         })
     }

@@ -132,9 +132,17 @@ fn debug_routes(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// Run a blocking registry write off the async runtime.
+/// Run a blocking registry write off the async runtime, and announce that the
+/// index moved.
+///
+/// Every registry mutation passes through here, so this is where "a registry
+/// view is now stale" is said once rather than remembered at each of the nine
+/// call sites. `what` names the mutation, so a listener showing one mod can
+/// tell a rename from a merge. Announced only on success: a write that failed
+/// changed nothing to refetch.
 async fn run_write<T>(
     state: &AppState,
+    what: &'static str,
     f: impl FnOnce(&crate::registry::Registry) -> anyhow::Result<T> + Send + 'static,
 ) -> Result<T, ApiError>
 where
@@ -144,7 +152,9 @@ where
     let res = tokio::task::spawn_blocking(move || f(&reg))
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("registry write task: {e}")))?;
-    Ok(res?)
+    let out = res?;
+    state.events.registry(what);
+    Ok(out)
 }
 
 /// Run a registry read off the async runtime (rusqlite is blocking).
@@ -285,7 +295,10 @@ async fn get_modrinth_names(
                     })
                     .collect();
                 let store = fresh.clone();
-                run_write(&state, move |reg| reg.cache_modrinth_names(&store)).await?;
+                run_write(&state, "modrinth-names", move |reg| {
+                    reg.cache_modrinth_names(&store)
+                })
+                .await?;
                 for n in fresh {
                     resolved.insert(n.id.clone(), n);
                 }
@@ -474,7 +487,7 @@ async fn post_conflict(
     Json(b): Json<ConflictBody>,
 ) -> Result<StatusCode, ApiError> {
     let (a_modid, b_modid, remove) = (b.a_modid.clone(), b.b_modid.clone(), b.remove);
-    run_write(&state, move |reg| {
+    run_write(&state, "conflict", move |reg| {
         reg.set_conflict(&b.a_modid, &b.b_modid, b.remove)
     })
     .await?;
@@ -501,7 +514,7 @@ async fn post_merge(
     Json(b): Json<MergeBody>,
 ) -> Result<StatusCode, ApiError> {
     let (from, into) = (b.from_mod_id, b.into_mod_id);
-    run_write(&state, move |reg| reg.merge_mods(from, into))
+    run_write(&state, "merge", move |reg| reg.merge_mods(from, into))
         .await
         .map_err(|e| match e {
             ApiError::Internal(inner) => ApiError::BadRequest(inner.to_string()),
@@ -551,7 +564,7 @@ async fn post_relation(
         ),
     };
     let (from, target, remove) = (b.from_mod_id, b.target_modid.clone(), b.remove);
-    run_write(&state, move |reg| {
+    run_write(&state, "relation", move |reg| {
         reg.author_relation(b.from_mod_id, &b.target_modid, kind, severity, b.remove)
     })
     .await?;
@@ -582,7 +595,7 @@ async fn post_backup(State(state): State<AppState>) -> Result<Json<BackupResult>
     let stamp = time::OffsetDateTime::now_utc().unix_timestamp();
     let dest = dir.join(format!("registry-{stamp}.db"));
     let target = dest.clone();
-    run_write(&state, move |reg| reg.backup_into(&target)).await?;
+    run_write(&state, "backup", move |reg| reg.backup_into(&target)).await?;
     Ok(Json(BackupResult {
         path: dest.to_string_lossy().into_owned(),
     }))
@@ -741,7 +754,7 @@ async fn put_file_identity(
     // captured before `body` moves into the write closure
     let audit_target = sha1.clone();
     let audit_detail = format!("{} {}", body.version_number.trim(), body.channel);
-    let mv_id = run_write(&state, move |reg| {
+    let mv_id = run_write(&state, "identity", move |reg| {
         let mod_ref = match (body.mod_id, body.mod_name.as_deref().map(str::trim)) {
             (Some(id), _) => authored::ModRef::Existing(id),
             (None, Some(name)) if !name.is_empty() => authored::ModRef::New { name },
@@ -818,7 +831,7 @@ async fn put_file_class(
         b.match_policy.clone(),
         b.remove,
     );
-    run_write(&state, move |reg| {
+    run_write(&state, "class", move |reg| {
         reg.author_jar_class(&sha_w, &kind, side.as_deref(), policy.as_deref(), remove)
     })
     .await
@@ -854,7 +867,7 @@ async fn put_mod_rename(
     Path(mod_id): Path<i64>,
     Json(b): Json<RenameModBody>,
 ) -> Result<StatusCode, ApiError> {
-    run_write(&state, move |reg| {
+    run_write(&state, "rename", move |reg| {
         reg.rename_mod(mod_id, b.name.as_deref(), b.slug.as_deref())
     })
     .await?;
@@ -888,7 +901,7 @@ async fn put_release_edit(
         .flatten()
         .collect::<Vec<_>>()
         .join(" ");
-    run_write(&state, move |reg| {
+    run_write(&state, "release", move |reg| {
         reg.edit_release(
             release_id,
             b.version_number.as_deref(),

@@ -130,6 +130,7 @@ async fn build_pack(
             registry: state.registry.clone(),
             accounts: state.accounts.clone(),
             harvest: Some(state.harvest.clone()),
+            events: state.events.clone(),
         },
         BuildRequest {
             dry_run: p.dry_run,

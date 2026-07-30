@@ -203,3 +203,13 @@ SSE) track builds; finished jobs keep answering the status endpoint from
 persisted snapshots across restarts (a job running at a restart reads failed,
 with an explicit interrupted line), while the live SSE tail is
 memory-only.
+
+`GET /v1/events` (SSE, any signed-in caller) is the mirror-wide equivalent:
+what changed, as it changes, so a view listens instead of asking again on a
+timer. Three event names -- `registry` (the mod index moved: a harvest ran, a
+jar was named, two mods merged), `pack` (a build published, a pack deleted or
+changed visibility) and `moderation` (the upload queue moved, operators only).
+Each carries a small JSON body saying which, and is a nudge rather than the
+data: refetch the one view that cares, and that read is the conditional GET
+above, usually answered `304`. In-process, so events are live-only -- a
+reconnecting client reads the world as it is and listens from there.

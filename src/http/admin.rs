@@ -234,6 +234,7 @@ async fn approve_upload(
     .await
     .map_err(|e| ApiError::Internal(anyhow::anyhow!("status task: {e}")))??;
     state.harvest.poke();
+    state.events.moderation("decided");
     audit(
         &state,
         &identity,
@@ -272,6 +273,7 @@ async fn reject_upload(
     })
     .await
     .map_err(|e| ApiError::Internal(anyhow::anyhow!("status task: {e}")))??;
+    state.events.moderation("decided");
     audit(
         &state,
         &identity,
@@ -1929,6 +1931,7 @@ async fn delete_pack(
         return Err(ApiError::Forbidden);
     }
     state.storage.delete_pack(&pack_id).await?;
+    state.events.pack(&pack_id, "deleted");
     audit(&state, &identity, "pack.delete", Some(&pack_id), None).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1948,6 +1951,7 @@ async fn set_pack_visibility(
         .storage
         .set_pack_visibility(&pack_id, req.visibility)
         .await?;
+    state.events.pack(&pack_id, "visibility");
     audit(
         &state,
         &identity,
