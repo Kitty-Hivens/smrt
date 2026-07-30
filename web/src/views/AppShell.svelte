@@ -69,7 +69,7 @@
 
 <div class="shell">
   <nav class="rail" class:open={drawerOpen} id="rail-nav">
-    <div class="brand"><span class="mk"></span>smrt<span class="faint">/control</span></div>
+    <div class="brand"><img class="mk" src="/favicon.svg" alt="" />smrt<span class="faint">/control</span></div>
 
     <ul class="nav">
       {#each visibleSections(me) as s}
@@ -188,7 +188,6 @@
     width: 22px;
     height: 22px;
     border-radius: 7px;
-    background: var(--fg);
     box-shadow: var(--shadow-1);
     flex: none;
   }

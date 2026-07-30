@@ -26,6 +26,10 @@ pub fn router() -> Router {
         .route("/favicon.svg", get(|| favicon("favicon.svg")))
         .route("/favicon.png", get(|| favicon("favicon.png")))
         .route("/favicon.ico", get(|| favicon("favicon.ico")))
+        .route(
+            "/apple-touch-icon.png",
+            get(|| favicon("apple-touch-icon.png")),
+        )
         // The panel owns its URLs: a section is a path, and a mod page is a
         // shareable link. Any path the API does not claim serves the app shell,
         // which then reads the URL -- so a reload, a bookmark or the mouse's
@@ -174,6 +178,7 @@ mod tests {
             ("/favicon.svg", "image/svg+xml"),
             ("/favicon.png", "image/png"),
             ("/favicon.ico", "image/vnd.microsoft.icon"),
+            ("/apple-touch-icon.png", "image/png"),
         ] {
             let resp = get(path).await;
             assert_eq!(resp.status(), StatusCode::OK, "{path}");

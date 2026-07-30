@@ -59,7 +59,7 @@
   </div>
 
   <div class="panel card">
-    <div class="brand"><span class="mk"></span>smrt<span class="faint">/control</span></div>
+    <div class="brand"><img class="mk" src="/favicon.svg" alt="" />smrt<span class="faint">/control</span></div>
     <p class="muted sub">{t('login.subtitle')}</p>
 
     {#if authKey}<div class="err mono">{t(authKey)}</div>{/if}
@@ -168,7 +168,6 @@
     width: 24px;
     height: 24px;
     border-radius: 7px;
-    background: var(--fg);
   }
   .brand .faint {
     font-weight: 500;

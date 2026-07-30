@@ -34,6 +34,14 @@ version section when a release is tagged.
   registry sent a burst of outbound calls to a third party for an answer that
   changes about never -- 1393 of them in the same day, against a rate limit the
   client already has to back off from.
+- The mark is in the shell, where a blank rounded square stood in for it. The
+  header and the sign-in card both reserved a slot for a logo and filled it with
+  a flat block of the foreground colour; they draw the actual mark now. A home
+  screen icon and a theme colour come with it.
+
+  What deliberately keeps its placeholder: a mod or a pack with no icon of its
+  own still gets a letter tile. The site mark there would not be a placeholder
+  but a claim -- it would read as though the mirror authored the thing.
 - The site icon is served in every shape something asks for. Naming an svg in
   the shell covers browsers that read the declaration, and left everything that
   asks for `/favicon.ico` by convention -- bookmark bars, link previews, older
