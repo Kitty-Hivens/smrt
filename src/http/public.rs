@@ -701,11 +701,17 @@ pub(crate) async fn get_user_avatar(
 /// that already holds the file re-checks it without refetching it.
 ///
 /// The range arithmetic is delegated rather than hand-rolled -- suffix ranges,
-/// unsatisfiable ranges, `If-Range` against a changed file and `HEAD` are all
-/// places to get it subtly wrong, and a subtly wrong range serves the wrong
-/// bytes rather than failing. The content type stays ours: it is decided per
-/// route (`content_type_for`, and the fixed archive type for a cache jar) and
-/// must not silently become whatever the extension guesses.
+/// unsatisfiable ranges and `HEAD` are each a place to be subtly wrong, and a
+/// subtly wrong range serves the wrong bytes rather than failing. The content
+/// type stays ours: it is decided per route (`content_type_for`, and the fixed
+/// archive type for a cache jar) and must not silently become whatever the
+/// extension guesses.
+///
+/// `If-Range` is not among the headers passed on, because the file service does
+/// not implement it: forwarding it would read as support for a conditional that
+/// is silently ignored, which is worse than not offering it. A caller resuming
+/// something that can change under them pairs the range with
+/// `If-Unmodified-Since`, which is answered.
 async fn serve_file(
     method: &Method,
     headers: &HeaderMap,
@@ -717,9 +723,8 @@ async fn serve_file(
 
     // What the file service needs to answer conditionally; the rest of the
     // request is this handler's business and was already acted on.
-    const CONDITIONAL: [header::HeaderName; 4] = [
+    const CONDITIONAL: [header::HeaderName; 3] = [
         header::RANGE,
-        header::IF_RANGE,
         header::IF_MODIFIED_SINCE,
         header::IF_UNMODIFIED_SINCE,
     ];
@@ -838,6 +843,42 @@ mod tests {
         assert_eq!(body_of(read(&path, Some("bytes=2-5")).await).await, b"2345");
         // counted from the end
         assert_eq!(body_of(read(&path, Some("bytes=-3")).await).await, b"789");
+    }
+
+    // Conditional resume, for a file that can change under a caller: the range
+    // is served only while the file has not moved. `If-Range` is deliberately
+    // not honoured -- see serve_file -- so this is the header that answers.
+    #[tokio::test]
+    async fn a_range_can_be_made_conditional_on_the_file_not_moving() {
+        let (_dir, path) = a_file(b"0123456789");
+        let modified = read(&path, None)
+            .await
+            .headers()
+            .get(header::LAST_MODIFIED)
+            .expect("a served file dates itself")
+            .clone();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(header::RANGE, "bytes=7-".parse().unwrap());
+        headers.insert(header::IF_UNMODIFIED_SINCE, modified);
+        let resp = serve_file(&Method::GET, &headers, &path, "application/java-archive")
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+
+        // the same request against a file that has since moved on
+        headers.insert(
+            header::IF_UNMODIFIED_SINCE,
+            "Fri, 09 Aug 1996 14:21:40 GMT".parse().unwrap(),
+        );
+        let resp = serve_file(&Method::GET, &headers, &path, "application/java-archive")
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::PRECONDITION_FAILED,
+            "a moved file must not be spliced into a half-finished download"
+        );
     }
 
     #[tokio::test]

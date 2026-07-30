@@ -134,22 +134,31 @@ by its Modrinth `project_id` when the source is Modrinth, else by the entry's
 `/v1/packs/{id}/static/...`) answer `Range`, so a transfer that died at 90%
 asks for the rest instead of starting over. Send `Range: bytes=<got>-` and
 expect `206` with `Content-Range`; a range past the end answers `416`.
-`If-Range` (against the file's `Last-Modified`) makes the resume conditional,
-so a file that changed under you comes back whole rather than spliced.
+
+Resuming safely: a cache jar is content-addressed, so its bytes cannot change
+under a resume. A static file can, and `If-Range` is **not** honoured -- pair
+the range with `If-Unmodified-Since: <the Last-Modified you started from>` and
+a file that moved answers `412` instead of splicing two versions together.
+Verify the manifest's `sha1` after assembling either way.
 
 ## Reading cheaply
 
 Three things the whole `/v1` surface does, worth wiring into a client once:
 
 - **Compression.** Send `Accept-Encoding: gzip` (or `br`). Manifests and
-  listings are repetitive JSON and compress by roughly an order of magnitude.
-  Jars, zips and live event streams are served uncompressed on purpose.
-- **Conditional GET.** Every JSON read carries an `ETag`. Send it back as
+  listings are repetitive JSON and compress several-fold -- a manifest-shaped
+  body lands around a seventh of its size. Jars, zips and live event streams
+  are served uncompressed on purpose.
+- **Conditional GET.** A JSON read carries an `ETag`. Send it back as
   `If-None-Match` and an unchanged answer costs `304 Not Modified` with no
   body -- which is the cheap way to poll. The tag is weak: it identifies the
-  data, not the encoding it arrived in.
-- **Paging.** Listings that grow without bound -- `/v1/registry/mods`,
-  `/v1/cache/inventory`, `/v1/audit` -- accept `?limit=<n>` (capped at 500).
+  data, not the encoding it arrived in. Tagged means a `200` whose body was
+  built whole; a streamed response, and anything past 8 MiB, is answered
+  untagged rather than hashed on every request, so treat a missing `ETag` as
+  "cannot revalidate this one" rather than as an error.
+- **Paging.** Listings that grow without bound -- `/v1/cache/inventory`, plus
+  the gated `/v1/registry/mods` and `/v1/audit` -- accept `?limit=<n>`
+  (capped at 500).
   Without it they answer whole, as they always have. With it, the response
   carries `Link: <...>; rel="next"` when there is more; follow that URL
   verbatim -- it repeats your filters and carries an opaque cursor. The body

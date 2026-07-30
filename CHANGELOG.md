@@ -60,7 +60,7 @@ version section when a release is tagged.
 ### Added
 
 - Reads cost what they are worth. Four things the whole `/v1` surface does now,
-  documented together in the API guide under "Reading cheaply":
+  written up in the API guide:
   - **Compression.** Manifests and listings are repetitive JSON and went out as
     plain text -- tens of kilobytes per read. It lives in the mirror rather than
     in a reverse proxy, because the proxy is one deployment's choice and a
@@ -84,8 +84,10 @@ version section when a release is tagged.
     trail is also readable past its most recent 200 entries for the first time,
     which is where the entry anyone goes looking for usually is.
   - **Resumable downloads.** Files answer `Range`, so a transfer that died at
-    90% asks for the rest instead of starting over, and `If-Range` makes the
-    resume conditional on the file not having changed underneath.
+    90% asks for the rest instead of starting over. A cache jar cannot change
+    under a resume at all, being content-addressed; for a static file that can,
+    pairing the range with `If-Unmodified-Since` answers `412` rather than
+    splicing two versions together.
 - A build listing says what it targets and what it weighs: `minecraft_version`,
   `loader` and `size_bytes` (every mod and asset the build lists, added up) on
   each entry of `/v1/packs/{id}/manifest/versions`. Telling a player that an
