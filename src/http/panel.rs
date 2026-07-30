@@ -18,6 +18,10 @@ pub fn router() -> Router {
     Router::new()
         .route("/", get(index))
         .route("/assets/{*path}", get(asset))
+        // A root-level file the shell names. Routed explicitly rather than by a
+        // wildcard, because anything not routed is an app path: a pack id may
+        // carry a dot, so "looks like a filename" cannot decide it.
+        .route("/favicon.svg", get(favicon))
         // The panel owns its URLs: a section is a path, and a mod page is a
         // shareable link. Any path the API does not claim serves the app shell,
         // which then reads the URL -- so a reload, a bookmark or the mouse's
@@ -36,6 +40,10 @@ async fn spa(uri: Uri) -> Response {
 
 async fn index() -> Response {
     serve("index.html")
+}
+
+async fn favicon() -> Response {
+    serve("favicon.svg")
 }
 
 /// A built asset. Missing means the deploy moved on: the panel's assets carry a
@@ -136,6 +144,18 @@ mod tests {
         let asset = get(&format!("/{name}")).await;
         assert_eq!(asset.status(), StatusCode::OK);
         assert_eq!(caching(&asset), Some(IMMUTABLE));
+    }
+
+    // The shell names its icon, so a browser has no reason to guess at
+    // /favicon.ico and be handed the app shell by the fallback.
+    #[tokio::test]
+    async fn the_icon_is_served_as_an_image() {
+        let resp = get("/favicon.svg").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/svg+xml"
+        );
     }
 
     // A chunk from a deploy that has moved on must read as gone, not as a file

@@ -2,7 +2,8 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::{Client, redirect::Policy};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use ts_rs::TS;
 
 const MODRINTH_BASE: &str = "https://api.modrinth.com";
@@ -15,7 +16,23 @@ pub struct Modrinth {
     /// API origin; the real one by default, overridable so tests can point at
     /// an unreachable or mock server without touching the network.
     base: String,
+    /// Project id -> its icon url, and when that was learned. A project's icon
+    /// is asked for once per mod the panel draws and changes about never, so
+    /// without this the panel spends an upstream round trip per row -- on every
+    /// render, for an answer that was already had.
+    icons: Mutex<HashMap<String, (Instant, Option<String>)>>,
 }
+
+/// How long a remembered icon url is trusted. Long, because the cost of being
+/// stale is a picture that changed upstream and takes a while to follow; short
+/// enough that it does follow, and that the map cannot hold a deleted project
+/// forever.
+const ICON_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+/// Ceiling on remembered projects, so a mirror that browses a lot of Modrinth
+/// cannot grow this without bound. Reached, it is emptied rather than evicted
+/// cleverly: the next few lookups pay upstream, and it refills with whatever is
+/// actually being looked at.
+const ICON_MEMO_MAX: usize = 4096;
 
 /// Send a request, absorbing one 429 by waiting out `Retry-After` (capped at
 /// two minutes, default 60s when absent) and retrying once. A build resolves
@@ -62,6 +79,7 @@ impl Modrinth {
         Ok(Self {
             http,
             base: base.to_string(),
+            icons: Mutex::new(HashMap::new()),
         })
     }
 
@@ -101,6 +119,32 @@ impl Modrinth {
     /// fallback when a manifest entry carries no `display.icon_url`. `None`
     /// when the project has no icon. Slug or numeric id both work.
     pub async fn project_icon(&self, slug_or_id: &str) -> Result<Option<String>> {
+        if let Some(known) = self.remembered_icon(slug_or_id) {
+            return Ok(known);
+        }
+        let icon = self.fetch_project_icon(slug_or_id).await?;
+        self.remember_icon(slug_or_id, &icon);
+        Ok(icon)
+    }
+
+    /// The icon url learned earlier, while it is still fresh.
+    fn remembered_icon(&self, slug_or_id: &str) -> Option<Option<String>> {
+        let memo = self.icons.lock().ok()?;
+        let (learned, url) = memo.get(slug_or_id)?;
+        (learned.elapsed() < ICON_TTL).then(|| url.clone())
+    }
+
+    fn remember_icon(&self, slug_or_id: &str, icon: &Option<String>) {
+        let Ok(mut memo) = self.icons.lock() else {
+            return;
+        };
+        if memo.len() >= ICON_MEMO_MAX {
+            memo.clear();
+        }
+        memo.insert(slug_or_id.to_string(), (Instant::now(), icon.clone()));
+    }
+
+    async fn fetch_project_icon(&self, slug_or_id: &str) -> Result<Option<String>> {
         let resp = self
             .http
             .get(format!("{}/v2/project/{slug_or_id}", self.base))
@@ -548,5 +592,50 @@ impl Version {
             .iter()
             .find(|f| f.primary)
             .or_else(|| self.files.first())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A client pointed at a port nothing listens on: any call that actually
+    /// goes upstream fails, which is what makes "it did not go upstream"
+    /// something a test can assert.
+    fn offline() -> Modrinth {
+        Modrinth::with_base("http://127.0.0.1:9").unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_icon_asked_for_twice_is_fetched_once() {
+        let m = offline();
+        // nothing remembered yet: the call has to go out, and cannot
+        assert!(m.project_icon("create").await.is_err());
+
+        m.remember_icon("create", &Some("https://cdn/icon.png".into()));
+        assert_eq!(
+            m.project_icon("create").await.unwrap(),
+            Some("https://cdn/icon.png".into()),
+            "the remembered answer is given without an upstream call"
+        );
+    }
+
+    // A project with no icon is an answer too, and the expensive part is the
+    // asking rather than the picture.
+    #[tokio::test]
+    async fn a_project_without_an_icon_is_remembered_as_having_none() {
+        let m = offline();
+        m.remember_icon("iron-chests", &None);
+        assert_eq!(m.project_icon("iron-chests").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn the_memo_does_not_grow_without_bound() {
+        let m = offline();
+        for i in 0..=ICON_MEMO_MAX {
+            m.remember_icon(&format!("project-{i}"), &None);
+        }
+        let held = m.icons.lock().unwrap().len();
+        assert!(held <= ICON_MEMO_MAX, "held {held} entries");
     }
 }

@@ -8,6 +8,22 @@ version section when a release is tagged.
 
 ### Fixed
 
+- A mod icon is extracted from its jar once, not on every request. Serving one
+  read the whole jar into memory and walked its zip to hand back a few
+  kilobytes of image -- and it is the busiest endpoint the mirror has: a day of
+  the reference deployment answered 2194 icon requests, which at that cache's
+  average jar size meant reading and unzipping some 4.7 GB to deliver 6.7 MB. A
+  jar is named by its own hash, so its icon cannot change; it is now kept beside
+  the cache and read from there. Jars that carry no icon -- most of them -- are
+  remembered as such, which is the half that mattered more, and a takedown drops
+  the remembered icon along with the bytes it came from.
+- The Modrinth icon lookup is remembered for a few hours instead of asked on
+  every request. The panel asks once per mod row it draws, so rendering the
+  registry sent a burst of outbound calls to a third party for an answer that
+  changes about never -- 1393 of them in the same day, against a rate limit the
+  client already has to back off from.
+- The panel names its own icon, so a browser stops guessing at `/favicon.ico`
+  and being handed the app shell as an image.
 - Reading one jar's facts no longer costs a walk of the whole cache. `cached` on
   a mod page, on a version list, on a build's mods, and a jar's size when it is
   given an identity, were each answered by listing every shard directory in the
