@@ -62,6 +62,12 @@ pub struct JarSeed {
     // Modrinth-only mod). owned_packages seed the package->owner index; the ref
     // sets become inferred requires/optional_dep edges once that index is built.
     pub owned_packages: Vec<String>,
+    /// Binary names of every class the jar carries, for the digest that answers
+    /// "does this artifact still have class C?" (#145). Empty for a jar with no
+    /// local bytes, which reads as "cannot answer".
+    pub class_names: Vec<String>,
+    /// `(config, needed binary name)` for every `required` mixin config (#145).
+    pub mixin_needs: Vec<(String, String)>,
     pub hard_refs: Vec<String>,
     pub optional_refs: Vec<String>,
     // Derived classification (stage D): what the jar is and how it must match
@@ -394,6 +400,10 @@ fn modrinth_rel_kind(dep_type: &str) -> Option<(RelKind, Option<Severity>)> {
     }
 }
 
+/// What one jar contributes to the mixin check (#145): the classes it carries,
+/// and `(config, needed)` for every class its required mixins must resolve.
+type MixinReadout = (Vec<String>, Vec<(String, String)>);
+
 /// Everything the harvest reads from one jar. Public so the corpus runner can
 /// classify real jars through the exact production path.
 pub struct JarReadout {
@@ -407,6 +417,9 @@ pub struct JarReadout {
     /// What this jar's `required` mixin configs must be able to resolve (#145).
     /// Empty for a jar with no required config, which is most of them.
     pub required_mixins: Vec<mixinscan::RequiredMixins>,
+    /// Binary names of every class the jar carries, for the digest that answers
+    /// whether an artifact still has a given class (#145).
+    pub class_names: Vec<String>,
 }
 
 /// Open a jar's zip ONCE and derive every fact the harvest needs from it: the
@@ -422,6 +435,7 @@ pub fn read_jar(bytes: &[u8]) -> JarReadout {
         mcmod: None,
         mcmod_modids: Vec::new(),
         required_mixins: Vec::new(),
+        class_names: Vec::new(),
     };
     let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
         return empty();
@@ -529,6 +543,7 @@ pub fn read_jar(bytes: &[u8]) -> JarReadout {
     } else {
         None
     };
+    let class_names: Vec<String> = classes.iter().map(|c| c.this_class.clone()).collect();
     let required_mixins = mixinscan::from_parts(
         mods_toml.as_deref(),
         fabric_json.as_deref(),
@@ -542,6 +557,7 @@ pub fn read_jar(bytes: &[u8]) -> JarReadout {
         mcmod,
         mcmod_modids: mcmod_raw.as_deref().map(mcmod_modids).unwrap_or_default(),
         required_mixins,
+        class_names,
     }
 }
 
@@ -702,6 +718,17 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
             "DELETE FROM relation WHERE from_mod_version_id = ?1 AND source = 'jar-meta'",
             [mod_version_id],
         )?;
+
+        // What this artifact provides and what its required mixins demand (#145).
+        // Only written when the jar's bytes were actually read: an empty list
+        // from a Modrinth-only mod would otherwise be stored as "provides
+        // nothing", which is a lie the check would act on.
+        if !jar.class_names.is_empty() {
+            upsert::set_class_digest(conn, mod_version_id, &jar.class_names)?;
+        }
+        if !jar.class_names.is_empty() {
+            upsert::set_mixin_needs(conn, mod_version_id, &jar.mixin_needs)?;
+        }
 
         // Declared deps (author-written) go in for a non-authoritative-Modrinth
         // jar: mcmod.info modids for 1.12.2, plus typed + version-ranged deps from
@@ -1188,32 +1215,49 @@ pub async fn scan(
                 .map(|p| (e.sha1.clone(), p))
         })
         .collect();
-    let (mcmod_by_sha, facts_by_sha, bytecode_by_sha, modmeta_by_sha, extra_modids_by_sha) =
-        tokio::task::spawn_blocking(move || {
-            let mut mcmod: HashMap<String, McModInfo> = HashMap::new();
-            let mut facts: HashMap<String, JarFacts> = HashMap::new();
-            let mut bc: HashMap<String, bytecode::JarBytecode> = HashMap::new();
-            let mut mm: HashMap<String, modmeta::ModMeta> = HashMap::new();
-            let mut extra: HashMap<String, Vec<String>> = HashMap::new();
-            for (sha, path) in jar_paths {
-                let Ok(bytes) = std::fs::read(&path) else {
-                    continue;
-                };
-                let r = read_jar(&bytes);
-                facts.insert(sha.clone(), r.facts);
-                bc.insert(sha.clone(), r.bytecode);
-                mm.insert(sha.clone(), r.modmeta);
-                if r.mcmod_modids.len() > 1 {
-                    extra.insert(sha.clone(), r.mcmod_modids);
-                }
-                if let Some(info) = r.mcmod {
-                    mcmod.insert(sha.clone(), info);
-                }
+    let (
+        mcmod_by_sha,
+        facts_by_sha,
+        bytecode_by_sha,
+        modmeta_by_sha,
+        extra_modids_by_sha,
+        readout_by_sha,
+    ) = tokio::task::spawn_blocking(move || {
+        let mut mcmod: HashMap<String, McModInfo> = HashMap::new();
+        let mut facts: HashMap<String, JarFacts> = HashMap::new();
+        let mut bc: HashMap<String, bytecode::JarBytecode> = HashMap::new();
+        let mut mm: HashMap<String, modmeta::ModMeta> = HashMap::new();
+        let mut extra: HashMap<String, Vec<String>> = HashMap::new();
+        let mut readouts: HashMap<String, MixinReadout> = HashMap::new();
+        for (sha, path) in jar_paths {
+            let Ok(bytes) = std::fs::read(&path) else {
+                continue;
+            };
+            let r = read_jar(&bytes);
+            readouts.insert(
+                sha.clone(),
+                (
+                    r.class_names,
+                    r.required_mixins
+                        .into_iter()
+                        .flat_map(|c| c.needs.into_iter().map(move |n| (c.config.clone(), n)))
+                        .collect(),
+                ),
+            );
+            facts.insert(sha.clone(), r.facts);
+            bc.insert(sha.clone(), r.bytecode);
+            mm.insert(sha.clone(), r.modmeta);
+            if r.mcmod_modids.len() > 1 {
+                extra.insert(sha.clone(), r.mcmod_modids);
             }
-            (mcmod, facts, bc, mm, extra)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("jar scan task: {e}"))?;
+            if let Some(info) = r.mcmod {
+                mcmod.insert(sha.clone(), info);
+            }
+        }
+        (mcmod, facts, bc, mm, extra, readouts)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("jar scan task: {e}"))?;
 
     // published builds + curator conflicts, per pack
     let mut packs = Vec::new();
@@ -1512,6 +1556,14 @@ pub async fn scan(
                 owned_packages: bc
                     .map(|b| b.owned.iter().cloned().collect())
                     .unwrap_or_default(),
+                class_names: readout_by_sha
+                    .get(&sha)
+                    .map(|(c, _)| c.clone())
+                    .unwrap_or_default(),
+                mixin_needs: readout_by_sha
+                    .get(&sha)
+                    .map(|(_, m)| m.clone())
+                    .unwrap_or_default(),
                 hard_refs: bc
                     .map(|b| b.hard_refs.iter().cloned().collect())
                     .unwrap_or_default(),
@@ -1633,6 +1685,8 @@ mod tests {
                     slug: Some("appleskin".into()),
                     modrinth_version_id: Some("mrv_apple".into()),
                     owned_packages: vec![],
+                    class_names: vec![],
+                    mixin_needs: vec![],
                     hard_refs: vec![],
                     optional_refs: vec![],
                     side: None,
@@ -1661,6 +1715,8 @@ mod tests {
                     slug: None,
                     modrinth_version_id: None,
                     owned_packages: vec![],
+                    class_names: vec![],
+                    mixin_needs: vec![],
                     hard_refs: vec![],
                     optional_refs: vec![],
                     side: None,
@@ -1689,6 +1745,8 @@ mod tests {
                     slug: None,
                     modrinth_version_id: None,
                     owned_packages: vec![],
+                    class_names: vec![],
+                    mixin_needs: vec![],
                     hard_refs: vec![],
                     optional_refs: vec![],
                     side: None,
@@ -2150,6 +2208,8 @@ mod tests {
             slug: None,
             modrinth_version_id: None,
             owned_packages: vec![],
+            class_names: vec![],
+            mixin_needs: vec![],
             hard_refs: vec![],
             optional_refs: vec![],
             side: None,
@@ -2190,6 +2250,8 @@ mod tests {
             slug: None,
             modrinth_version_id: None,
             owned_packages: strs(owned),
+            class_names: vec![],
+            mixin_needs: vec![],
             hard_refs: strs(hard),
             optional_refs: strs(opt),
             side: side.map(String::from),

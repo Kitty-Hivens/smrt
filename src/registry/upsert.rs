@@ -511,6 +511,64 @@ pub fn upsert_relation_ranked(
     Ok(inserted > 0)
 }
 
+/// Hash a class's binary name into the digest's 64-bit space.
+///
+/// FNV-1a: stable across builds and platforms, which a stored digest needs, and
+/// not `DefaultHasher`, whose value is explicitly not guaranteed between
+/// releases -- a digest written by one build and read by the next has to mean
+/// the same thing.
+pub fn class_hash(binary_name: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in binary_name.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// Store what an artifact provides, as the sorted hashes of its class names.
+/// Replaces whatever was there: purely derived, like the package index.
+pub fn set_class_digest(
+    conn: &Connection,
+    mod_version_id: i64,
+    class_names: &[String],
+) -> Result<()> {
+    let mut hashes: Vec<u64> = class_names.iter().map(|n| class_hash(n)).collect();
+    hashes.sort_unstable();
+    hashes.dedup();
+    let mut blob = Vec::with_capacity(hashes.len() * 8);
+    for h in hashes {
+        blob.extend_from_slice(&h.to_be_bytes());
+    }
+    conn.execute(
+        "UPDATE mod_version SET class_digest = ?1 WHERE id = ?2",
+        params![blob, mod_version_id],
+    )?;
+    Ok(())
+}
+
+/// Store what an artifact's required mixins must resolve. Replaces the
+/// artifact's rows wholesale -- a re-harvest of the same jar states the same
+/// set, and a config that stopped being required must stop being recorded.
+pub fn set_mixin_needs(
+    conn: &Connection,
+    mod_version_id: i64,
+    needs: &[(String, String)],
+) -> Result<()> {
+    conn.execute(
+        "DELETE FROM mixin_need WHERE mod_version_id = ?1",
+        params![mod_version_id],
+    )?;
+    for (config, needed) in needs {
+        conn.execute(
+            "INSERT OR IGNORE INTO mixin_need (mod_version_id, config, needed)
+             VALUES (?1, ?2, ?3)",
+            params![mod_version_id, config, needed],
+        )?;
+    }
+    Ok(())
+}
+
 pub fn upsert_pack(conn: &Connection, pack_id: &str, now: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO pack (id, created_at, updated_at)

@@ -88,6 +88,10 @@ const MIGRATIONS: &[(u32, Migration)] = &[
     ),
     (21, Migration::Sql(include_str!("schema/0021_jar_read.sql"))),
     (22, Migration::Code(collapse_conflict_kinds)),
+    (
+        23,
+        Migration::Sql(include_str!("schema/0023_mixin_needs.sql")),
+    ),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its
