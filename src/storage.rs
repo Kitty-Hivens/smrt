@@ -1,6 +1,7 @@
 use crate::domain::*;
 use crate::http::ApiError;
 use sha1::{Digest, Sha1};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -735,6 +736,45 @@ impl Storage {
         }
         cache_jar_path_in(&self.root, sha1)
             .ok_or_else(|| ApiError::BadRequest("invalid sha1".into()))
+    }
+
+    /// How big the cached jar is, or `None` when the mirror does not hold it.
+    ///
+    /// A jar's path is its own hash, so this is one `stat` rather than a look
+    /// through a list. The list is how these questions used to be answered,
+    /// which meant opening every directory in the cache to learn one thing about
+    /// one jar -- a cost that grew with the mirror while the question stayed the
+    /// same size.
+    pub async fn cache_jar_size(&self, sha1: &str) -> Option<u64> {
+        let path = cache_jar_path_in(&self.root, sha1)?;
+        fs::metadata(&path).await.ok().map(|m| m.len())
+    }
+
+    /// Does the mirror hold this jar?
+    pub async fn has_cache_jar(&self, sha1: &str) -> bool {
+        self.cache_jar_size(sha1).await.is_some()
+    }
+
+    /// Which of `shas` the mirror holds.
+    ///
+    /// For a caller that already knows which artifacts it is asking about -- the
+    /// files of one mod, the rows of one page -- this costs one `stat` per
+    /// artifact asked about instead of a walk of everything the mirror has. Not
+    /// a substitute for [`list_cache_inventory`](Self::list_cache_inventory),
+    /// which answers "what is in there" rather than "is this in there".
+    pub async fn cached_among<I, S>(&self, shas: I) -> HashSet<String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut held = HashSet::new();
+        for sha1 in shas {
+            let sha1 = sha1.as_ref();
+            if !held.contains(sha1) && self.has_cache_jar(sha1).await {
+                held.insert(sha1.to_string());
+            }
+        }
+        held
     }
 
     pub async fn list_cache_inventory(&self) -> Result<Vec<CacheInventoryEntry>, ApiError> {
@@ -1700,6 +1740,33 @@ mod tests {
         // a pack with no builds yields no latest, not an error
         assert_eq!(s.latest_manifest_version("Ghost").await.unwrap(), None);
         assert!(s.latest_build_info("Ghost").await.unwrap().is_none());
+    }
+
+    // Answering "do we hold this jar" by listing the cache made one boolean cost
+    // a walk of every directory in it. The path is the hash, so the question has
+    // an answer of its own size.
+    #[tokio::test]
+    async fn a_jar_is_looked_up_by_its_own_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let held = sha1_hex(b"jar");
+        let absent = "b".repeat(40);
+        s.save_cache_jar(&held, b"jar").await.unwrap();
+
+        assert!(s.has_cache_jar(&held).await);
+        assert_eq!(s.cache_jar_size(&held).await, Some(3));
+        assert_eq!(s.cache_jar_size(&absent).await, None);
+        assert!(!s.has_cache_jar(&absent).await);
+        // not a hash at all: an answer, not a panic
+        assert!(!s.has_cache_jar("../../etc/passwd").await);
+        assert!(!s.has_cache_jar("").await);
+
+        // and the same question asked about a known set of artifacts
+        let among = s
+            .cached_among(vec![held.clone(), absent.clone(), held.clone()])
+            .await;
+        assert_eq!(among, [held].into_iter().collect::<HashSet<_>>());
+        assert!(s.cached_among(Vec::<String>::new()).await.is_empty());
     }
 
     // A jar sits under the first two characters of its own hash, so a page of
