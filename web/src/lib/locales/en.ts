@@ -3,6 +3,7 @@
 
 export const en = {
   'app.checkingSession': 'Checking session...',
+  'app.partGone': 'This part of the panel could not be loaded. Reload the page.',
   'common.loading': 'Loading...',
 
   'nav.browse': 'Browse',

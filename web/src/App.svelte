@@ -4,6 +4,7 @@
   import { mirror } from './lib/mirror.svelte';
   import { route } from './lib/route.svelte';
   import { isOperator } from './lib/roles';
+  import { lazy } from './lib/lazy';
   import { terms } from './lib/terms.svelte';
   import Login from './views/Login.svelte';
   import AppShell from './views/AppShell.svelte';
@@ -59,19 +60,23 @@
     {:else if route.section === 'mods' && me}
       <!-- read-only for a member, full authoring for an operator; the view gates
            its own write surface, so one component serves both -->
-      {#await import('./views/ModManager.svelte')}
+      {#await lazy(() => import('./views/ModManager.svelte'))}
         <div class="muted mono">{t('common.loading')}</div>
       {:then { default: ModManager }}
         <ModManager />
+      {:catch}
+        <div class="muted mono">{t('app.partGone')}</div>
       {/await}
     {:else if route.section === 'graph' && me}
       <!-- read-only for a member, full (with debug authoring) for an operator; the
            view gates its own write affordances, so one component serves both.
            lazy: Svelte Flow + dagre are ~200KB, loaded only when the graph opens -->
-      {#await import('./views/GraphView.svelte')}
+      {#await lazy(() => import('./views/GraphView.svelte'))}
         <div class="muted mono">{t('common.loading')}</div>
       {:then { default: GraphView }}
         <GraphView />
+      {:catch}
+        <div class="muted mono">{t('app.partGone')}</div>
       {/await}
     {:else if route.section === 'settings'}
       <!-- before any role check: preferences belong to whoever is looking -->
