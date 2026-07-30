@@ -79,6 +79,10 @@ enum Cmd {
         /// the pack cannot start. Recorded on the manifest.
         #[arg(long)]
         force: bool,
+        /// Write over a version that is already published, changing what anyone
+        /// who has it already downloaded under that name.
+        #[arg(long)]
+        overwrite_version: bool,
     },
 
     /// Pull each declared mod's missing hard dependencies in (Modrinth first,
@@ -275,6 +279,7 @@ async fn main() -> Result<()> {
             changelog,
             mirror_base,
             force,
+            overwrite_version,
         } => {
             let channel = VersionChannel::parse(&channel)
                 .ok_or_else(|| anyhow::anyhow!("channel must be release, beta or alpha"))?;
@@ -286,6 +291,7 @@ async fn main() -> Result<()> {
                 changelog,
                 &mirror_base,
                 force,
+                overwrite_version,
             )
             .await
         }
@@ -487,6 +493,7 @@ async fn run_build(
     changelog: Option<String>,
     mirror_base: &str,
     force: bool,
+    overwrite: bool,
 ) -> Result<()> {
     let mut cfg: PackConfig = read_json(config_path)?;
     // Build enrichment passes run on a transient copy: fill display metadata
@@ -551,7 +558,9 @@ async fn run_build(
     let summary = authoring::make_pack_summary(&cfg, &manifest.pack_version);
 
     let store = Storage::new(storage.to_path_buf());
-    store.save_manifest(&cfg.pack_id, &manifest).await?;
+    store
+        .save_manifest(&cfg.pack_id, &manifest, overwrite)
+        .await?;
     store
         .set_latest_manifest(&cfg.pack_id, &manifest.pack_version)
         .await?;

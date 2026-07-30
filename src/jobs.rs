@@ -105,6 +105,9 @@ pub struct BuildRequest {
     /// log says it, the audit trail records who asked, and the built manifest
     /// carries the findings it was published over.
     pub override_checks: bool,
+    /// Republish over a version that already exists (#146). Never quiet: the
+    /// job log says it, and it is refused without this.
+    pub overwrite_version: bool,
     /// Build this commit's snapshot rather than the config on disk (#122).
     ///
     /// The live config is whatever is on screen at that instant, and with edits
@@ -468,6 +471,13 @@ async fn run_build(
         return Ok(());
     }
 
+    if req.overwrite_version {
+        job.line(format!(
+            "publishing over {} if it already exists, as asked -- anyone holding \
+             that version keeps what they downloaded until they refetch",
+            manifest.pack_version
+        ));
+    }
     job.line(format!(
         "writing manifest {} ({} mods, {} assets)",
         manifest.pack_version,
@@ -475,7 +485,7 @@ async fn run_build(
         manifest.assets.len()
     ));
     storage
-        .save_manifest(&pack_id, &manifest)
+        .save_manifest(&pack_id, &manifest, req.overwrite_version)
         .await
         .map_err(|e| e.to_string())?;
     storage
@@ -640,6 +650,7 @@ mod tests {
             changelog: None,
             changelog_i18n: None,
             override_checks: false,
+            overwrite_version: false,
             from_commit: None,
             actor: None,
         }

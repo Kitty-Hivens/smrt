@@ -8,6 +8,15 @@ version section when a release is tagged.
 
 ### Fixed
 
+- Republishing a version that already exists is refused unless it is asked for.
+  Auto-numbering never collides -- it takes the next counter past the highest
+  published -- so this only fires when a version is named by hand, which is
+  exactly when it is worth stopping. Rewriting a published manifest changes what
+  anyone already holding that version downloaded under that name, makes the
+  commit it records as its origin no longer what shipped, and retroactively
+  changes every diff that touches it. `--overwrite-version` on the CLI and
+  `overwrite_version` on the build endpoint do it deliberately, and the build
+  says so in its log.
 - The pack importer is named for what it reads. Bootstrap and validate called
   their input an "SC archive" everywhere -- module docs, log lines, CLI flags,
   a wire field, and the empty-state a new self-hoster meets first -- while the
