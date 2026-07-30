@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, setUnauthorizedHandler } from './lib/api';
   import { t } from './lib/i18n.svelte';
+  import { mirror } from './lib/mirror.svelte';
   import { route } from './lib/route.svelte';
   import { isOperator } from './lib/roles';
   import { terms } from './lib/terms.svelte';
@@ -25,6 +26,15 @@
       me = m;
       if (m) terms.init(m.accepted_terms);
     });
+  });
+
+  // The change stream needs a session, so it opens with one and closes with it.
+  // A guest listening would be a reconnect loop against a 401.
+  $effect(() => {
+    if (me) {
+      mirror.connect();
+      return () => mirror.disconnect();
+    }
   });
 
   // A 401 on an authed call (expired session) drops back to the guest view.

@@ -5,7 +5,7 @@
   import { dialogs } from '../lib/dialogs.svelte';
   import { href, plainClick, route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
-  import { reload } from '../lib/reload.svelte';
+  import { mirror } from '../lib/mirror.svelte';
   import { isDebug, isOperator } from '../lib/roles';
   import type {
     JarDiff,
@@ -317,9 +317,9 @@
     return { span: true, items: [vs[0], vs[vs.length - 1]], count: vs.length };
   }
 
-  // the shell's top-bar refresh bumps reload.count; reload when it does
+  // every registry write, and every harvest, changes what this lists
   $effect(() => {
-    if (reload.count > 0) load();
+    if (mirror.registry > 0) load();
   });
 </script>
 

@@ -14,6 +14,10 @@
 //! stable across restarts and across two mirrors serving the same data, and it
 //! is weak (`W/`) because it identifies the data rather than one particular
 //! encoding of it -- the same answer gzipped and unzipped is the same answer.
+//!
+//! Where a handler already tags its own answer, that tag stands: the pack
+//! config's is the revision a save is checked against, and a content hash in its
+//! place would be a different statement wearing the same header.
 
 use axum::body::HttpBody as _;
 use axum::body::{Body, to_bytes};
@@ -40,6 +44,20 @@ pub async fn tag_json(req: Request, next: Next) -> Response {
     let resp = next.run(req).await;
 
     if !readonly || resp.status() != StatusCode::OK || !is_json(&resp) {
+        return resp;
+    }
+    // A handler that tagged its own answer means something specific by the tag:
+    // the pack config's is the revision `If-Match` compares a save against, so
+    // replacing it with a content hash would make every save look stale. Its tag
+    // is honoured rather than overwritten -- and answering `304` from it needs
+    // no hashing at all.
+    if let Some(own) = resp.headers().get(header::ETAG).cloned() {
+        let Ok(tag) = own.to_str().map(str::to_string) else {
+            return resp;
+        };
+        if asked_for.is_some_and(|v| holds(&v, &tag)) {
+            return not_modified(resp);
+        }
         return resp;
     }
     // An exact size means the whole body is already in memory (every `Json`
@@ -74,12 +92,19 @@ pub async fn tag_json(req: Request, next: Next) -> Response {
     }
 
     if asked_for.is_some_and(|v| holds(&v, &tag)) {
-        parts.status = StatusCode::NOT_MODIFIED;
-        parts.headers.remove(header::CONTENT_LENGTH);
-        parts.headers.remove(header::CONTENT_TYPE);
-        return Response::from_parts(parts, Body::empty());
+        return not_modified(Response::from_parts(parts, Body::empty()));
     }
     Response::from_parts(parts, Body::from(bytes))
+}
+
+/// The same answer, reduced to "you already have it": the tag and the caching
+/// headers stay, the body and the headers describing it go.
+fn not_modified(resp: Response) -> Response {
+    let (mut parts, _) = resp.into_parts();
+    parts.status = StatusCode::NOT_MODIFIED;
+    parts.headers.remove(header::CONTENT_LENGTH);
+    parts.headers.remove(header::CONTENT_TYPE);
+    Response::from_parts(parts, Body::empty())
 }
 
 fn is_json(resp: &Response) -> bool {
@@ -116,6 +141,18 @@ mod tests {
             .route(
                 "/j",
                 get(|| async { axum::Json(serde_json::json!({"a": 1})) }),
+            )
+            // a handler whose tag means something of its own: the pack config
+            // answers its revision, which `If-Match` compares a save against
+            .route(
+                "/own",
+                get(|| async {
+                    (
+                        [(header::ETAG, "\"rev-7\"")],
+                        axum::Json(serde_json::json!({"a": 1})),
+                    )
+                        .into_response()
+                }),
             )
             .route(
                 "/act",
@@ -204,6 +241,24 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         assert_eq!(&body[..], br#"{"a":1}"#);
+    }
+
+    // A handler's own tag is a statement about the resource, not a hash of the
+    // bytes: the pack config's is the revision a save is checked against, so
+    // overwriting it here would make every save look stale to the mirror.
+    #[tokio::test]
+    async fn a_handlers_own_tag_is_left_alone() {
+        let resp = fetch("/own", None).await;
+        assert_eq!(etag_of(&resp), "\"rev-7\"");
+    }
+
+    #[tokio::test]
+    async fn a_handlers_own_tag_still_answers_304() {
+        let resp = fetch("/own", Some("\"rev-7\"")).await;
+        assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(etag_of(&resp), "\"rev-7\"", "the caller keeps holding it");
+        let resp = fetch("/own", Some("\"rev-6\"")).await;
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]

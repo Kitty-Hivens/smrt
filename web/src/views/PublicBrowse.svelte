@@ -4,7 +4,7 @@
   import { dialogs } from '../lib/dialogs.svelte';
   import { href, plainClick, route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
-  import { reload } from '../lib/reload.svelte';
+  import { mirror } from '../lib/mirror.svelte';
   import { terms } from '../lib/terms.svelte';
   import { renderMarkdown } from '../lib/markdown';
   import ModIcon from './ModIcon.svelte';
@@ -95,9 +95,9 @@
     }
   }
 
-  // the shell's top-bar refresh bumps reload.count; reload when it does
+  // the catalog is what a publish changes, so the mirror says when to re-read it
   $effect(() => {
-    if (reload.count > 0) load();
+    if (mirror.packs > 0) load();
   });
 </script>
 

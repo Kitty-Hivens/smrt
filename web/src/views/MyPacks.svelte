@@ -3,7 +3,7 @@
   import { notifyFail } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
-  import { reload } from '../lib/reload.svelte';
+  import { mirror } from '../lib/mirror.svelte';
   import { terms } from '../lib/terms.svelte';
   import { href, plainClick, route } from '../lib/route.svelte';
   import type { PackSummary, UploadRow } from '../lib/types';
@@ -72,9 +72,9 @@
   }
 
 
-  // the shell's top-bar refresh bumps reload.count; reload when it does
+  // a build of one of these packs, or its deletion, lands here
   $effect(() => {
-    if (reload.count > 0) load();
+    if (mirror.packs > 0) load();
   });
 
   // the list behind the editor is stale once editing ends, whichever way it was
