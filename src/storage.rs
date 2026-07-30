@@ -1281,7 +1281,8 @@ fn is_commit_id(s: &str) -> bool {
 }
 
 /// Reject path traversal and other surprises in user-supplied relative paths.
-/// Allows nested directories so curated assets like `_nexira/banner.png` work,
+/// Allows nested directories so a pack's own files (`_pack/banner.png`, and
+/// `_nexira/banner.png` for a pack that predates the rename) work,
 /// but every segment must be a plain `is_safe_id`-style token and there must
 /// be no `..`, `.`, leading slashes, or empty segments.
 fn validate_rel_path(rel: &str) -> Result<&str, ApiError> {

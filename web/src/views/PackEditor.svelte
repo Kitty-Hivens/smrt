@@ -6,6 +6,7 @@
   import { route } from '../lib/route.svelte';
   import { t } from '../lib/i18n.svelte';
   import { advertisesModList } from '../lib/handshake';
+  import { assetPath } from '../lib/packassets';
   import { arrive, stagger } from '../lib/motion.svelte';
   import { openPackSession, type PackSession } from '../lib/packsession.svelte';
   import { JAVA_MAJORS, suggestedJava } from '../lib/java';
@@ -1019,7 +1020,7 @@
     assetDropBusy = true;
     try {
       for (const file of files) {
-        const rel = `_nexira/assets/${file.name}`;
+        const rel = assetPath('assets', file.name);
         await api.uploadStatic(packId, rel, file);
         if (!appendAsset({
           dest: file.name,
