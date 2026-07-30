@@ -8,6 +8,14 @@ version section when a release is tagged.
 
 ### Fixed
 
+- A pack's own files are named for the pack, not for one launcher. Icons,
+  banners and dropped assets were minted under `_nexira/`, the reference
+  deployment's client name, so every pack on every self-hosted mirror carried a
+  directory named after somebody else's launcher -- in the storage layout rather
+  than in a string somebody reads. New files go under `_pack/`. Forward-only and
+  no migration: a stored path is just a path, so `_nexira/...` keeps resolving
+  for every pack that already has one, and the sweep that keeps an icon
+  resolving to exactly one file sees both names.
 - The handshake claim says up front when it cannot be built. It is copied from
   what a server advertises in its status ping, and a NeoForge or Fabric server
   advertises nothing -- modern loaders negotiate after connecting, over

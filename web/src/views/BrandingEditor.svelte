@@ -3,6 +3,7 @@
   import { notifyFail } from '../lib/toasts.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { assetPath, isPackFile } from '../lib/packassets';
   import DropZone from './ui/DropZone.svelte';
   import ImageCropper from './ImageCropper.svelte';
 
@@ -35,9 +36,9 @@
   const ext = (name: string) => name.split('.').pop()?.toLowerCase() || 'png';
 
   function destFor(file: File): string {
-    if (dest === 'icon') return `_nexira/icon.${ext(file.name)}`;
-    if (dest === 'banner') return `_nexira/banner.${ext(file.name)}`;
-    return `_nexira/${file.name}`;
+    if (dest === 'icon') return assetPath(`icon.${ext(file.name)}`);
+    if (dest === 'banner') return assetPath(`banner.${ext(file.name)}`);
+    return assetPath(file.name);
   }
 
   async function uploadOne(relPath: string, data: File | Blob) {
@@ -58,7 +59,7 @@
   // re-upload in another format can't leave a stale image the pack card points at
   async function putBranding(target: 'icon' | 'banner', relPath: string, data: File | Blob) {
     for (const f of files) {
-      if (f.startsWith(`_nexira/${target}.`) && f !== relPath) {
+      if (isPackFile(f, target) && f !== relPath) {
         try {
           await api.deleteStatic(packId, f);
         } catch {
@@ -96,7 +97,7 @@
   function onCropApply(blob: Blob, outExt: string) {
     if (!crop) return;
     const target = crop.target;
-    const relPath = `_nexira/${target}.${outExt}`;
+    const relPath = assetPath(`${target}.${outExt}`);
     crop = null;
     putBranding(target, relPath, blob);
   }

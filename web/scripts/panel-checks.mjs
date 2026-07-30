@@ -17,6 +17,7 @@ import { readConfig, textPatch, writeConfig } from '../src/lib/packdoc.ts';
 import { JAVA_MAJORS, suggestedJava } from '../src/lib/java.ts';
 import { changedPaths } from '../src/lib/touched.svelte.ts';
 import { advertisesModList } from '../src/lib/handshake.ts';
+import { assetPath, isPackFile, ASSET_PREFIX } from '../src/lib/packassets.ts';
 
 let failures = 0;
 const check = (name, cond, detail = '') => {
@@ -208,6 +209,24 @@ check('the offered list holds what old packs need', [8, 11, 16, 17, 21].every((v
   check('nor does fabric', advertisesModList('fabric') === false);
   check('a loader nobody named is not assumed to advertise', advertisesModList('') === false);
   check('the answer does not depend on spelling', advertisesModList('  NeoForge ') === false);
+}
+
+// A pack's own files are named for the pack, not for one launcher, and the old
+// name keeps resolving for every pack that already uses it.
+{
+  check('new files are minted under the neutral prefix',
+    assetPath('icon.png') === '_pack/icon.png', assetPath('icon.png'));
+  check('nested ones too', assetPath('assets', 'servers.dat') === '_pack/assets/servers.dat');
+  check('the prefix names no launcher', !/nexira|smrt/i.test(ASSET_PREFIX), ASSET_PREFIX);
+  check('it stays out of the way of game directories', ASSET_PREFIX.startsWith('_'));
+
+  // the sweep that keeps an icon resolving to one file has to see both names,
+  // or a re-upload leaves the old image behind under the old prefix
+  check('an icon is recognised under the new prefix', isPackFile('_pack/icon.png', 'icon'));
+  check('and under the old one', isPackFile('_nexira/icon.webp', 'icon'));
+  check('a banner is not an icon', !isPackFile('_pack/banner.png', 'icon'));
+  check('and a lookalike elsewhere is neither',
+    !isPackFile('resourcepacks/icon.png', 'icon'));
 }
 
 console.log(failures ? `\n${failures} failed` : '\nall good');
