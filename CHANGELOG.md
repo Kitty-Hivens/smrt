@@ -34,8 +34,12 @@ version section when a release is tagged.
   registry sent a burst of outbound calls to a third party for an answer that
   changes about never -- 1393 of them in the same day, against a rate limit the
   client already has to back off from.
-- The panel names its own icon, so a browser stops guessing at `/favicon.ico`
-  and being handed the app shell as an image.
+- The site icon is served in every shape something asks for. Naming an svg in
+  the shell covers browsers that read the declaration, and left everything that
+  asks for `/favicon.ico` by convention -- bookmark bars, link previews, older
+  browsers -- being handed the app shell as an image, which shows nothing. A png
+  and an ico are served under their own names now, cacheable for a day rather
+  than re-fetched with every page load.
 - Reading one jar's facts no longer costs a walk of the whole cache. `cached` on
   a mod page, on a version list, on a build's mods, and a jar's size when it is
   given an identity, were each answered by listing every shard directory in the

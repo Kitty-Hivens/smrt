@@ -18,10 +18,14 @@ pub fn router() -> Router {
     Router::new()
         .route("/", get(index))
         .route("/assets/{*path}", get(asset))
-        // A root-level file the shell names. Routed explicitly rather than by a
-        // wildcard, because anything not routed is an app path: a pack id may
-        // carry a dot, so "looks like a filename" cannot decide it.
-        .route("/favicon.svg", get(favicon))
+        // Root-level files, routed explicitly rather than by a wildcard: anything
+        // not routed is an app path, and a pack id may carry a dot, so "looks
+        // like a filename" cannot decide which is which. `.ico` is here because
+        // bookmark bars, link previews and older browsers ask for that name
+        // whatever the shell says -- and were being handed the app shell.
+        .route("/favicon.svg", get(|| favicon("favicon.svg")))
+        .route("/favicon.png", get(|| favicon("favicon.png")))
+        .route("/favicon.ico", get(|| favicon("favicon.ico")))
         // The panel owns its URLs: a section is a path, and a mod page is a
         // shareable link. Any path the API does not claim serves the app shell,
         // which then reads the URL -- so a reload, a bookmark or the mouse's
@@ -42,8 +46,21 @@ async fn index() -> Response {
     serve("index.html")
 }
 
-async fn favicon() -> Response {
-    serve("favicon.svg")
+/// The site icon, in the three shapes something might ask for. Cacheable for a
+/// day: it is not content-addressed like the hashed assets, but it also does not
+/// change between deploys the way the shell does.
+async fn favicon(name: &str) -> Response {
+    match Assets::get(name) {
+        Some(file) => (
+            [
+                (header::CONTENT_TYPE, mime_for(name)),
+                (header::CACHE_CONTROL, "public, max-age=86400"),
+            ],
+            file.data.into_owned(),
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 /// A built asset. Missing means the deploy moved on: the panel's assets carry a
@@ -99,6 +116,7 @@ fn mime_for(path: &str) -> &'static str {
         "css" => "text/css; charset=utf-8",
         "json" => "application/json",
         "svg" => "image/svg+xml",
+        "ico" => "image/vnd.microsoft.icon",
         "png" => "image/png",
         "woff2" => "font/woff2",
         "woff" => "font/woff",
@@ -146,16 +164,27 @@ mod tests {
         assert_eq!(caching(&asset), Some(IMMUTABLE));
     }
 
-    // The shell names its icon, so a browser has no reason to guess at
-    // /favicon.ico and be handed the app shell by the fallback.
+    // Something always asks for /favicon.ico by name -- a bookmark bar, a link
+    // preview, an older browser -- whatever the shell declares. Handed the app
+    // shell it shows nothing, which is what happened: an icon on one browser and
+    // none anywhere else.
     #[tokio::test]
-    async fn the_icon_is_served_as_an_image() {
-        let resp = get("/favicon.svg").await;
-        assert_eq!(resp.status(), StatusCode::OK);
-        assert_eq!(
-            resp.headers().get(header::CONTENT_TYPE).unwrap(),
-            "image/svg+xml"
-        );
+    async fn the_icon_is_an_image_in_every_shape_something_asks_for() {
+        for (path, content_type) in [
+            ("/favicon.svg", "image/svg+xml"),
+            ("/favicon.png", "image/png"),
+            ("/favicon.ico", "image/vnd.microsoft.icon"),
+        ] {
+            let resp = get(path).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{path}");
+            assert_eq!(
+                resp.headers().get(header::CONTENT_TYPE).unwrap(),
+                content_type,
+                "{path} must not come back as the app shell"
+            );
+            // and it is not re-fetched on every page load the way the shell is
+            assert_eq!(caching(&resp), Some("public, max-age=86400"), "{path}");
+        }
     }
 
     // A chunk from a deploy that has moved on must read as gone, not as a file
