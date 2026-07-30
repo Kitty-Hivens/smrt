@@ -78,12 +78,7 @@ pub(crate) async fn get_file_detail(
     let Some(mut detail) = detail else {
         return Err(ApiError::NotFound);
     };
-    detail.file.cached = state
-        .storage
-        .list_cache_inventory()
-        .await?
-        .into_iter()
-        .any(|e| e.sha1 == detail.file.sha1);
+    detail.file.cached = state.storage.has_cache_jar(&detail.file.sha1).await;
     Ok(Json(detail))
 }
 
@@ -137,13 +132,14 @@ pub(crate) async fn get_mod_detail(
         return Err(ApiError::NotFound);
     };
 
-    let cached: HashSet<String> = state
-        .storage
-        .list_cache_inventory()
-        .await?
-        .into_iter()
-        .map(|e| e.sha1)
+    // asked about this mod's own files, not about the whole cache
+    let shas: Vec<String> = detail
+        .releases
+        .iter()
+        .flat_map(|rel| &rel.files)
+        .map(|f| f.sha1.clone())
         .collect();
+    let cached = state.storage.cached_among(shas).await;
     for rel in &mut detail.releases {
         for f in &mut rel.files {
             f.cached = cached.contains(&f.sha1);

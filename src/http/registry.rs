@@ -170,13 +170,19 @@ where
     Ok(res?)
 }
 
-/// The sha1s the mirror actually holds in its local cache. The registry indexes
-/// manifest-only (e.g. Modrinth-sourced) artifacts too, so "in the registry"
-/// does not mean "on disk" -- the panel needs this to pick a `smrt_cache` vs a
-/// `modrinth` source per artifact.
-async fn cache_shas(state: &AppState) -> Result<std::collections::HashSet<String>, ApiError> {
-    let inv = state.storage.list_cache_inventory().await?;
-    Ok(inv.into_iter().map(|e| e.sha1).collect())
+/// Which of `shas` the mirror actually holds in its local cache. The registry
+/// indexes manifest-only (e.g. Modrinth-sourced) artifacts too, so "in the
+/// registry" does not mean "on disk" -- the panel needs this to pick a
+/// `smrt_cache` vs a `modrinth` source per artifact.
+///
+/// Asked about the rows being answered rather than about the cache as a whole:
+/// a page of twenty artifacts costs twenty lookups, not a walk of every jar the
+/// mirror has ever kept.
+async fn cache_shas(
+    state: &AppState,
+    shas: impl IntoIterator<Item = String>,
+) -> std::collections::HashSet<String> {
+    state.storage.cached_among(shas).await
 }
 
 /// Force an immediate harvest and return at once with the harvester's status. The
@@ -376,7 +382,8 @@ async fn get_versions_by_id(
     Path(mod_id): Path<i64>,
 ) -> Result<Json<Vec<VersionRow>>, ApiError> {
     let mut rows = run_query(&state, move |c| queries::versions_of_mod_by_id(c, mod_id)).await?;
-    let cached = cache_shas(&state).await?;
+    let shas: Vec<String> = rows.iter().map(|r| r.sha1.clone()).collect();
+    let cached = cache_shas(&state, shas).await;
     for r in &mut rows {
         r.cached = cached.contains(&r.sha1);
     }
@@ -400,7 +407,12 @@ async fn get_releases_by_id(
 ) -> Result<Json<Vec<ReleaseRow>>, ApiError> {
     let mut releases =
         run_query(&state, move |c| queries::releases_of_mod_by_id(c, mod_id)).await?;
-    let cached = cache_shas(&state).await?;
+    let shas: Vec<String> = releases
+        .iter()
+        .flat_map(|rel| &rel.files)
+        .map(|f| f.sha1.clone())
+        .collect();
+    let cached = cache_shas(&state, shas).await;
     for rel in &mut releases {
         for f in &mut rel.files {
             f.cached = cached.contains(&f.sha1);
@@ -421,7 +433,8 @@ async fn get_build_mods(
         queries::build_mods(c, &pack_id, &pack_version)
     })
     .await?;
-    let cached = cache_shas(&state).await?;
+    let shas: Vec<String> = rows.iter().map(|r| r.sha1.clone()).collect();
+    let cached = cache_shas(&state, shas).await;
     for r in &mut rows {
         r.cached = cached.contains(&r.sha1);
     }
@@ -452,7 +465,8 @@ async fn get_mod_versions(
         queries::versions_of_mod(c, &alias_source, &external_key)
     })
     .await?;
-    let cached = cache_shas(&state).await?;
+    let shas: Vec<String> = rows.iter().map(|r| r.sha1.clone()).collect();
+    let cached = cache_shas(&state, shas).await;
     for r in &mut rows {
         r.cached = cached.contains(&r.sha1);
     }
@@ -740,11 +754,11 @@ async fn put_file_identity(
             "provide mod_id (existing mod) or a non-empty mod_name (new mod)".into(),
         ));
     }
-    let inv = state.storage.list_cache_inventory().await?;
-    let size = inv
-        .iter()
-        .find(|e| e.sha1 == sha1)
-        .map(|e| e.size_bytes as i64)
+    let size = state
+        .storage
+        .cache_jar_size(&sha1)
+        .await
+        .map(|n| n as i64)
         .ok_or_else(|| {
             ApiError::BadRequest(
                 "sha1 is not in the mirror cache; only cached jars can be authored".into(),

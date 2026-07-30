@@ -8,6 +8,14 @@ version section when a release is tagged.
 
 ### Fixed
 
+- Reading one jar's facts no longer costs a walk of the whole cache. `cached` on
+  a mod page, on a version list, on a build's mods, and a jar's size when it is
+  given an identity, were each answered by listing every shard directory in the
+  cache and every file in it -- a cost that grew with the mirror while the
+  question stayed the size of one hash. A jar's path is its own hash, so each is
+  now one lookup, or one per artifact actually asked about. The reads that are
+  about the cache as a whole -- the inventory, the needs-identity bucket, the
+  usage report, the harvest -- still list it, which is what listing is for.
 - Opening the registry or the graph after a deploy no longer fails on a missing
   file. The panel's chunks are named after a hash of their contents and ship
   inside the binary, so a deploy replaces the whole set at once -- while a
