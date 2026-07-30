@@ -127,7 +127,6 @@ fn authoring_router(state: AppState) -> Router {
         .route("/v1/search/mods", get(search_mods_combined))
         .route("/v1/modrinth/search", get(modrinth_search))
         .route("/v1/modrinth/versions", get(modrinth_versions))
-        .route("/v1/modrinth/icon", get(modrinth_icon))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BODY))
         .layer(from_fn_with_state(
             state.clone(),
@@ -819,37 +818,6 @@ async fn modrinth_versions(
         .await
         .map_err(ApiError::Internal)?;
     Ok(Json(vs))
-}
-
-#[derive(serde::Deserialize)]
-struct IconQuery {
-    id: String,
-}
-
-#[derive(serde::Serialize)]
-struct IconResp {
-    icon_url: Option<String>,
-}
-
-// Mirrors the launcher's per-project icon lookup so the preview can show the
-// same icons the player will see for Modrinth-sourced mods without an explicit
-// display.icon_url. The panel caches per project_id client-side.
-async fn modrinth_icon(
-    State(state): State<AppState>,
-    Query(q): Query<IconQuery>,
-) -> Result<Json<IconResp>, ApiError> {
-    // An icon is cosmetic garnish -- the preview falls back to a letter avatar
-    // without one. A transient upstream fault should never turn into a 500 that
-    // paints the panel with errors, but it also should not vanish silently, so it
-    // is logged and degraded to "no icon".
-    let icon_url = match state.modrinth.project_icon(&q.id).await {
-        Ok(url) => url,
-        Err(e) => {
-            tracing::warn!(project = %q.id, error = %e, "modrinth icon lookup failed");
-            None
-        }
-    };
-    Ok(Json(IconResp { icon_url }))
 }
 
 // ── validate against an instance archive ─────────────────────────────────────

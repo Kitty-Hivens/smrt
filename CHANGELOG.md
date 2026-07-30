@@ -8,6 +8,18 @@ version section when a release is tagged.
 
 ### Fixed
 
+- A Modrinth project's icon is served by the mirror instead of by Modrinth's
+  CDN. The panel asked the mirror for the upstream url and then put that url in
+  an `<img>`, so every viewer's browser announced itself to a third party once
+  per icon on a page -- the exact thing the GitHub avatar proxy next door exists
+  to prevent. The icon is now fetched once, kept, and served from here, which
+  also ends two other things: the endpoint behind it was session-gated, so a
+  signed-out visitor got a 401 per Modrinth mod on the public catalog and saw
+  letter avatars instead of icons (342 of the 354 unauthorized answers in a day
+  of the reference deployment were this), and drawing a page cost one request per
+  mod row where it now costs a cached image. Jars are still not rehosted -- an
+  icon is a picture, not the mod. Svg icons are not served back: an svg from
+  elsewhere, served from our own origin, is a document that can carry script.
 - A mod icon is extracted from its jar once, not on every request. Serving one
   read the whole jar into memory and walked its zip to hand back a few
   kilobytes of image -- and it is the busiest endpoint the mirror has: a day of

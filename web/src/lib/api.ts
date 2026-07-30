@@ -174,24 +174,6 @@ async function sha1Hex(buf: ArrayBuffer): Promise<string> {
 // Per-project icon cache (incl. negative results), mirroring the launcher's
 // ModIconResolver. Shared across every ModIcon in the preview so a 56-mod pack
 // hits each Modrinth project at most once.
-const modrinthIconCache = new Map<string, string | null>();
-
-async function resolveModrinthIcon(projectId: string): Promise<string | null> {
-  const cached = modrinthIconCache.get(projectId);
-  if (cached !== undefined) return cached;
-  try {
-    const r = await getJson<{ icon_url: string | null }>(
-      `/v1/modrinth/icon?id=${encodeURIComponent(projectId)}`,
-    );
-    const url = r.icon_url ?? null;
-    modrinthIconCache.set(projectId, url);
-    return url;
-  } catch {
-    modrinthIconCache.set(projectId, null);
-    return null;
-  }
-}
-
 export const api = {
   health: () => getJson<Health>('/v1/health'),
   packs: () => getJson<PackListing>('/v1/packs'),
@@ -562,7 +544,6 @@ export const api = {
       `/v1/modrinth/versions?id=${encodeURIComponent(id)}${mc ? `&mc=${encodeURIComponent(mc)}` : ''}`,
     ),
   // Same per-project lookup the launcher's ModIconResolver does; cached.
-  modrinthIcon: (projectId: string) => resolveModrinthIcon(projectId),
 
   // ── registry browser (the mirror's own mods + builds) ──
   registryMods: (q?: string, loader?: string, mc?: string) => {
