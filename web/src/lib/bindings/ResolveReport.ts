@@ -3,6 +3,7 @@ import type { ActiveConflict } from "./ActiveConflict";
 import type { CapabilityOverlap } from "./CapabilityOverlap";
 import type { ForcedClientEdge } from "./ForcedClientEdge";
 import type { LoaderMismatch } from "./LoaderMismatch";
+import type { LoaderVersionIssue } from "./LoaderVersionIssue";
 import type { MissingDep } from "./MissingDep";
 import type { MixinGap } from "./MixinGap";
 import type { SideDisagreement } from "./SideDisagreement";
@@ -45,6 +46,17 @@ overlaps: Array<CapabilityOverlap>,
  * declared window.
  */
 version_issues: Array<VersionIssue>, 
+/**
+ * The same finding against the loader itself: a jar declaring a build of
+ * the pack's own loader that the pinned one does not satisfy (#164).
+ *
+ * Filled by [`super::loaderreq::loader_windows`], not by [`resolve_pack`]:
+ * the window is inside the jar, and a Modrinth pin's jar is not on this
+ * disk, so answering needs I/O this pure pass has not got. A caller that
+ * does not run that pass leaves it empty, which reads as "not checked" --
+ * the same as every other fact the mirror has not looked up.
+ */
+loader_version_issues: Array<LoaderVersionIssue>, 
 /**
  * Declared artifacts this pack's loader cannot run, with nothing present to
  * bridge them -- they will not load at all (#50).

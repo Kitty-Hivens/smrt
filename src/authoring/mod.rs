@@ -5,6 +5,7 @@
 //! and `sources` are internal helpers; the passes are the public surface.
 
 mod archive;
+mod remotezip;
 mod sources;
 
 pub mod bootstrap;
@@ -18,6 +19,7 @@ pub mod gate;
 pub mod harvest;
 pub mod harvest_sched;
 pub mod jardiff;
+pub mod loaderreq;
 pub mod loaders;
 pub mod mcping;
 pub mod mixinscan;
@@ -40,6 +42,7 @@ pub use curator::{
 };
 pub use harvest_sched::{HarvestScheduler, HarvestStatus};
 pub use jardiff::{JarDiff, diff_jars};
+pub use loaderreq::{LoaderWindowReport, loader_windows};
 pub use loaders::{LoaderVersions, loader_versions};
 pub use mcping::{ServerStatus, status as server_status};
 pub use modrinth::*;

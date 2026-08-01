@@ -544,6 +544,34 @@ pub fn mixin_needs(conn: &Connection, mod_version_id: i64) -> Result<Vec<(String
     Ok(rows)
 }
 
+/// The loader windows an artifact declares, by artifact key (a sha1, or
+/// `modrinth:<version_id>`). `None` when the artifact has never been read --
+/// which is "cannot answer", not "declares nothing"; the latter comes back as
+/// an empty list.
+pub fn artifact_loader_reqs(
+    conn: &Connection,
+    artifact_key: &str,
+) -> Result<Option<Vec<(String, String)>>> {
+    let mut stmt = conn.prepare(
+        "SELECT loader, version_range FROM artifact_loader_req
+         WHERE artifact_key = ?1 ORDER BY loader",
+    )?;
+    let rows: Vec<(String, Option<String>)> = stmt
+        .query_map([artifact_key], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(
+        rows.into_iter()
+            .filter_map(|(loader, range)| match (loader.is_empty(), range) {
+                (false, Some(range)) => Some((loader, range)),
+                _ => None, // the negative marker row
+            })
+            .collect(),
+    ))
+}
+
 /// Whether an artifact carries a class. `None` when the mirror has never had
 /// the artifact's bytes, which is "cannot answer" and never "no".
 pub fn artifact_has_class(

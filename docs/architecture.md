@@ -82,12 +82,17 @@ lookups; it writes nothing until the manifest is complete. Real builds of the
 same pack are serialized; dry runs (`?dry_run=true`) resolve everything and
 publish nothing.
 
-The pre-publish check (`authoring/gate.rs`) judges the resolve report. Two
-findings stop a publish, because they mean the pack cannot start: a declared
-hard dependency nothing satisfies (a bytecode-inferred one is recorded, not
-enforced), and an artifact built for a loader the pack does not run with nothing
-present to bridge it. The rest -- active conflicts,
-versions outside a declared window, jars the registry cannot identify -- are
+The pre-publish check (`authoring/gate.rs`) judges the resolve report. What
+stops a publish is what means the pack cannot start: a declared hard dependency
+nothing satisfies (a bytecode-inferred one is recorded, not enforced); an
+artifact built for a loader the pack does not run with nothing present to bridge
+it; a required mixin whose target the pack's own copy of the host no longer
+carries; a dependency shipped outside the version window its requirer declared;
+and the pinned loader build sitting outside the window a jar declares on it.
+That last one needs the jar's own manifest, which for a Modrinth pin is not on
+this disk, so it comes from a pass of its own (`authoring/loaderreq.rs`) that
+reads each artifact once by HTTP range and remembers what it read. The rest --
+active conflicts, jars the registry cannot identify -- are
 recorded on the built manifest under `checks` rather than enforced. A publish
 over a blocking finding needs `?override_checks=true` (`--force` on the CLI) and
 is recorded three ways: the job log, the audit trail (`build.override_checks`,

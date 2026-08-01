@@ -30,6 +30,19 @@ const PLATFORM_MODIDS: &[&str] = &[
     "lowcodefml",
 ];
 
+/// The loader a platform modid names, for the ones that mean the loader build
+/// itself. `javafml`/`fml` are language-loader versions and name no build, so
+/// they are absent; so is `minecraft`, which the `mc` field carries.
+fn loader_of_platform_modid(modid: &str) -> Option<&'static str> {
+    Some(match modid.to_ascii_lowercase().as_str() {
+        "forge" => "forge",
+        "neoforge" => "neoforge",
+        "fabricloader" | "fabric-loader" => "fabric",
+        "quilt_loader" => "quilt",
+        _ => return None,
+    })
+}
+
 /// A declared dependency: the target modid, its kind, an optional version
 /// range (Maven-style for Forge, semver-ish for Fabric), and the side the
 /// dependency is needed on (`BOTH`/`CLIENT`/`SERVER`, Forge/NeoForge only).
@@ -42,6 +55,20 @@ pub struct DeclaredDep {
     pub severity: Option<Severity>,
     pub version_range: Option<String>,
     pub side: Option<String>,
+}
+
+/// The window a jar declares on the loader build it runs under -- JEI's
+/// `neoforge [21.1.238,)`. Not a mod edge: the loader is always present, so
+/// this is a property of the artifact, like the loaders it targets. Kept apart
+/// from [`ModMeta::deps`] for exactly that reason (#164).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoaderReq {
+    /// The loader as this mirror names it (`forge` / `neoforge` / `fabric` /
+    /// `quilt`), not the modid spelling.
+    pub loader: String,
+    /// The declared range, verbatim (Maven for Forge/NeoForge, semver-ish for
+    /// Fabric). Never the "any version" wildcard -- that is dropped.
+    pub range: String,
 }
 
 /// A jar's modern declared metadata.
@@ -64,6 +91,9 @@ pub struct ModMeta {
     /// Modrinth coverage; `None` when no usable version is declared.
     pub mc: Option<String>,
     pub deps: Vec<DeclaredDep>,
+    /// Windows the jar declares on the loader build itself. Usually one; a jar
+    /// naming several loaders declares one apiece.
+    pub loader_reqs: Vec<LoaderReq>,
     /// `fabric.mod.json` `environment` verbatim (`*` | `client` | `server`).
     pub environment: Option<String>,
     /// Whether `entrypoints.client` / `entrypoints.main`+`entrypoints.server`
@@ -187,6 +217,7 @@ pub fn parse_mods_toml(text: &str) -> ModMeta {
         .or_else(|| clean(parsed.logo_file))
         .map(|s| s.trim_start_matches('/').to_string());
     let mut deps = Vec::new();
+    let mut loader_reqs = Vec::new();
     let mut mc = None;
     for entry in parsed.dependencies.into_values().flatten() {
         // read the kind (borrows entry) before consuming its fields
@@ -210,6 +241,16 @@ pub fn parse_mods_toml(text: &str) -> ModMeta {
             continue;
         }
         if is_platform_modid(&target) {
+            // the loader is always present, so this is never a mod edge -- but
+            // the window it names is the one a loader refuses to start outside
+            if let Some(loader) = loader_of_platform_modid(&target)
+                && let Some(range) = clean_range(entry.version_range)
+            {
+                loader_reqs.push(LoaderReq {
+                    loader: loader.to_string(),
+                    range,
+                });
+            }
             continue;
         }
         deps.push(DeclaredDep {
@@ -230,6 +271,7 @@ pub fn parse_mods_toml(text: &str) -> ModMeta {
         logo_file,
         mc,
         deps,
+        loader_reqs,
         display_test,
         ..ModMeta::default()
     }
@@ -316,6 +358,19 @@ pub fn parse_fabric_json(bytes: &[u8]) -> ModMeta {
         .and_then(|p| p.range())
         .as_deref()
         .and_then(first_mc);
+    // `depends.fabricloader` is the loader build, not a mod: the same window
+    // Forge writes as a `neoforge` dependency.
+    let mut loader_reqs: Vec<LoaderReq> = parsed
+        .depends
+        .iter()
+        .filter_map(|(modid, pred)| {
+            Some(LoaderReq {
+                loader: loader_of_platform_modid(modid)?.to_string(),
+                range: pred.range()?,
+            })
+        })
+        .collect();
+    loader_reqs.sort_by(|a, b| a.loader.cmp(&b.loader));
     let mut deps = Vec::new();
     let mut add =
         |map: HashMap<String, VersionPredicate>, kind: RelKind, severity: Option<Severity>| {
@@ -371,6 +426,7 @@ pub fn parse_fabric_json(bytes: &[u8]) -> ModMeta {
             .filter(|s| !s.is_empty()),
         mc,
         deps,
+        loader_reqs,
         environment: parsed.environment.filter(|s| !s.trim().is_empty()),
         client_entrypoint: has_entry("client"),
         main_entrypoint: has_entry("main") || has_entry("server"),
@@ -477,6 +533,75 @@ mod tests {
         // a bare loader number (no dot) is not a version
         assert_eq!(first_mc("[47,)"), None);
         assert_eq!(first_mc(">=1.20.1"), Some("1.20.1".into()));
+    }
+
+    // The crash this exists for: JEI declares `neoforge [21.1.238,)`, a pack
+    // pinned 21.1.234, and the loader stopped before the main menu naming JEI.
+    // The window is read off the same dependency block that is filtered out of
+    // the mod graph -- the loader is present, so it is never a missing mod, but
+    // the build it names is not a mod fact at all.
+    #[test]
+    fn a_loader_dependency_is_a_window_and_never_a_mod_edge() {
+        let toml = r#"
+            [[mods]]
+            modId="jei"
+            [[dependencies.jei]]
+            modId="neoforge"
+            type="required"
+            versionRange="[21.1.238,)"
+            [[dependencies.jei]]
+            modId="minecraft"
+            type="required"
+            versionRange="[1.21.1,1.21.2)"
+            [[dependencies.jei]]
+            modId="javafml"
+            type="required"
+            versionRange="[4,)"
+        "#;
+        let m = parse_mods_toml(toml);
+        assert_eq!(
+            m.loader_reqs,
+            vec![LoaderReq {
+                loader: "neoforge".into(),
+                range: "[21.1.238,)".into(),
+            }]
+        );
+        assert!(
+            m.deps.is_empty(),
+            "the loader is not a dependency to satisfy: {:?}",
+            m.deps
+        );
+        assert_eq!(m.mc.as_deref(), Some("1.21.1"), "minecraft stays its own");
+
+        // an open window says nothing, so it is not stored as a constraint
+        let open = parse_mods_toml(
+            "[[mods]]\nmodId=\"m\"\n[[dependencies.m]]\nmodId=\"forge\"\nversionRange=\"*\"",
+        );
+        assert!(open.loader_reqs.is_empty());
+        let none = parse_mods_toml("[[mods]]\nmodId=\"m\"\n[[dependencies.m]]\nmodId=\"forge\"");
+        assert!(none.loader_reqs.is_empty());
+    }
+
+    // Fabric writes the same fact as a `fabricloader` dependency, and the
+    // loader name in the window is this mirror's, not the modid spelling.
+    #[test]
+    fn fabric_declares_its_loader_window_under_another_name() {
+        let m = parse_fabric_json(
+            br#"{"id":"m","depends":{"fabricloader":">=0.16.9","fabric-api":"*","minecraft":">=1.21"}}"#,
+        );
+        assert_eq!(
+            m.loader_reqs,
+            vec![LoaderReq {
+                loader: "fabric".into(),
+                range: ">=0.16.9".into(),
+            }]
+        );
+        assert!(
+            m.deps.iter().all(|d| d.modid != "fabricloader"),
+            "still not a mod edge"
+        );
+        // the Fabric API is a real mod and stays one
+        assert!(m.deps.iter().any(|d| d.modid == "fabric-api"));
     }
 
     #[test]

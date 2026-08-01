@@ -414,6 +414,69 @@ impl Modrinth {
         Ok(buf)
     }
 
+    /// How long a remote file is, if the server will serve it by range.
+    /// `None` when it will not: without ranges the only way to read one entry
+    /// out of a jar is to download the jar, which is the cost this avoids.
+    ///
+    /// Asked with a one-byte range rather than a HEAD: a CDN may answer HEAD
+    /// from an edge that never sees the object, and `Content-Range` on a real
+    /// 206 both proves ranges work and carries the length.
+    pub async fn ranged_length(&self, url: &str) -> Result<Option<u64>> {
+        let resp = self
+            .http
+            .get(url)
+            .header(reqwest::header::RANGE, "bytes=0-0")
+            .timeout(METADATA_TIMEOUT)
+            .send()
+            .await
+            .context("range probe")?;
+        if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+            return Ok(None);
+        }
+        // "bytes 0-0/1639573" -- the total is what is wanted, and a `*` total
+        // (a server that knows the range but not the size) is unusable here
+        let total = resp
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.rsplit('/').next())
+            .and_then(|v| v.trim().parse::<u64>().ok());
+        Ok(total)
+    }
+
+    /// `len` bytes from `from` of a remote file. Only meaningful against a
+    /// server that answered [`ranged_length`]; a server that ignores the range
+    /// header would stream the whole file, so a short read is an error rather
+    /// than something to work around.
+    pub async fn fetch_range(&self, url: &str, from: u64, len: u64) -> Result<Vec<u8>> {
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        let last = from + len - 1;
+        let resp = self
+            .http
+            .get(url)
+            .header(reqwest::header::RANGE, format!("bytes={from}-{last}"))
+            .timeout(METADATA_TIMEOUT)
+            .send()
+            .await
+            .context("range GET")?;
+        if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+            return Err(anyhow!(
+                "range GET for {url} answered {} rather than 206",
+                resp.status()
+            ));
+        }
+        let bytes = resp.bytes().await.context("range body")?;
+        if bytes.len() as u64 > len {
+            return Err(anyhow!(
+                "range GET for {url} answered {} bytes for a {len}-byte window",
+                bytes.len()
+            ));
+        }
+        Ok(bytes.to_vec())
+    }
+
     /// Fetch a remote image (e.g. a GitHub avatar) through the pooled client,
     /// returning its bytes and content type. Reuses the shared client so an
     /// image proxy does not open a TLS handshake per request, and caps small --

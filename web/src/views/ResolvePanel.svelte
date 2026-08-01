@@ -14,6 +14,7 @@
       report.version_issues.length === 0 &&
       report.overlaps.length === 0 &&
       report.loader_mismatch.length === 0 &&
+      report.loader_version_issues.length === 0 &&
       report.mixin_gaps.length === 0 &&
       report.unresolved.length === 0 &&
       report.forced_client_attempts.length === 0,
@@ -29,6 +30,7 @@
     {#if report.version_issues.length}<span class="pill warn">{t('resolve.versionIssues', { n: report.version_issues.length })}</span>{/if}
     {#if report.overlaps.length}<span class="pill warn">{t('resolve.overlaps', { n: report.overlaps.length })}</span>{/if}
     {#if report.loader_mismatch.length}<span class="pill danger">{t('resolve.loaderMismatch', { n: report.loader_mismatch.length })}</span>{/if}
+    {#if report.loader_version_issues.length}<span class="pill danger">{t('resolve.loaderWindow', { n: report.loader_version_issues.length })}</span>{/if}
     {#if report.mixin_gaps.length}
     <div class="rlist">
       <div class="rl-h danger">{t('resolve.mixinGapsH')}</div>
@@ -143,6 +145,18 @@
         <div class="rl-row">
           <span class="mono strong">{l.filename}</span>
           <span class="faint">{t('resolve.bridgedBy', { loaders: l.artifact_loaders.join(', '), by: l.bridged_by ?? '' })}</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  {#if report.loader_version_issues.length}
+    <div class="rlist">
+      <div class="rl-h danger">{t('resolve.loaderWindowH')}</div>
+      {#each report.loader_version_issues as l}
+        <div class="rl-row">
+          <span class="mono strong">{l.filename}</span>
+          <span class="faint">{t('resolve.loaderNeeds', { loader: l.loader, range: l.required_range, pinned: l.pack_version })}</span>
         </div>
       {/each}
     </div>

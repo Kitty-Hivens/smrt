@@ -18,6 +18,10 @@
 //!   enforced. Refusing a publish on a guess is how a gate loses its authority.
 //! - An artifact built for a loader the pack does not run, with nothing present
 //!   to bridge it, does not load at all -- and whatever needed it then breaks.
+//! - A loader build outside the window a jar declares on it (#164). Same
+//!   failure as the one below, one level down: the pin is a line in the pack's
+//!   own config, the mods around it move on their own, and a mod that raises
+//!   its floor stops the game before the main menu naming itself.
 //! - A hard dependency present at a version outside the window its requirer
 //!   declared. This was recorded rather than enforced at first, on the reasoning
 //!   that such windows are written optimistically and the pack usually runs
@@ -128,6 +132,12 @@ pub fn check(report: &ResolveReport) -> BuildChecks {
             v.needed_by.join(", "),
         ));
     }
+    for l in &report.loader_version_issues {
+        blocking.push(format!(
+            "{} needs {} {}, and this pack pins {}",
+            l.filename, l.loader, l.required_range, l.pack_version,
+        ));
+    }
     for f in &report.forced_client_attempts {
         advisory.push(format!(
             "{} is client-side, and {} declares a hard dependency on it ({}) -- a client mod is never force-installed, so that dependency is not enforced",
@@ -167,6 +177,7 @@ mod tests {
             optional_conflicts: vec![],
             overlaps: vec![],
             version_issues: vec![],
+            loader_version_issues: vec![],
             loader_mismatch: vec![],
             loader_bridged: vec![],
             mixin_gaps: vec![],
@@ -286,6 +297,33 @@ mod tests {
         assert!(
             line.contains("reeses-sodium-options.jar"),
             "and who wants it, since that is the mod to change: {line}"
+        );
+        assert!(checks.advisory.is_empty());
+    }
+
+    // #164. The pin and the mod moved apart: JEI 19.42 raised its floor to
+    // neoforge 21.1.238 while the pack still pinned 21.1.234, and the loader
+    // stopped before the main menu. The line names the pin, which the crash
+    // report never does -- it names the mod that asked and leaves the operator
+    // to work out that a config line is what has to change.
+    #[test]
+    fn a_loader_pin_below_a_declared_floor_stops_a_publish() {
+        let checks = check(&ResolveReport {
+            loader_version_issues: vec![crate::authoring::resolve::LoaderVersionIssue {
+                filename: "jei.jar".into(),
+                loader: "neoforge".into(),
+                pack_version: "21.1.234".into(),
+                required_range: "[21.1.238,)".into(),
+            }],
+            ..empty()
+        });
+        assert_eq!(checks.blocking.len(), 1, "{checks:?}");
+        let line = &checks.blocking[0];
+        assert!(line.contains("jei.jar"), "names the jar: {line}");
+        assert!(line.contains("[21.1.238,)"), "and what it wants: {line}");
+        assert!(
+            line.contains("21.1.234"),
+            "and what the pack pins, which is the thing to change: {line}"
         );
         assert!(checks.advisory.is_empty());
     }

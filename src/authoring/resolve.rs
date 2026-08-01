@@ -55,6 +55,16 @@ pub struct ResolveReport {
     /// A present dependency whose shipped version sits outside a requirer's
     /// declared window.
     pub version_issues: Vec<VersionIssue>,
+    /// The same finding against the loader itself: a jar declaring a build of
+    /// the pack's own loader that the pinned one does not satisfy (#164).
+    ///
+    /// Filled by [`super::loaderreq::loader_windows`], not by [`resolve_pack`]:
+    /// the window is inside the jar, and a Modrinth pin's jar is not on this
+    /// disk, so answering needs I/O this pure pass has not got. A caller that
+    /// does not run that pass leaves it empty, which reads as "not checked" --
+    /// the same as every other fact the mirror has not looked up.
+    #[serde(default)]
+    pub loader_version_issues: Vec<LoaderVersionIssue>,
     /// Declared artifacts this pack's loader cannot run, with nothing present to
     /// bridge them -- they will not load at all (#50).
     pub loader_mismatch: Vec<LoaderMismatch>,
@@ -193,6 +203,23 @@ pub struct VersionIssue {
     pub present_version: String,
     pub required_range: String,
     pub needed_by: Vec<String>,
+}
+
+/// A jar whose declared loader window the pack's pinned loader build falls
+/// outside of -- JEI's `neoforge [21.1.238,)` under a pack pinned to
+/// `21.1.234`. The loader reads that window out of the jar and refuses to
+/// start, naming the jar; nothing says which build it wanted, or that the pin
+/// is a line in this pack's own config.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct LoaderVersionIssue {
+    pub filename: String,
+    /// The loader both sides name, as the mirror spells it.
+    pub loader: String,
+    /// The build this pack pins.
+    pub pack_version: String,
+    /// The window the jar declares, verbatim.
+    pub required_range: String,
 }
 
 /// A declared artifact built for loaders this pack does not run.
@@ -932,6 +959,8 @@ pub fn resolve_pack(conn: &Connection, cfg: &PackConfig) -> Result<ResolveReport
         optional_conflicts,
         overlaps,
         version_issues,
+        // the async pass fills this one; a pure resolve has not looked
+        loader_version_issues: Vec::new(),
         loader_mismatch,
         loader_bridged,
         mixin_gaps,

@@ -92,6 +92,10 @@ const MIGRATIONS: &[(u32, Migration)] = &[
         23,
         Migration::Sql(include_str!("schema/0023_mixin_needs.sql")),
     ),
+    (
+        24,
+        Migration::Sql(include_str!("schema/0024_artifact_loader_req.sql")),
+    ),
 ];
 
 /// Apply every migration newer than the recorded schema version, each in its

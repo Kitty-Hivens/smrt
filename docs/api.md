@@ -63,10 +63,11 @@ GET /v1/packs/{id}/manifest/{version}      # a specific build
 A manifest may carry `checks`: what the pre-publish check found when the build
 was published. `blocking` lists findings that mean the pack cannot start (a
 declared hard dependency nothing satisfies, an artifact no loader present can
-run) -- it
+run, a version -- of a mod or of the loader itself -- outside a window something
+declared) -- it
 is non-empty only when a curator published over them, and `overridden` then says
 so. `advisory` lists what was recorded rather than enforced: active conflicts,
-versions outside a declared window, jars the registry could not identify.
+jars the registry could not identify.
 
 Advisory to a client in the strict sense -- nothing here changes what gets
 installed, and the block is absent when the check found nothing to say. It is
