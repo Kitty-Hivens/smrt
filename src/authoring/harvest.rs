@@ -88,6 +88,11 @@ pub struct JarSeed {
     // typed, version-ranged. Emitted for a non-Modrinth jar; the target modid,
     // its relation kind, and an optional version range.
     pub declared_deps: Vec<(String, RelKind, Option<Severity>, Option<String>)>,
+    /// `(loader, range)` windows the jar declares on the loader build itself
+    /// (#164). `None` when this pass never opened the jar -- a Modrinth-only
+    /// mod, whose window the loader-window check reads by range instead --
+    /// which is not the same as a jar that opened and declared none.
+    pub loader_reqs: Option<Vec<(String, String)>>,
     // JVM runtime languages (scala/kotlin) the jar needs on the classpath but a
     // modern-fork loader does not bundle, and those it provides itself. Emitted
     // as `runtime:<lang>` capability requires/provides so the resolver flags a
@@ -728,6 +733,13 @@ pub fn write_scan(conn: &Connection, scan: &ScanData, now: &str) -> Result<Harve
         }
         if !jar.class_names.is_empty() {
             upsert::set_mixin_needs(conn, mod_version_id, &jar.mixin_needs)?;
+        }
+
+        // What the jar demands of the loader build (#164). Written only for a
+        // jar this pass actually opened: recording "declares nothing" for one
+        // it never read would answer the check with a jar it has not seen.
+        if let Some(reqs) = &jar.loader_reqs {
+            upsert::set_artifact_loader_reqs(conn, &jar.sha1, reqs, now)?;
         }
 
         // Declared deps (author-written) go in for a non-authoritative-Modrinth
@@ -1595,6 +1607,12 @@ pub async fn scan(
                             .collect()
                     })
                     .unwrap_or_default(),
+                loader_reqs: mm.map(|m| {
+                    m.loader_reqs
+                        .iter()
+                        .map(|r| (r.loader.clone(), r.range.clone()))
+                        .collect()
+                }),
                 declared_deps: mm
                     .map(|m| {
                         m.deps
@@ -1695,6 +1713,7 @@ mod tests {
                     kind: None,
                     modrinth_deps: vec![],
                     declared_deps: vec![],
+                    loader_reqs: None,
                     needs_runtime: vec![],
                     provides_runtime: vec![],
                 },
@@ -1725,6 +1744,7 @@ mod tests {
                     kind: None,
                     modrinth_deps: vec![],
                     declared_deps: vec![],
+                    loader_reqs: None,
                     needs_runtime: vec![],
                     provides_runtime: vec![],
                 },
@@ -1755,6 +1775,7 @@ mod tests {
                     kind: None,
                     modrinth_deps: vec![],
                     declared_deps: vec![],
+                    loader_reqs: None,
                     needs_runtime: vec![],
                     provides_runtime: vec![],
                 },
@@ -2218,6 +2239,7 @@ mod tests {
             kind: None,
             modrinth_deps: vec![],
             declared_deps: vec![],
+            loader_reqs: None,
             needs_runtime: vec![],
             provides_runtime: vec![],
         }
@@ -2260,6 +2282,7 @@ mod tests {
             kind: Some("mod".into()),
             modrinth_deps: vec![],
             declared_deps: vec![],
+            loader_reqs: None,
             needs_runtime: vec![],
             provides_runtime: vec![],
         }

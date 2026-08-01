@@ -383,7 +383,7 @@ async fn run_build(
     // resolve the pre-publish check judges. Both read the same rows of the same
     // enriched config, so they read them together.
     job.line("classifying mods and checking the pack against the registry");
-    let (classifications, report) = {
+    let (classifications, mut report) = {
         let reg = registry.clone();
         let cfg = cfg.clone();
         tokio::task::spawn_blocking(move || {
@@ -398,6 +398,23 @@ async fn run_build(
         .map_err(|e| format!("registry task: {e}"))?
         .map_err(|e| format!("registry check failed: {e:#}"))?
     };
+
+    // What each jar demands of the loader build (#164). Off the registry pass
+    // because the answer is inside the jars, and a Modrinth pin's jar is not on
+    // this disk: each artifact is read once, by range, and remembered. A pack
+    // whose pin has fallen behind a mod's floor does not start, and until this
+    // ran nothing said so before a player's crash log.
+    job.line("checking the pinned loader build against what the mods declare");
+    match crate::authoring::Modrinth::new() {
+        Ok(modrinth) => {
+            crate::authoring::loader_windows(&cfg, storage.root(), registry, &Arc::new(modrinth))
+                .await
+                .apply(&mut report);
+        }
+        Err(e) => job.line(format!(
+            "no http client for the loader-window check ({e:#}); the pinned build stays unchecked"
+        )),
+    }
 
     // The gate (#108). Two findings mean the pack cannot start and stop a
     // publish; the rest are recorded onto the build. A dry run runs the same

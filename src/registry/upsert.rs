@@ -569,6 +569,43 @@ pub fn set_mixin_needs(
     Ok(())
 }
 
+/// Store the loader windows an artifact declares, keyed by whichever identity
+/// the mirror has for it (a sha1, or `modrinth:<version_id>` for a pin whose
+/// bytes it never held). Replaces the artifact's rows: the jar is immutable, so
+/// a second read states the same thing, and a corrected parse must win.
+///
+/// An empty list is recorded as one row with no loader -- the difference
+/// between "read it, it declares nothing" and "never read" is what keeps a
+/// silent jar from being fetched again on every check.
+pub fn set_artifact_loader_reqs(
+    conn: &Connection,
+    artifact_key: &str,
+    reqs: &[(String, String)],
+    now: &str,
+) -> Result<()> {
+    conn.execute(
+        "DELETE FROM artifact_loader_req WHERE artifact_key = ?1",
+        params![artifact_key],
+    )?;
+    if reqs.is_empty() {
+        conn.execute(
+            "INSERT INTO artifact_loader_req (artifact_key, loader, version_range, read_at)
+             VALUES (?1, '', NULL, ?2)",
+            params![artifact_key, now],
+        )?;
+        return Ok(());
+    }
+    for (loader, range) in reqs {
+        conn.execute(
+            "INSERT OR REPLACE INTO artifact_loader_req
+                (artifact_key, loader, version_range, read_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![artifact_key, loader.to_ascii_lowercase(), range, now],
+        )?;
+    }
+    Ok(())
+}
+
 pub fn upsert_pack(conn: &Connection, pack_id: &str, now: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO pack (id, created_at, updated_at)

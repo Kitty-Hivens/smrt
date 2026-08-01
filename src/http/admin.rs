@@ -890,10 +890,19 @@ async fn pack_resolve(
     }
     let cfg = state.storage.load_pack_config(&pack_id).await?;
     let registry = state.registry.clone();
-    let report = tokio::task::spawn_blocking(move || registry.with_conn(|c| resolve_pack(c, &cfg)))
+    let for_registry = cfg.clone();
+    let mut report =
+        tokio::task::spawn_blocking(move || registry.with_conn(|c| resolve_pack(c, &for_registry)))
+            .await
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("resolve task: {e}")))?
+            .map_err(ApiError::Internal)?;
+    // The one finding the registry cannot answer on its own: what each jar
+    // demands of the loader build, which lives inside the jar (#164). Run here
+    // as well as at build time so the editor shows it while the pin is being
+    // chosen, rather than at the end of a publish.
+    crate::authoring::loader_windows(&cfg, state.storage.root(), &state.registry, &state.modrinth)
         .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("resolve task: {e}")))?
-        .map_err(ApiError::Internal)?;
+        .apply(&mut report);
     Ok(Json(report))
 }
 

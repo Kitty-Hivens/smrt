@@ -8,6 +8,24 @@ version section when a release is tagged.
 
 ### Fixed
 
+- A pack whose pinned loader build is older than one of its mods demands no
+  longer publishes clean. Mods declare the loader window they run in, and the
+  pin next to them is a hand-typed line that nothing moves; when JEI raised its
+  floor to `neoforge [21.1.238,)` under a pack pinned to `21.1.234`, the loader
+  stopped before the main menu and named JEI, which is neither the file to
+  change nor a hint that a config line is. The window was being read out of
+  every jar and thrown away -- the loader is present by construction, so its
+  dependency block was filtered out with the platform ids, and the version check
+  that existed only ever compared mods against each other. It is now kept, and a
+  build whose pin falls outside one is blocked with the jar, the window and the
+  pin all named. The editor's resolve view shows the same finding while the pin
+  is being chosen.
+- The window lives inside the jar, and a Modrinth-pinned jar's bytes are not on
+  the mirror -- 92 of the 97 mods in the reference deployment's flagship pack.
+  Rather than download half a gigabyte per pack to read a few kilobytes, each
+  artifact's manifest is fetched with two HTTP range requests against the zip's
+  own directory, and what it declared is remembered: a jar is immutable, so the
+  next check of the same pin is a database query.
 - A Modrinth project's icon is served by the mirror instead of by Modrinth's
   CDN. The panel asked the mirror for the upstream url and then put that url in
   an `<img>`, so every viewer's browser announced itself to a third party once
