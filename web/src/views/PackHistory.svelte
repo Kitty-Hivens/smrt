@@ -8,6 +8,7 @@
   import { api } from '../lib/api';
   import { notifyFail, toasts } from '../lib/toasts.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { diffConfigs, type ChangeRow } from '../lib/configdiff';
   import type { Commit, CommitStatus } from '../lib/types';
 
   let {
@@ -67,6 +68,64 @@
     }
   }
 
+  // What is about to be checkpointed. Read from the two configs rather than
+  // from the count beside it: the count is changed JSON paths, which is not a
+  // list of things anyone did.
+  let rows = $state<ChangeRow[]>([]);
+  // version_id -> its version_number, filled in behind the rows. A pin on
+  // screen has to read like a version, and only Modrinth knows what
+  // `bqMxf6Ua` is called.
+  let labels = $state<Record<string, string>>({});
+  // Whether the two configs were actually read. Without it an empty list means
+  // both "nothing a person did" and "the read has not landed yet".
+  let pendingRead = $state(false);
+
+  $effect(() => {
+    const head = status?.head?.id;
+    const pending = status?.uncommitted ?? 0;
+    if (!head || pending === 0) {
+      rows = [];
+      pendingRead = false;
+      return;
+    }
+    void loadChanges(head);
+  });
+
+  async function loadChanges(head: string) {
+    try {
+      const [committed, live] = await Promise.all([
+        api.commitConfig(packId, head),
+        api.packConfig(packId),
+      ]);
+      rows = diffConfigs(committed, live.config);
+      pendingRead = true;
+      void loadLabels(rows);
+    } catch {
+      // The list is an aid, not the act: a pack whose history cannot be read
+      // still commits, and the count above still says something moved.
+      rows = [];
+      pendingRead = false;
+    }
+  }
+
+  /// One lookup per project that actually moved, and only for rows naming one.
+  async function loadLabels(current: ChangeRow[]) {
+    const projects = [...new Set(current.map((r) => r.project).filter((p): p is string => !!p))];
+    for (const project of projects) {
+      try {
+        const versions = await api.modrinthVersions(project);
+        const found: Record<string, string> = {};
+        for (const v of versions) found[v.id] = v.version_number;
+        labels = { ...labels, ...found };
+      } catch {
+        // an unreachable Modrinth leaves the ids on screen, which still says
+        // that the pin moved and to what
+      }
+    }
+  }
+
+  const label = (pin?: string) => (pin ? (labels[pin] ?? pin) : '');
+
   const short = (id: string) => id.slice(0, 8);
 
   // The timestamp as a person reads it. The stored value is RFC 3339 UTC; what
@@ -91,6 +150,29 @@
       <span class="dirty">{t('hist.none')}</span>
     {/if}
   </div>
+
+  {#if pendingRead && !rows.length && uncommitted > 0}
+    <!-- The count is changed JSON paths; a save the dependency fill touched
+         moves plenty of them without anyone having done anything. Saying so
+         beats an empty list under a number that says otherwise. -->
+    <p class="muted derived">{t('hist.derivedOnly')}</p>
+  {/if}
+
+  {#if rows.length}
+    <ul class="changes">
+      {#each rows as r (r.group + r.op + r.label)}
+        <li class={r.op}>
+          <span class="sign">{r.op === 'add' ? '+' : r.op === 'remove' ? '-' : '~'}</span>
+          <span class="what mono">{r.label}</span>
+          {#if r.op === 'change' && r.from !== undefined && r.to !== undefined}
+            <span class="move mono">{label(r.from)} &rarr; {label(r.to)}</span>
+          {:else if r.op === 'change'}
+            <span class="move muted">{t('hist.edited')}</span>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+  {/if}
 
   <div class="declare">
     <input
@@ -148,6 +230,40 @@
     color: var(--warn, var(--fg));
   }
   .clean {
+    color: var(--fg-dim);
+  }
+  .derived {
+    font-size: var(--fs-sm);
+    margin: 0 0 8px;
+  }
+  .changes {
+    list-style: none;
+    margin: 0 0 10px;
+    padding: 0;
+    font-size: var(--fs-sm);
+    max-height: 190px;
+    overflow-y: auto;
+  }
+  .changes li {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    padding: 1px 0;
+  }
+  .sign {
+    width: 1ch;
+    color: var(--fg-dim);
+  }
+  .changes li.add .sign {
+    color: var(--ok, var(--fg));
+  }
+  .changes li.remove .sign {
+    color: var(--danger, var(--fg));
+  }
+  .what {
+    overflow-wrap: anywhere;
+  }
+  .move {
     color: var(--fg-dim);
   }
   .declare {

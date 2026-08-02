@@ -407,6 +407,8 @@ export const en = {
   'hist.by': 'by {who}',
   'hist.clean': 'Nothing changed since the last commit',
   'hist.none': 'This pack has no commits yet',
+  'hist.derivedOnly': 'Nothing a person changed -- the mirror filled in dependency metadata on the last save.',
+  'hist.edited': 'edited',
   'hist.with': 'with {who}',
   'hist.buildThis': 'build this',
   'hist.restore': 'restore',

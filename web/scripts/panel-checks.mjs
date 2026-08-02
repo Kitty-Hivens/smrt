@@ -19,6 +19,7 @@ import { changedPaths } from '../src/lib/touched.svelte.ts';
 import { advertisesModList } from '../src/lib/handshake.ts';
 import { assetPath, isPackFile, ASSET_PREFIX } from '../src/lib/packassets.ts';
 import { nextPageUrl } from '../src/lib/pagelink.ts';
+import { diffConfigs } from '../src/lib/configdiff.ts';
 
 let failures = 0;
 const check = (name, cond, detail = '') => {
@@ -245,6 +246,58 @@ check('the offered list holds what old packs need', [8, 11, 16, 17, 21].every((v
   check('a cursor is taken whole',
     nextPageUrl('</v1/registry/mods?q=a-b_c&after=eyJhIjoxfQ>; rel="next"')
       === '/v1/registry/mods?q=a-b_c&after=eyJhIjoxfQ');
+}
+
+// ── what a commit is about to record ────────────────────────────────────────
+// The commit box showed a count of changed JSON paths and nothing else, so its
+// message was written from memory. The count is also not a list of things a
+// person did: the dependency fill writes `display.requires` on save, and a save
+// that changed nothing else still reported 22.
+{
+  const cfg = () => JSON.parse(JSON.stringify({
+    ...base,
+    mods: [
+      { filename: 'jei.jar', default_enabled: true, source: { type: 'modrinth', project_id: 'u6dRKJwZ', version_id: 'sc43sMLj' } },
+      { filename: 'sodium.jar', default_enabled: true, source: { type: 'smrt_cache', sha1: 'b'.repeat(40) } },
+    ],
+    assets: [{ dest: 'config/a.json', required: true, source: { type: 'smrt_static', rel_path: 'config/a.json' }, display: { name: 'A' } }],
+  }));
+  const rows = (b) => diffConfigs(cfg(), b).map((r) => `${r.group}/${r.op}/${r.label}`);
+
+  check('an unchanged config has nothing to say', rows(cfg()).length === 0);
+
+  const derived = cfg();
+  derived.mods[0].display = { requires: [{ filename: 'sodium.jar', optional: false }], presence: 'required' };
+  derived.mods[1].pulled = true;
+  check('what the mirror fills in is not a change anyone made', rows(derived).length === 0,
+    JSON.stringify(rows(derived)));
+
+  const authored = cfg();
+  authored.assets[0].display.description = 'what it does';
+  check('what a curator writes is', rows(authored).join() === 'assets/change/config/a.json');
+
+  const moved = cfg();
+  moved.mods[0].source.version_id = 'bqMxf6Ua';
+  const pinRow = diffConfigs(cfg(), moved)[0];
+  check('a moved pin carries both ends', pinRow.from === 'sc43sMLj' && pinRow.to === 'bqMxf6Ua');
+  // the row names the project so the view can replace the ids with version
+  // numbers -- `P4yXqsnw -> bqMxf6Ua` tells a reader nothing
+  check('and the project whose labels can replace them', pinRow.project === 'u6dRKJwZ');
+
+  const swapped = cfg();
+  swapped.mods = [swapped.mods[1], { filename: 'iris.jar', default_enabled: false, source: { type: 'smrt_cache', sha1: 'c'.repeat(40) } }];
+  check('an arrival and a departure are their own rows',
+    rows(swapped).join() === 'mods/add/iris.jar,mods/remove/jei.jar', JSON.stringify(rows(swapped)));
+
+  const toggled = cfg();
+  toggled.mods[1].default_enabled = false;
+  check('so is the install default a player gets', rows(toggled).join() === 'mods/change/sodium.jar');
+
+  const loader = cfg();
+  loader.loader = { name: 'neoforge', version: '21.1.248' };
+  const loaderRow = diffConfigs(cfg(), loader)[0];
+  check('the loader reads as a loader, not as two fields',
+    loaderRow.from === 'forge 14.23.5.2860' && loaderRow.to === 'neoforge 21.1.248');
 }
 
 console.log(failures ? `\n${failures} failed` : '\nall good');

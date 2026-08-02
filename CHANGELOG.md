@@ -136,6 +136,16 @@ version section when a release is tagged.
 
 ### Added
 
+- The commit box lists what is about to be recorded. It showed a count and a
+  message field, so the sentence beside it was written from memory -- and the
+  count is of changed JSON paths, which is not a list of things a person did: a
+  save whose only effect was the dependency fill writing two `display.requires`
+  lists reported 22 changes. The box now names them: mods that arrived, left, or
+  moved a pin (with both versions, not the two Modrinth ids), assets, install
+  defaults, the loader, and the pack's own fields. What the mirror fills in
+  server-side is deliberately not a row, and when that is all that moved the box
+  says so rather than showing an empty list under a number.
+
 - Reads cost what they are worth. Four things the whole `/v1` surface does now,
   written up in the API guide:
   - **Compression.** Manifests and listings are repetitive JSON and went out as
