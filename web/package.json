@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.1.0",
-    "@tanstack/svelte-table": "9.0.0-beta.58",
+    "@tanstack/svelte-table": "9.0.0-beta.65",
     "@xyflow/svelte": "^1.6.2",
     "bits-ui": "^2.18.1",
     "yjs": "^13.6.32"
