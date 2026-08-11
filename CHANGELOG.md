@@ -33,6 +33,12 @@ version section when a release is tagged.
 - Reverting to a published build records a checkpoint of its own. It wrote the
   config and stopped, so the pack came back looking changed by nobody, with the
   next build refusing to publish and nothing in the history saying why.
+- Reading a pack's history no longer reads every manifest it ever published.
+  Both the log and a commit page answered "which versions came out of this
+  checkpoint" by parsing the header of every retained manifest -- a hundred and
+  thirty files on the reference deployment's flagship pack, once per page. The
+  answer is now kept and dropped whenever a manifest is written, so it can only
+  be behind by a build nobody has published yet.
 - The live-edit markers address the row someone touched rather than the position
   it held. Paths were indexes, so a mod arriving in the middle of the list
   counted as a change to every row below it, and the summary above the editor

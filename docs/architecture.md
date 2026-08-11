@@ -53,6 +53,9 @@ Shared by all three:
   packs/<PackId>/
     summary.json                 # the catalog card (built)
     authoring/config.json        # the curator's declaration (source of truth)
+    authoring/commits/<id>.json  # a declared checkpoint: author, message, parent
+    authoring/commits/<id>.snapshot.json  # the config as it stood
+    authoring/commits/HEAD       # the newest commit's id
     manifests/<version>.json     # frozen builds
     manifests/latest             # symlink -> the current build
     static/...                   # mirror-hosted pack files (configs, resource packs)
@@ -63,13 +66,20 @@ Two files matter more than the rest: `authoring/config.json` is what a human
 edits (directly or through the panel), and `manifests/<version>.json` is what
 a launcher consumes. Everything between them is derived and rebuildable.
 
+The commits beside the config are neither: a snapshot is the only record of a
+state somebody declared worth keeping, and nothing else can reconstruct it once
+the config has moved on. History is linear and append-only -- a restore writes
+an old state forward as a new commit rather than rewinding -- so a build that
+names the checkpoint it came from keeps naming the same state forever.
+
 ## Data flows
 
 ### Authoring -> publish
 
 ```
 config.json --(save/PUT)--> depfill (pull missing hard deps from Modrinth/cache)
-config.json --(build)-----> enrichment (mcmod display, inferred requires)
+config.json --(commit)----> snapshot + HEAD (what a build is made from)
+snapshot    --(build)-----> enrichment (mcmod display, inferred requires)
                             classification (registry decision layer: side/policy)
                             pre-publish check (resolve against the graph)
                             source resolution (Modrinth lookups, cache reads)

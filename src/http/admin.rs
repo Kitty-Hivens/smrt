@@ -1763,18 +1763,10 @@ async fn list_commits(
             page.probe().unwrap_or(DEFAULT_LOG_PAGE),
         )
         .await?;
-    // One pass over the manifest headers for the whole log, not one per commit.
-    // A pack that has never published, or whose manifests cannot be listed,
-    // simply has no builds to name -- the log is worth reading either way.
-    let mut built: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-    if let Ok(builds) = state.storage.list_manifest_builds(&pack_id).await {
-        for b in builds {
-            if let Some(commit) = b.built_from {
-                built.entry(commit).or_default().push(b.version_number);
-            }
-        }
-    }
+    // One index for the whole log, and one that outlives this page: a pack that
+    // has never published, or whose manifests cannot be listed, simply has no
+    // builds to name -- the log is worth reading either way.
+    let built = state.storage.builds_by_commit(&pack_id).await;
     let rows: Vec<CommitLogEntry> = log
         .into_iter()
         .map(|commit| CommitLogEntry {
@@ -1841,14 +1833,13 @@ async fn get_commit(
         return Err(ApiError::Forbidden);
     }
     let commit = state.storage.load_commit(&pack_id, &commit_id).await?;
-    let builds = match state.storage.list_manifest_builds(&pack_id).await {
-        Ok(builds) => builds
-            .into_iter()
-            .filter(|b| b.built_from.as_deref() == Some(commit.id.as_str()))
-            .map(|b| b.version_number)
-            .collect(),
-        Err(_) => Vec::new(),
-    };
+    let builds = state
+        .storage
+        .builds_by_commit(&pack_id)
+        .await
+        .get(&commit.id)
+        .cloned()
+        .unwrap_or_default();
     Ok(Json(CommitLogEntry { commit, builds }))
 }
 

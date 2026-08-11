@@ -314,9 +314,15 @@ export const route = {
     pushPath(`/mod/${encodeURIComponent(String(ref))}`);
   },
   closeMod() {
-    focusMod = null;
     // back rather than a fresh entry: the mod page was opened from the section
-    // underneath, and closing it is the same move as pressing back
-    if (modFromPath(location.pathname)) history.back();
+    // underneath, and closing it is the same move as pressing back -- unless
+    // this session pushed nothing, which is what a shared link looks like, and
+    // back would leave the panel.
+    if (modFromPath(location.pathname) && pushed > 0) {
+      history.back();
+      return;
+    }
+    focusMod = null;
+    pushPath(`/${section}`, true);
   },
 };

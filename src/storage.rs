@@ -1,7 +1,7 @@
 use crate::domain::*;
 use crate::http::ApiError;
 use sha1::{Digest, Sha1};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,16 +16,25 @@ pub struct Storage {
     removed_lock: Arc<tokio::sync::Mutex<()>>,
     /// One lock per pack id, serializing the read-modify-write of that pack's
     /// authoring config. See [`Storage::lock_pack_config`].
-    config_locks:
-        Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    config_locks: Arc<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    /// Which builds came out of each commit, per pack. Derived from the
+    /// manifests, which is a read of every retained manifest header -- fine
+    /// once, wasteful on every page of a log and on every commit page. Dropped
+    /// whenever a manifest is written, so it can only ever be behind by a build
+    /// nobody has published yet.
+    builds_by_commit: Arc<std::sync::Mutex<HashMap<String, Arc<BuildsByCommit>>>>,
 }
+
+/// Published versions per commit id, newest first within a commit.
+type BuildsByCommit = HashMap<String, Vec<String>>;
 
 impl Storage {
     pub fn new(root: PathBuf) -> Self {
         Self {
             root,
             removed_lock: Arc::new(tokio::sync::Mutex::new(())),
-            config_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            config_locks: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            builds_by_commit: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -256,7 +265,45 @@ impl Storage {
         }
         let bytes = serde_json::to_vec_pretty(manifest)
             .map_err(|e| ApiError::Internal(anyhow::anyhow!("manifest json encode: {e}")))?;
-        atomic_write(&path, &bytes).await
+        atomic_write(&path, &bytes).await?;
+        self.forget_builds_by_commit(pack_id);
+        Ok(())
+    }
+
+    /// Which published versions came out of each commit of this pack, newest
+    /// first within a commit.
+    ///
+    /// Answered from the manifests, and remembered: the alternative is reading
+    /// every retained manifest header on every page of a log and again on every
+    /// commit page. A pack whose manifests cannot be listed has no builds to
+    /// name, which is the same answer as a pack that never published.
+    pub async fn builds_by_commit(&self, pack_id: &str) -> Arc<BuildsByCommit> {
+        if let Ok(cache) = self.builds_by_commit.lock()
+            && let Some(known) = cache.get(pack_id)
+        {
+            return known.clone();
+        }
+        let mut built: BuildsByCommit = HashMap::new();
+        if let Ok(builds) = self.list_manifest_builds(pack_id).await {
+            for b in builds {
+                if let Some(commit) = b.built_from {
+                    built.entry(commit).or_default().push(b.version_number);
+                }
+            }
+        }
+        let built = Arc::new(built);
+        if let Ok(mut cache) = self.builds_by_commit.lock() {
+            cache.insert(pack_id.to_string(), built.clone());
+        }
+        built
+    }
+
+    /// Drop what was remembered about a pack's builds, because a manifest just
+    /// moved under it.
+    fn forget_builds_by_commit(&self, pack_id: &str) {
+        if let Ok(mut cache) = self.builds_by_commit.lock() {
+            cache.remove(pack_id);
+        }
     }
 
     /// Point `manifests/latest` at `<version>.json` via an atomic symlink
@@ -1762,6 +1809,29 @@ mod tests {
                 .unwrap()
                 .tagline,
             ""
+        );
+    }
+
+    #[tokio::test]
+    async fn publishing_a_build_moves_what_the_history_says_shipped() {
+        // the index is derived from the manifests, so writing one must drop it
+        // -- a checkpoint that just shipped reading as "never built" is worse
+        // than the read it saves
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let c = commit(&s, &sample_config(), None, "first").await;
+        assert!(s.builds_by_commit("Industrial").await.is_empty());
+
+        let mut built_manifest = manifest("0.1.0", "2026-08-11T00:00:00Z", 1);
+        built_manifest.built_from = Some(c.id.clone());
+        s.save_manifest("Industrial", &built_manifest, false)
+            .await
+            .unwrap();
+
+        let built = s.builds_by_commit("Industrial").await;
+        assert_eq!(
+            built.get(&c.id).map(Vec::as_slice),
+            Some(&["0.1.0".to_string()][..])
         );
     }
 
