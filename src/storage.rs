@@ -422,7 +422,14 @@ impl Storage {
         Ok(snapshot.config)
     }
 
-    /// The history newest first, walking parents from `HEAD`.
+    /// The history newest first, walking parents from `HEAD` -- or from the
+    /// commit after `after`, which is how a second page continues the first.
+    ///
+    /// The chain is the cursor: every commit names its parent, so continuing a
+    /// walk needs no index and no offset, and a page boundary cannot drift when
+    /// a commit lands while someone is reading. An `after` that will not load is
+    /// treated as the end of the history rather than as the start of it --
+    /// answering the whole log again would silently repeat the first page.
     ///
     /// Stops at a parent that will not load rather than failing the whole read:
     /// a truncated log still tells someone what the recent history was, where
@@ -430,10 +437,17 @@ impl Storage {
     pub async fn commit_log(
         &self,
         pack_id: &str,
+        after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<crate::authoring::Commit>, ApiError> {
         let mut out = Vec::new();
-        let mut next = self.commit_head(pack_id).await;
+        let mut next = match after {
+            Some(id) => match self.load_commit(pack_id, id).await {
+                Ok(commit) => commit.parent,
+                Err(_) => return Ok(out),
+            },
+            None => self.commit_head(pack_id).await,
+        };
         while let Some(id) = next {
             if out.len() >= limit {
                 break;
@@ -1736,7 +1750,7 @@ mod tests {
         cfg.tagline = "second".into();
         let second = commit(&s, &cfg, Some(first.id.clone()), "second state").await;
 
-        let log = s.commit_log("Industrial", 100).await.unwrap();
+        let log = s.commit_log("Industrial", None, 100).await.unwrap();
         assert_eq!(
             log.iter().map(|c| &*c.id).collect::<Vec<_>>(),
             vec![&*second.id, &*first.id]
@@ -1752,6 +1766,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_page_continues_where_the_last_one_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let mut cfg = sample_config();
+        let mut ids = Vec::new();
+        let mut parent = None;
+        for n in 0..5 {
+            cfg.tagline = format!("take {n}");
+            let c = commit(&s, &cfg, parent.clone(), &format!("take {n}")).await;
+            parent = Some(c.id.clone());
+            ids.push(c.id);
+        }
+        ids.reverse(); // the log answers newest first
+
+        let first = s.commit_log("Industrial", None, 2).await.unwrap();
+        assert_eq!(
+            first.iter().map(|c| &*c.id).collect::<Vec<_>>(),
+            vec![&*ids[0], &*ids[1]]
+        );
+        let second = s
+            .commit_log("Industrial", Some(&first[1].id), 2)
+            .await
+            .unwrap();
+        assert_eq!(
+            second.iter().map(|c| &*c.id).collect::<Vec<_>>(),
+            vec![&*ids[2], &*ids[3]]
+        );
+        // and the walk ends where the history does
+        let last = s
+            .commit_log("Industrial", Some(&second[1].id), 2)
+            .await
+            .unwrap();
+        assert_eq!(
+            last.iter().map(|c| &*c.id).collect::<Vec<_>>(),
+            vec![&*ids[4]]
+        );
+        assert!(
+            s.commit_log("Industrial", Some(&ids[4]), 2)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cursor_naming_no_commit_ends_the_walk() {
+        // answering from the head again would look like the log looping rather
+        // than ending
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        commit(&s, &sample_config(), None, "only").await;
+        let rows = s
+            .commit_log("Industrial", Some(&"f".repeat(40)), 10)
+            .await
+            .unwrap();
+        assert!(rows.is_empty(), "{rows:?}");
+    }
+
+    #[tokio::test]
     async fn the_same_state_committed_twice_is_two_commits() {
         // The id covers the parent, so a snapshot identical to its predecessor
         // is still a distinct checkpoint -- otherwise "I committed and nothing
@@ -1762,7 +1835,10 @@ mod tests {
         let first = commit(&s, &cfg, None, "first").await;
         let again = commit(&s, &cfg, Some(first.id.clone()), "first").await;
         assert_ne!(first.id, again.id);
-        assert_eq!(s.commit_log("Industrial", 100).await.unwrap().len(), 2);
+        assert_eq!(
+            s.commit_log("Industrial", None, 100).await.unwrap().len(),
+            2
+        );
     }
 
     #[tokio::test]

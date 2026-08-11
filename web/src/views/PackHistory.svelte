@@ -21,6 +21,9 @@
     log,
     onChanged,
     onBuildCommit,
+    hasMore = false,
+    failed = false,
+    onMore = () => {},
     busy = false,
     message = $bindable(''),
     body = $bindable(''),
@@ -32,6 +35,11 @@
     // the pack's event stream.
     onChanged: () => void;
     onBuildCommit: (commitId: string) => void;
+    /// Whether the history goes further back than what is on screen.
+    hasMore?: boolean;
+    /// Whether the read failed, which is not the same as a pack with no history.
+    failed?: boolean;
+    onMore?: () => void;
     busy?: boolean;
     // Owned by the build console, because the same sentence serves both acts:
     // committing on its own, and committing as the first half of a build.
@@ -261,9 +269,12 @@
         </li>
       {/each}
     </ol>
-  {:else if status?.head}
-    <!-- a head with no log means the read failed, not that nothing was ever
-         declared: saying so beats an empty space where a history was -->
+    {#if hasMore}
+      <button class="more" onclick={onMore} disabled={busy || working}>{t('hist.more')}</button>
+    {/if}
+  {:else if failed}
+    <!-- an unread history and a pack that never declared one look identical
+         from an empty list, and only one of them is worth acting on -->
     <p class="muted empty">{t('hist.logUnread')}</p>
   {/if}
 </div>
@@ -319,6 +330,19 @@
   .empty {
     font-size: var(--fs-sm);
     margin: 14px 0 0;
+  }
+  .more {
+    background: none;
+    border: 0;
+    padding: 8px 0 0;
+    font: inherit;
+    font-size: var(--fs-sm);
+    color: var(--accent, var(--fg));
+    cursor: pointer;
+  }
+  .more:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
   .log {
     list-style: none;

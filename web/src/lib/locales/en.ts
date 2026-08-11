@@ -421,6 +421,7 @@ export const en = {
   'hist.idCopied': 'Commit id copied',
   'hist.builtFrom': 'Published builds made from this commit',
   'hist.neverBuilt': 'never built',
+  'hist.more': 'older commits',
   'hist.logUnread': 'The history could not be read.',
   'hist.hint':
     'A build is made from a commit, not from what is on screen: with edits merging live, building the working state could ship a half-typed word. Restoring writes an older state forward as a new commit rather than erasing what came after it.',

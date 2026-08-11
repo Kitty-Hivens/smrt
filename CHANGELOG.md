@@ -45,6 +45,12 @@ version section when a release is tagged.
 
 ### Added
 
+- A pack's history is readable past its first page. The log was capped at a
+  hundred commits with nothing to continue from, so a pack that had been curated
+  for long enough simply had no way to reach its older checkpoints. It now pages
+  by the chain itself -- every commit names its parent, so the cursor is a
+  commit id and a page boundary cannot drift when someone commits while another
+  person is reading.
 - A commit has a page and an address (`/packs/<id>/commit/<sha>`): its message,
   who declared it, everyone whose work it took in, the full id, and what it
   recorded -- read against the commit before it, against any other checkpoint,

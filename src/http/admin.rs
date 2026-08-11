@@ -1717,16 +1717,6 @@ async fn create_commit(
     Ok((StatusCode::CREATED, Json(commit)))
 }
 
-#[derive(serde::Deserialize)]
-struct LogParams {
-    #[serde(default = "default_log_limit")]
-    limit: usize,
-}
-
-fn default_log_limit() -> usize {
-    100
-}
-
 /// One line of the log: the commit, and which published builds came out of it.
 ///
 /// A checkpoint nobody shipped and one that is running on three hundred
@@ -1742,18 +1732,28 @@ pub struct CommitLogEntry {
     pub builds: Vec<String>,
 }
 
+/// The log, newest first, paged by the chain itself: the cursor names the last
+/// commit answered, and the next page starts at its parent. A pack whose history
+/// outgrew one page was unreadable past its head before this -- the limit was
+/// capped and there was nothing to continue from.
 async fn list_commits(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
-    Query(p): Query<LogParams>,
-) -> Result<Json<Vec<CommitLogEntry>>, ApiError> {
+    Query(page): Query<PageQuery>,
+    uri: Uri,
+) -> Result<Response, ApiError> {
     if !super::auth::may_author(&identity, &pack_id) {
         return Err(ApiError::Forbidden);
     }
+    let after = page.cursor().and_then(|parts| parts.first().cloned());
     let log = state
         .storage
-        .commit_log(&pack_id, p.limit.clamp(1, 500))
+        .commit_log(
+            &pack_id,
+            after.as_deref(),
+            page.probe().unwrap_or(usize::MAX),
+        )
         .await?;
     // One pass over the manifest headers for the whole log, not one per commit.
     // A pack that has never published, or whose manifests cannot be listed,
@@ -1767,14 +1767,14 @@ async fn list_commits(
             }
         }
     }
-    Ok(Json(
-        log.into_iter()
-            .map(|commit| CommitLogEntry {
-                builds: built.get(&commit.id).cloned().unwrap_or_default(),
-                commit,
-            })
-            .collect(),
-    ))
+    let rows: Vec<CommitLogEntry> = log
+        .into_iter()
+        .map(|commit| CommitLogEntry {
+            builds: built.get(&commit.id).cloned().unwrap_or_default(),
+            commit,
+        })
+        .collect();
+    Ok(page.answer(rows, &uri, |r| vec![r.commit.id.clone()]))
 }
 
 /// Where the history is and how far the working state has moved off it -- what

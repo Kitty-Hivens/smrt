@@ -25,12 +25,35 @@
   // state the history shows.
   let status = $state<CommitStatus | null>(null);
   let log = $state<CommitLogEntry[]>([]);
+  // Where the next page of the log starts, or null at the end of the history.
+  let logNext = $state<string | null>(null);
+  let logFailed = $state(false);
 
   async function refreshHistory() {
     try {
-      [status, log] = await Promise.all([api.commitStatus(packId), api.commits(packId)]);
+      const [s, page] = await Promise.all([api.commitStatus(packId), api.commits(packId)]);
+      status = s;
+      log = page.rows;
+      logNext = page.next;
+      logFailed = false;
     } catch {
-      // a pack with no history yet answers nothing useful; the console still works
+      // a pack with no history yet answers nothing useful; the console still
+      // works, and the history view says it could not read rather than
+      // pretending the pack has none
+      logFailed = true;
+    }
+  }
+
+  /// The next page, appended. Reading further back is a step someone takes, not
+  /// something the editor does on its own on a pack with hundreds of them.
+  async function moreHistory() {
+    if (!logNext) return;
+    try {
+      const page = await api.commitsPage(logNext);
+      log = [...log, ...page.rows];
+      logNext = page.next;
+    } catch (e) {
+      notifyFail(e);
     }
   }
 
@@ -153,6 +176,9 @@
     {busy}
     onChanged={refreshHistory}
     onBuildCommit={(id) => build(false, id)}
+    hasMore={!!logNext}
+    failed={logFailed}
+    onMore={moreHistory}
     bind:message={commitMessage}
     bind:body={commitBody}
   />

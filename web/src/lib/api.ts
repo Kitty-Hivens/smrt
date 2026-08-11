@@ -289,9 +289,14 @@ export const api = {
   // A commit is what a build is made from, so these sit beside the build rather
   // than in a corner of their own.
   // Each line carries the versions built from it, so a checkpoint that shipped
-  // and one that never did do not read the same.
-  commits: (id: string) =>
-    getJson<CommitLogEntry[]>(`/v1/authoring/packs/${encodeURIComponent(id)}/commits`),
+  // and one that never did do not read the same. Paged by the chain: the `Link`
+  // names where the next page starts, so a history longer than a page is
+  // readable past its head.
+  commits: (id: string, limit = 40) =>
+    getPage<CommitLogEntry>(
+      `/v1/authoring/packs/${encodeURIComponent(id)}/commits?limit=${limit}`,
+    ),
+  commitsPage: (url: string) => getPage<CommitLogEntry>(url),
   // Where the history is, and how far the live config has moved off it -- what
   // the editor needs to say "N changes since the last commit" before a build.
   commitStatus: (id: string) =>
