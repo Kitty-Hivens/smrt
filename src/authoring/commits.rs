@@ -30,6 +30,7 @@
 //! parent chain, and a log view that had to read every snapshot to show a list
 //! of messages would read megabytes to render kilobytes.
 
+use super::configdiff::ConfigChange;
 use crate::domain::PackConfig;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -79,9 +80,15 @@ pub struct CommitStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub head: Option<Commit>,
-    /// Fields that differ between the live config and `head`'s snapshot. Zero
-    /// means the working state is exactly the last checkpoint, which is the
-    /// only state in which a build needs no new commit.
+    /// What a commit would record: every difference between `head`'s snapshot
+    /// and the live config, as rows. Empty on a pack with no history -- there is
+    /// nothing to compare against, and `uncommitted` says so on its own.
+    #[serde(default)]
+    pub changes: Vec<ConfigChange>,
+    /// How many of them there are. Zero means the working state is exactly the
+    /// last checkpoint, which is the only state in which a build needs no new
+    /// commit. It is the length of `changes`, so the number beside a list can
+    /// never disagree with the list.
     #[ts(type = "number")]
     pub uncommitted: usize,
     /// Who has saved since `head`, so the commit dialog can name them before it
@@ -134,136 +141,4 @@ pub fn make_commit(
             config: config.clone(),
         },
     ))
-}
-
-/// Every field whose value differs between two configs, addressed by path.
-///
-/// Counted rather than rendered by the caller today, but a count is the thing
-/// that must not lie: "47 changes since the last commit" is what tells someone
-/// a checkpoint is worth making. Arrays are compared by position and reported
-/// at the row, because a mod row is the unit a person edits -- `mods.3` is an
-/// address someone can act on where `mods` is not.
-pub fn changed_paths(before: &serde_json::Value, after: &serde_json::Value) -> Vec<String> {
-    let mut out = Vec::new();
-    walk(before, after, String::new(), &mut out);
-    out
-}
-
-fn walk(before: &serde_json::Value, after: &serde_json::Value, at: String, out: &mut Vec<String>) {
-    use serde_json::Value;
-    if before == after {
-        return;
-    }
-    match (before, after) {
-        (Value::Object(a), Value::Object(b)) => {
-            let mut keys: Vec<&String> = a.keys().chain(b.keys()).collect();
-            keys.sort();
-            keys.dedup();
-            for key in keys {
-                let null = Value::Null;
-                let path = if at.is_empty() {
-                    key.clone()
-                } else {
-                    format!("{at}.{key}")
-                };
-                walk(
-                    a.get(key).unwrap_or(&null),
-                    b.get(key).unwrap_or(&null),
-                    path,
-                    out,
-                );
-            }
-        }
-        (Value::Array(a), Value::Array(b)) => {
-            for i in 0..a.len().max(b.len()) {
-                match (a.get(i), b.get(i)) {
-                    (Some(x), Some(y)) if x == y => {}
-                    _ => out.push(format!("{at}.{i}")),
-                }
-            }
-        }
-        _ => {
-            if at.is_empty() {
-                // two configs that share no shape at all; report the whole thing
-                // rather than nothing, so a count of zero always means "equal"
-                out.push("config".to_string());
-            } else {
-                out.push(at);
-            }
-        }
-    }
-}
-
-/// How far the live config has moved off a commit's snapshot.
-pub fn uncommitted(head: Option<&PackConfig>, live: &PackConfig) -> usize {
-    let Some(head) = head else {
-        // Nothing committed yet: everything there is is uncommitted, but a
-        // field count would read as noise on a pack that has simply never used
-        // history. One outstanding change -- the pack itself.
-        return 1;
-    };
-    let (Ok(a), Ok(b)) = (serde_json::to_value(head), serde_json::to_value(live)) else {
-        return 0;
-    };
-    changed_paths(&a, &b).len()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn v(s: &str) -> serde_json::Value {
-        serde_json::from_str(s).unwrap()
-    }
-
-    #[test]
-    fn equal_configs_have_nothing_uncommitted() {
-        assert!(changed_paths(&v(r#"{"a":1,"b":[1,2]}"#), &v(r#"{"a":1,"b":[1,2]}"#)).is_empty());
-    }
-
-    #[test]
-    fn a_scalar_is_reported_at_its_own_path() {
-        assert_eq!(
-            changed_paths(&v(r#"{"a":1,"b":2}"#), &v(r#"{"a":9,"b":2}"#)),
-            vec!["a"]
-        );
-    }
-
-    #[test]
-    fn a_row_is_reported_as_the_row_not_its_fields() {
-        // what a person edits is the mod row; "mods.1" is an address they can act
-        // on where "mods.1.filename" buries the row in its own detail
-        assert_eq!(
-            changed_paths(
-                &v(r#"{"mods":[{"f":"a"},{"f":"b"}]}"#),
-                &v(r#"{"mods":[{"f":"a"},{"f":"c"}]}"#)
-            ),
-            vec!["mods.1"]
-        );
-    }
-
-    #[test]
-    fn an_added_or_removed_row_counts_once() {
-        assert_eq!(
-            changed_paths(&v(r#"{"m":[1,2]}"#), &v(r#"{"m":[1,2,3]}"#)),
-            vec!["m.2"]
-        );
-        assert_eq!(
-            changed_paths(&v(r#"{"m":[1,2,3]}"#), &v(r#"{"m":[1,2]}"#)),
-            vec!["m.2"]
-        );
-    }
-
-    #[test]
-    fn a_missing_key_differs_from_a_present_one() {
-        assert_eq!(changed_paths(&v(r#"{"a":1}"#), &v(r#"{}"#)), vec!["a"]);
-    }
-
-    #[test]
-    fn nested_paths_are_addresses() {
-        assert_eq!(
-            changed_paths(&v(r#"{"meta":{"d":"x"}}"#), &v(r#"{"meta":{"d":"y"}}"#)),
-            vec!["meta.d"]
-        );
-    }
 }

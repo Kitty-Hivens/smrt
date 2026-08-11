@@ -13,6 +13,7 @@ pub mod build;
 pub mod bytecode;
 pub mod classfile;
 pub mod commits;
+pub mod configdiff;
 pub mod curator;
 pub mod depfill;
 pub mod gate;
@@ -36,7 +37,8 @@ pub mod versions;
 
 pub use bootstrap::{BootstrapArgs, bootstrap};
 pub use build::{Built, build_manifest, make_pack_summary};
-pub use commits::{Commit, CommitSnapshot, CommitStatus, make_commit, uncommitted};
+pub use commits::{Commit, CommitSnapshot, CommitStatus, make_commit};
+pub use configdiff::{ChangeField, ChangeGroup, ChangeOp, ConfigChange, diff_configs, uncommitted};
 pub use curator::{
     McModInfo, enrich_from_mcmod_info, infer_requires_from_mcmod_info, jar_icon, read_mcmod_info,
 };

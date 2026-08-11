@@ -103,8 +103,16 @@ fn authoring_router(state: AppState) -> Router {
             get(commit_status),
         )
         .route(
+            "/v1/authoring/packs/{pack_id}/commits/{commit_id}",
+            get(get_commit),
+        )
+        .route(
             "/v1/authoring/packs/{pack_id}/commits/{commit_id}/config",
             get(get_commit_config),
+        )
+        .route(
+            "/v1/authoring/packs/{pack_id}/commits/{commit_id}/diff",
+            get(commit_diff),
         )
         .route(
             "/v1/authoring/packs/{pack_id}/commits/{commit_id}/restore",
@@ -1583,9 +1591,11 @@ struct RevertParams {
 }
 
 // Overwrite the authoring config with one reconstructed from a published build's
-// manifest + summary -- the panel's "revert to build" affordance, since config
-// edits autosave with no history of their own. Returns the new config so the
-// editor can swap to it without a reload.
+// manifest + summary -- the panel's "revert to build" affordance. Returns the new
+// config so the editor can swap to it without a reload, and records the state it
+// wrote as a checkpoint of its own: a revert is a decision somebody made, and one
+// that leaves no trace in the history leaves the pack looking dirty for reasons
+// nobody can read back.
 async fn revert_pack_config(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
@@ -1610,8 +1620,15 @@ async fn revert_pack_config(
     // on the next merge, so the revert settles it too. Editors resync from the
     // reverted config, which is what a revert means to them.
     state.docs.forget(&pack_id);
-    state.storage.save_pack_config(&pack_id, &cfg).await?;
-    let rev = rev_of(&cfg)?;
+    let (cfg, rev) = store_edited_config(&state, &pack_id, cfg, &identity.login, false).await?;
+    checkpoint(
+        &state,
+        &pack_id,
+        &cfg,
+        &identity,
+        format!("revert to {}", p.version),
+    )
+    .await?;
     audit(
         &state,
         &identity,
@@ -1710,20 +1727,53 @@ fn default_log_limit() -> usize {
     100
 }
 
+/// One line of the log: the commit, and which published builds came out of it.
+///
+/// A checkpoint nobody shipped and one that is running on three hundred
+/// machines look the same in a list of messages. The manifests already record
+/// the commit they were built from; this is that record read back.
+#[derive(serde::Serialize, ts_rs::TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct CommitLogEntry {
+    #[serde(flatten)]
+    pub commit: crate::authoring::Commit,
+    /// Pack versions built from this commit, newest first. Empty for a
+    /// checkpoint that was never published.
+    pub builds: Vec<String>,
+}
+
 async fn list_commits(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
     Query(p): Query<LogParams>,
-) -> Result<Json<Vec<crate::authoring::Commit>>, ApiError> {
+) -> Result<Json<Vec<CommitLogEntry>>, ApiError> {
     if !super::auth::may_author(&identity, &pack_id) {
         return Err(ApiError::Forbidden);
     }
+    let log = state
+        .storage
+        .commit_log(&pack_id, p.limit.clamp(1, 500))
+        .await?;
+    // One pass over the manifest headers for the whole log, not one per commit.
+    // A pack that has never published, or whose manifests cannot be listed,
+    // simply has no builds to name -- the log is worth reading either way.
+    let mut built: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    if let Ok(builds) = state.storage.list_manifest_builds(&pack_id).await {
+        for b in builds {
+            if let Some(commit) = b.built_from {
+                built.entry(commit).or_default().push(b.version_number);
+            }
+        }
+    }
     Ok(Json(
-        state
-            .storage
-            .commit_log(&pack_id, p.limit.clamp(1, 500))
-            .await?,
+        log.into_iter()
+            .map(|commit| CommitLogEntry {
+                builds: built.get(&commit.id).cloned().unwrap_or_default(),
+                commit,
+            })
+            .collect(),
     ))
 }
 
@@ -1742,15 +1792,50 @@ async fn commit_status(
         Some(id) => state.storage.load_commit(&pack_id, &id).await.ok(),
         None => None,
     };
-    let head_config = match &head {
-        Some(c) => state.storage.load_commit_config(&pack_id, &c.id).await.ok(),
-        None => None,
+    let changes = match &head {
+        None => Vec::new(),
+        // `config_rev` is a hash of the same projection the diff compares over,
+        // so a matching revision settles the question without reading the
+        // snapshot at all -- which is the everyday answer on a clean pack.
+        Some(c) if rev_of(&live).is_ok_and(|rev| rev == c.config_rev) => Vec::new(),
+        Some(c) => match state.storage.load_commit_config(&pack_id, &c.id).await {
+            Ok(snapshot) => crate::authoring::diff_configs(&snapshot, &live),
+            Err(_) => vec![crate::authoring::configdiff::whole_config()],
+        },
     };
     Ok(Json(crate::authoring::CommitStatus {
-        uncommitted: crate::authoring::uncommitted(head_config.as_ref(), &live),
+        // A pack with no history has nothing to diff against, and one
+        // outstanding change: the pack itself.
+        uncommitted: if head.is_none() { 1 } else { changes.len() },
+        changes,
         pending_authors: state.storage.pending_authors(&pack_id).await,
         head,
     }))
+}
+
+/// One commit by name, with the builds that came out of it.
+///
+/// A commit has an address, so the page behind that address must be readable
+/// without the log that lists it -- the log is capped, and the checkpoint a
+/// build names can be older than the cap.
+async fn get_commit(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path((pack_id, commit_id)): Path<(String, String)>,
+) -> Result<Json<CommitLogEntry>, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    let commit = state.storage.load_commit(&pack_id, &commit_id).await?;
+    let builds = match state.storage.list_manifest_builds(&pack_id).await {
+        Ok(builds) => builds
+            .into_iter()
+            .filter(|b| b.built_from.as_deref() == Some(commit.id.as_str()))
+            .map(|b| b.version_number)
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    Ok(Json(CommitLogEntry { commit, builds }))
 }
 
 async fn get_commit_config(
@@ -1767,6 +1852,75 @@ async fn get_commit_config(
             .load_commit_config(&pack_id, &commit_id)
             .await?,
     ))
+}
+
+#[derive(serde::Deserialize)]
+struct DiffParams {
+    /// What to read this commit against: another commit's id, or `live` for the
+    /// working config. Absent -> the commit's parent, which is what this commit
+    /// itself recorded.
+    against: Option<String>,
+}
+
+/// Two states of one pack, and every difference between them.
+#[derive(serde::Serialize, ts_rs::TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct CommitDiff {
+    /// The left side: a commit id, the literal `live`, or absent on a first
+    /// commit, which has nothing before it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub from: Option<String>,
+    /// The right side: always the commit named in the path.
+    pub to: String,
+    pub changes: Vec<crate::authoring::ConfigChange>,
+}
+
+/// What a commit recorded, or what separates it from any other state.
+///
+/// Reading a commit against `live` is the question a restore asks -- "what
+/// happens if I put this back" -- which is why a restore can show its own
+/// consequences before it is pressed rather than after.
+async fn commit_diff(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path((pack_id, commit_id)): Path<(String, String)>,
+    Query(p): Query<DiffParams>,
+) -> Result<Json<CommitDiff>, ApiError> {
+    if !super::auth::may_author(&identity, &pack_id) {
+        return Err(ApiError::Forbidden);
+    }
+    let target = state
+        .storage
+        .load_commit_config(&pack_id, &commit_id)
+        .await?;
+    let commit = state.storage.load_commit(&pack_id, &commit_id).await?;
+    let (from, before) = match p.against.as_deref() {
+        Some("live") => (
+            Some("live".to_string()),
+            Some(state.storage.load_pack_config(&pack_id).await?),
+        ),
+        Some(other) => (
+            Some(other.to_string()),
+            Some(state.storage.load_commit_config(&pack_id, other).await?),
+        ),
+        None => match &commit.parent {
+            Some(parent) => (
+                Some(parent.clone()),
+                Some(state.storage.load_commit_config(&pack_id, parent).await?),
+            ),
+            None => (None, None),
+        },
+    };
+    let changes = match &before {
+        Some(before) => crate::authoring::diff_configs(before, &target),
+        None => crate::authoring::configdiff::initial(&target),
+    };
+    Ok(Json(CommitDiff {
+        from,
+        to: commit_id,
+        changes,
+    }))
 }
 
 #[derive(serde::Deserialize)]
@@ -1806,34 +1960,12 @@ async fn restore_commit(
     let (cfg, _rev) =
         store_edited_config(&state, &pack_id, restored, &identity.login, false).await?;
 
-    let parent = state.storage.commit_head(&pack_id).await;
     let message = req
         .message
         .map(|m| m.trim().to_string())
         .filter(|m| !m.is_empty())
         .unwrap_or_else(|| format!("restore {}", short_commit(&commit_id)));
-    let (commit, snapshot) = crate::authoring::make_commit(
-        &cfg,
-        parent,
-        &identity.login,
-        &message,
-        vec![identity.login.clone()],
-        crate::authoring::build::now_rfc3339(),
-    )
-    .map_err(|e| ApiError::Internal(anyhow::anyhow!("commit encode: {e}")))?;
-    state
-        .storage
-        .save_commit(&pack_id, &commit, &snapshot)
-        .await?;
-
-    state.packs.publish(
-        &pack_id,
-        crate::authoring::PackEvent::Committed {
-            id: commit.id.clone(),
-            by: identity.login.clone(),
-            message: commit.message.clone(),
-        },
-    );
+    let commit = checkpoint(&state, &pack_id, &cfg, &identity, message).await?;
     audit(
         &state,
         &identity,
@@ -1843,6 +1975,46 @@ async fn restore_commit(
     )
     .await;
     Ok((StatusCode::CREATED, Json(commit)))
+}
+
+/// Write a state forward as a checkpoint: make the commit, store it, tell the
+/// pack it happened.
+///
+/// The caller holds the config lock and has already written the config this
+/// records. Shared by the two acts that put an older state back -- restoring a
+/// commit, and reverting to a published build -- so neither can quietly stop
+/// leaving a trace behind. Both name only the person who pressed it: they are
+/// putting a state back, not signing off on whatever anyone else had in flight.
+async fn checkpoint(
+    state: &AppState,
+    pack_id: &str,
+    cfg: &PackConfig,
+    identity: &Identity,
+    message: String,
+) -> Result<crate::authoring::Commit, ApiError> {
+    let parent = state.storage.commit_head(pack_id).await;
+    let (commit, snapshot) = crate::authoring::make_commit(
+        cfg,
+        parent,
+        &identity.login,
+        &message,
+        vec![identity.login.clone()],
+        crate::authoring::build::now_rfc3339(),
+    )
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("commit encode: {e}")))?;
+    state
+        .storage
+        .save_commit(pack_id, &commit, &snapshot)
+        .await?;
+    state.packs.publish(
+        pack_id,
+        crate::authoring::PackEvent::Committed {
+            id: commit.id.clone(),
+            by: identity.login.clone(),
+            message: commit.message.clone(),
+        },
+    );
+    Ok(commit)
 }
 
 /// The short form a person reads. Long enough to be unambiguous in a pack's

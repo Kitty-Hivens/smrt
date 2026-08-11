@@ -220,6 +220,10 @@ persisted snapshots across restarts (a job running at a restart reads failed,
 with an explicit interrupted line), while the live SSE tail is
 memory-only.
 
+A build carries `built_from`: the id of the checkpoint its config came from,
+also present per build in the versions listing. Absent on CLI builds (which
+build the working config) and on anything built before a pack had history.
+
 `GET /v1/events` (SSE, any signed-in caller) is the mirror-wide equivalent:
 what changed, as it changes, so a view listens instead of asking again on a
 timer. Three event names -- `registry` (the mod index moved: a harvest ran, a

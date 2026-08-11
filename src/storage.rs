@@ -1347,6 +1347,8 @@ struct ManifestHead {
     generated_at: String,
     #[serde(default)]
     fingerprint: Option<String>,
+    #[serde(default)]
+    built_from: Option<String>,
     minecraft: MinecraftSpec,
     loader: LoaderSpec,
     #[serde(default)]
@@ -1374,6 +1376,7 @@ fn build_info_from_head(head: ManifestHead) -> ManifestBuildInfo {
         version_number: head.pack_version,
         date_published: head.generated_at,
         fingerprint: head.fingerprint,
+        built_from: head.built_from,
         changelog: head.changelog,
         changelog_i18n: head.changelog_i18n,
         mods_count: head.mods.len() as u64,
