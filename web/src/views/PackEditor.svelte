@@ -311,17 +311,28 @@
 
   /// The recent changes, as sentences. Three at most: a longer list is not read,
   /// and the ones under it are the older ones.
-  const touchLines = $derived(
-    touches.live.slice(0, 3).map((entry) => ({
-      path: entry.path,
+  ///
+  /// Grouped by what a reader is told, not by path: two mods edited in one
+  /// window are two paths and one sentence, and the ungrouped list said
+  /// "someone - a mod" twice in a row.
+  const touchLines = $derived.by(() => {
+    const byLabel = new Map<string, string[]>();
+    for (const entry of touches.live) {
+      const label = fieldLabel(entry.path);
+      const who = byLabel.get(label) ?? [];
+      for (const name of entry.who) if (!who.includes(name)) who.push(name);
+      byLabel.set(label, who);
+    }
+    return [...byLabel.entries()].slice(0, 3).map(([label, people]) => ({
+      label,
       who:
-        entry.who.length === 1
-          ? entry.who[0]
-          : entry.who.length === 2
-            ? entry.who.join(' & ')
-            : t('pe.touchedByN', { n: String(entry.who.length) }),
-    })),
-  );
+        people.length === 1
+          ? people[0]
+          : people.length === 2
+            ? people.join(' & ')
+            : t('pe.touchedByN', { n: String(people.length) }),
+    }));
+  });
 
   // The handshake claim and its drift. Loaded on demand: it asks a game server,
   // which is slower than everything else here and pointless for a pack that
@@ -1079,8 +1090,8 @@
   {#if touchLines.length}
     <div class="touched" aria-live="polite">
       <span class="faint">{t('pe.touchedTitle')}</span>
-      {#each touchLines as line (line.path)}
-        <span class="touch">{line.who} &middot; {fieldLabel(line.path)}</span>
+      {#each touchLines as line (line.label)}
+        <span class="touch">{line.who} &middot; {line.label}</span>
       {/each}
     </div>
   {/if}

@@ -180,24 +180,43 @@ check('the offered list holds what old packs need', [8, 11, 16, 17, 21].every((v
 
   const row = clone(); row.mods[1].default_enabled = false;
   check('an edited row is reported as the row, not the whole list',
-    JSON.stringify(changedPaths(base, row)) === '["mods.1"]',
+    JSON.stringify(changedPaths(base, row)) === '["mods.ae2.jar"]',
     JSON.stringify(changedPaths(base, row)));
 
   const added = clone(); added.mods.push({ filename: 'thermal.jar' });
   check('an added row is one path, not every field in it',
-    JSON.stringify(changedPaths(base, added)) === '["mods.2"]',
+    JSON.stringify(changedPaths(base, added)) === '["mods.thermal.jar"]',
     JSON.stringify(changedPaths(base, added)));
 
   const removed = clone(); removed.mods.pop();
-  check('a removed row is reported too', JSON.stringify(changedPaths(base, removed)) === '["mods.1"]',
+  check('a removed row is reported too',
+    JSON.stringify(changedPaths(base, removed)) === '["mods.ae2.jar"]',
     JSON.stringify(changedPaths(base, removed)));
 
+  // a marker keyed by position marks the wrong row as soon as one arrives above
+  // it -- and marks every row below as touched by whoever added it
+  const inserted = clone(); inserted.mods.splice(1, 0, { filename: 'create.jar' });
+  check('a row arriving in the middle touches one row',
+    JSON.stringify(changedPaths(base, inserted)) === '["mods.create.jar"]',
+    JSON.stringify(changedPaths(base, inserted)));
+
+  const reordered = clone(); reordered.mods.reverse();
+  check('reordering the list touches nothing',
+    changedPaths(base, reordered).length === 0,
+    JSON.stringify(changedPaths(base, reordered)));
+
   check('an unchanged config reports nothing', changedPaths(base, clone()).length === 0);
+
+  // plain values have nothing to be named by, so they stay positional
+  const tagged = { tags: ['tech', 'magic'] };
+  check('a list of plain values is still addressed by position',
+    JSON.stringify(changedPaths(tagged, { tags: ['tech', 'quests'] })) === '["tags.1"]',
+    JSON.stringify(changedPaths(tagged, { tags: ['tech', 'quests'] })));
 
   const two = clone();
   two.display_name = 'X'; two.mods[0].default_enabled = false;
   check('two independent changes are two paths',
-    JSON.stringify(changedPaths(base, two).sort()) === '["display_name","mods.0"]',
+    JSON.stringify(changedPaths(base, two).sort()) === '["display_name","mods.jei.jar"]',
     JSON.stringify(changedPaths(base, two)));
 }
 

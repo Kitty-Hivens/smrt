@@ -33,6 +33,12 @@ version section when a release is tagged.
 - Reverting to a published build records a checkpoint of its own. It wrote the
   config and stopped, so the pack came back looking changed by nobody, with the
   next build refusing to publish and nothing in the history saying why.
+- A live-edit marker names the row someone touched rather than the position it
+  held. Paths were indexes, so a mod arriving in the middle of the list marked
+  every row below it as touched by whoever added it, and the marker on a row
+  followed the slot rather than the mod when anything shifted above it. The
+  summary line also groups by what it says, where two mods edited in one window
+  read as the same sentence printed twice.
 - Restoring a commit asks first, and says what it will do: how many arrivals,
   departures and changes it writes over the working state. It was a single
   click, next to "build this", with no statement of consequences anywhere.

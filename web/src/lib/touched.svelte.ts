@@ -21,12 +21,26 @@ const WINDOW_MS = 6000;
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
+/// What names a row of the config: a mod is its filename, an asset its
+/// destination. Rows that carry neither (tags, gallery urls) are plain values
+/// with nothing to be named by, and fall back to their position.
+function rowKey(value: Json): string | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const row = value as { [key: string]: Json };
+  for (const key of ['filename', 'dest']) {
+    const name = row[key];
+    if (typeof name === 'string' && name) return name;
+  }
+  return null;
+}
+
 /// Every path whose value differs between two states of the config.
 ///
-/// Arrays are compared by position and reported at the row: a mod row is the
-/// thing a person edits, and saying "mods.3" is an address someone can act on
-/// where "mods" is not. A row appearing or disappearing is reported as the row,
-/// not as every field inside it.
+/// Rows are addressed by what names them -- `mods.sodium.jar` -- not by where
+/// they sit. A marker keyed by position marks the wrong row the moment someone
+/// inserts one above it, and inserting one into an alphabetical list marked
+/// every row below as touched by whoever added it. A row appearing or
+/// disappearing is reported as the row, not as every field inside it.
 export function changedPaths(before: Json, after: Json, prefix = ''): string[] {
   if (before === after) return [];
   const bothObjects =
@@ -38,6 +52,19 @@ export function changedPaths(before: Json, after: Json, prefix = ''): string[] {
   if (!bothObjects) return prefix ? [prefix] : [];
 
   if (Array.isArray(before) && Array.isArray(after)) {
+    const named = [...before, ...after].every((row) => rowKey(row) !== null);
+    if (named) {
+      const was = new Map(before.map((row) => [rowKey(row) as string, JSON.stringify(row)]));
+      const now = new Map(after.map((row) => [rowKey(row) as string, JSON.stringify(row)]));
+      const out: string[] = [];
+      for (const [key, value] of now) {
+        if (was.get(key) !== value) out.push(`${prefix}.${key}`);
+      }
+      for (const key of was.keys()) {
+        if (!now.has(key)) out.push(`${prefix}.${key}`);
+      }
+      return out;
+    }
     const out: string[] = [];
     const shared = Math.min(before.length, after.length);
     for (let i = 0; i < shared; i++) {
