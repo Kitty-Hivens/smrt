@@ -158,9 +158,15 @@ async function mayLeaveEditor(): Promise<boolean> {
 /// Push a URL for a state the user navigated to, so it becomes a history entry
 /// they can come back from. Replacing (rather than pushing) the very first
 /// entry keeps `/` from sitting behind every session as a dead step.
+/// How many entries this session pushed. Going back is only a way out of a
+/// pane if the app put something behind it: a link opened straight into a
+/// commit has the previous site there, and `history.back()` would leave.
+let pushed = 0;
+
 function pushPath(path: string, replace = false) {
   if (location.pathname === path) return;
   history[replace ? 'replaceState' : 'pushState']({}, '', path);
+  if (!replace) pushed += 1;
 }
 
 function remember(s: Section) {
@@ -175,6 +181,7 @@ function remember(s: Section) {
 // store follows -- without pushing, or every back press would leave a new entry.
 if (typeof window !== 'undefined') {
   window.addEventListener('popstate', async () => {
+    if (pushed > 0) pushed -= 1;
     const pack = packFromPath(location.pathname);
     // History has already moved by the time this fires, so a refused leave has
     // to put the editor's entry back. `forward()` walks to the entry we just
@@ -269,11 +276,13 @@ export const route = {
   /// Close the editor the same way the back button does, so both routes through
   /// the unsaved-changes guard are the one route.
   closePack() {
-    if (packFromPath(location.pathname)) {
+    focusCommit = null;
+    if (packFromPath(location.pathname) && pushed > 0) {
       history.back();
       return;
     }
     editPack = null;
+    pushPath(`/${section}`, true);
   },
   /// Open a commit over the pack that declared it. The editor stays where it is
   /// underneath, so closing the commit returns to it rather than to a section.
@@ -284,11 +293,14 @@ export const route = {
   },
   /// Leave a commit the same way back does, so both routes are one route.
   closeCommit() {
-    if (commitFromPath(location.pathname)) {
+    if (commitFromPath(location.pathname) && pushed > 0) {
       history.back();
       return;
     }
+    // Nothing of ours behind it -- a shared link, or a reload. Going back would
+    // leave the panel, so the pack it belongs to takes its place instead.
     focusCommit = null;
+    if (editPack !== null) pushPath(href.pack(editPack), true);
   },
   /// Register what to ask before an open editor is left; `null` clears it. The
   /// editor sets this while it holds edits the server has not accepted.

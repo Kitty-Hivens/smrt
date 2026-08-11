@@ -23,8 +23,10 @@
     onBuildCommit,
     hasMore = false,
     failed = false,
+    loadingMore = false,
     onMore = () => {},
     busy = false,
+    working = $bindable(false),
     message = $bindable(''),
     body = $bindable(''),
   }: {
@@ -39,15 +41,18 @@
     hasMore?: boolean;
     /// Whether the read failed, which is not the same as a pack with no history.
     failed?: boolean;
+    /// Whether a further page is on its way.
+    loadingMore?: boolean;
     onMore?: () => void;
     busy?: boolean;
+    /// Committing or restoring here. Bound out so the console's build button --
+    /// which commits too -- is not live at the same time.
+    working?: boolean;
     // Owned by the build console, because the same sentence serves both acts:
     // committing on its own, and committing as the first half of a build.
     message?: string;
     body?: string;
   } = $props();
-
-  let working = $state(false);
 
   // What a commit would record, straight from the mirror: the same diff the
   // build gate counts, so the number and the list can no longer disagree.
@@ -56,8 +61,6 @@
   // Who has worked since the last checkpoint, so the commit names them before
   // it is pressed rather than after.
   const pending = $derived(status?.pending_authors ?? []);
-  const counts = $derived(tally(changes));
-
   async function commit() {
     const text = full();
     if (!text) return;
@@ -141,9 +144,16 @@
   });
 
   /// One lookup per project that actually moved, and only for rows naming one.
+  const asked = new Set<string>();
+
   async function loadLabels(current: ConfigChange[]) {
-    const projects = [...new Set(current.map((r) => r.project).filter((p): p is string => !!p))];
+    // Once per project, not once per project per refresh: a pack event
+    // re-reads the status, and every re-read used to re-ask Modrinth for every
+    // moved pin on screen.
+    const projects = [...new Set(current.map((r) => r.project).filter((p): p is string => !!p))]
+      .filter((project) => !asked.has(project));
     for (const project of projects) {
+      asked.add(project);
       try {
         const versions = await api.modrinthVersions(project);
         const found: Record<string, string> = {};
@@ -183,7 +193,9 @@
 
 <div class="hist">
   <div class="state">
-    {#if uncommitted > 0}
+    {#if !status?.head}
+      <span class="dirty">{t('hist.none')}</span>
+    {:else if uncommitted > 0}
       <span class="dirty">{t('hist.uncommitted', { n: uncommitted })}</span>
       {#if pending.length}
         <span class="muted">{t('hist.by', { who: pending.join(', ') })}</span>
@@ -191,8 +203,6 @@
     {:else if status?.head}
       <span class="clean">{t('hist.clean')}</span>
       <span class="muted mono" title={status.head.id}>{short(status.head.id)}</span>
-    {:else}
-      <span class="dirty">{t('hist.none')}</span>
     {/if}
   </div>
 
@@ -270,7 +280,9 @@
       {/each}
     </ol>
     {#if hasMore}
-      <button class="more" onclick={onMore} disabled={busy || working}>{t('hist.more')}</button>
+      <button class="more" onclick={onMore} disabled={busy || working || loadingMore}>
+        {loadingMore ? t('common.loading') : t('hist.more')}
+      </button>
     {/if}
   {:else if failed}
     <!-- an unread history and a pack that never declared one look identical

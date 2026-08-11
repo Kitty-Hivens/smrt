@@ -456,6 +456,7 @@ export const en = {
   'commit.leadRoot': 'The first commit: everything it declared.',
   'commit.leadLive': 'Restoring it would write {add} arrival(s), {remove} departure(s) and {change} change(s).',
   'commit.builtAs': 'built as {versions}',
+  'commit.diffUnreadable': 'What separates these two states could not be read.',
   'commit.build': 'Build from this commit',
   'commit.restore': 'Restore this state',
 

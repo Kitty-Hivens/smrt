@@ -301,8 +301,8 @@ export const api = {
   // the editor needs to say "N changes since the last commit" before a build.
   commitStatus: (id: string) =>
     getJson<CommitStatus>(`/v1/authoring/packs/${encodeURIComponent(id)}/commits/status`),
-  // One commit by name. The log is capped and a commit's address is not: the
-  // checkpoint a build was made from can be older than the last hundred.
+  // One commit by name. A commit's address outlives any page of the log: the
+  // checkpoint a build was made from can sit far behind the newest page.
   commitById: (id: string, commitId: string) =>
     getJson<CommitLogEntry>(
       `/v1/authoring/packs/${encodeURIComponent(id)}/commits/${encodeURIComponent(commitId)}`,

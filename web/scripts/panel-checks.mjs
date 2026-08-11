@@ -207,6 +207,22 @@ check('the offered list holds what old packs need', [8, 11, 16, 17, 21].every((v
 
   check('an unchanged config reports nothing', changedPaths(base, clone()).length === 0);
 
+  // two rows can carry the same name (nothing enforces otherwise); collapsing
+  // them into one would drop whichever edit landed on the loser
+  const twins = { mods: [{ filename: 'a.jar', on: true }, { filename: 'a.jar', on: true }] };
+  const twinEdit = { mods: [{ filename: 'a.jar', on: false }, { filename: 'a.jar', on: true }] };
+  check('rows sharing a name keep their edits',
+    JSON.stringify(changedPaths(twins, twinEdit)) === '["mods.0"]',
+    JSON.stringify(changedPaths(twins, twinEdit)));
+
+  // the editor adds an asset with an empty dest and lets you fill it in; that
+  // one blank row must not put every named row back on positions
+  const named2 = { assets: [{ dest: 'a.json' }, { dest: 'b.json' }] };
+  const withBlank = { assets: [{ dest: '' }, { dest: 'a.json' }, { dest: 'b.json' }] };
+  check('a blank row does not drag the named ones back to positions',
+    JSON.stringify(changedPaths(named2, withBlank)) === '["assets.0"]',
+    JSON.stringify(changedPaths(named2, withBlank)));
+
   // plain values have nothing to be named by, so they stay positional
   const tagged = { tags: ['tech', 'magic'] };
   check('a list of plain values is still addressed by position',

@@ -195,6 +195,11 @@
   let historyTick = $state(0);
   // A build a commit page asked for; handed to the console, which owns building.
   let buildFrom = $state<string | null>(null);
+  // The build in flight. Held here because the console is one surface among
+  // several in this editor: opening a commit over it must not lose a running
+  // build, re-enable the button, and let a second one start.
+  let buildJobId = $state<string | null>(null);
+  let buildBusy = $state(false);
   // Who else has this pack open, from the stream. Names, not a count: "bo is
   // here" is a different fact from "1 other person", and it is the one that
   // changes what you do next.
@@ -298,8 +303,9 @@
     return () => clearInterval(timer);
   });
   /// A path as something a person reads. The first segment is the part -- the
-  /// rest ("mods.3", "pack_meta.description_md") is an address for the marker,
-  /// not for the sentence, which would only get longer without getting clearer.
+  /// rest ("mods.sodium.jar", "pack_meta.description_md") is an address for the
+  /// marker, not for the sentence, which would only get longer without getting
+  /// clearer.
   const fieldLabel = (path: string) => {
     const head = path.split('.')[0];
     const known = [
@@ -1153,6 +1159,7 @@
       <CommitPage
         {packId}
         commitId={route.commit}
+        building={buildBusy}
         onBuildCommit={(id) => {
           buildFrom = id;
           tab = 'build';
@@ -1481,6 +1488,8 @@
         {packId}
         {historyTick}
         {buildFrom}
+        bind:jobId={buildJobId}
+        bind:busy={buildBusy}
         onBuildStarted={() => (buildFrom = null)}
       />
     {/if}

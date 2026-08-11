@@ -52,26 +52,50 @@ export function changedPaths(before: Json, after: Json, prefix = ''): string[] {
   if (!bothObjects) return prefix ? [prefix] : [];
 
   if (Array.isArray(before) && Array.isArray(after)) {
-    const named = [...before, ...after].every((row) => rowKey(row) !== null);
-    if (named) {
-      const was = new Map(before.map((row) => [rowKey(row) as string, JSON.stringify(row)]));
-      const now = new Map(after.map((row) => [rowKey(row) as string, JSON.stringify(row)]));
-      const out: string[] = [];
-      for (const [key, value] of now) {
-        if (was.get(key) !== value) out.push(`${prefix}.${key}`);
-      }
-      for (const key of was.keys()) {
-        if (!now.has(key)) out.push(`${prefix}.${key}`);
-      }
-      return out;
-    }
     const out: string[] = [];
-    const shared = Math.min(before.length, after.length);
-    for (let i = 0; i < shared; i++) {
-      if (JSON.stringify(before[i]) !== JSON.stringify(after[i])) out.push(`${prefix}.${i}`);
+    // Rows that name themselves are matched by that name; the rest -- a blank
+    // row the editor just added, or two rows that happen to share a name --
+    // keep their positions among themselves. Mixed rather than all-or-nothing:
+    // one unnamed row must not drop the whole list back to positions, and two
+    // rows sharing a name must not collapse into one and take an edit with them.
+    const namesOf = (rows: Json[]) => {
+      const raw = rows.map(rowKey);
+      const seen = new Map<string, number>();
+      for (const key of raw) if (key) seen.set(key, (seen.get(key) ?? 0) + 1);
+      return raw.map((key) => (key && seen.get(key) === 1 ? key : null));
+    };
+    const wasNames = namesOf(before);
+    const nowNames = namesOf(after);
+    const was = new Map<string, Json>();
+    before.forEach((row, i) => {
+      const key = wasNames[i];
+      if (key) was.set(key, row);
+    });
+    const now = new Map<string, Json>();
+    after.forEach((row, i) => {
+      const key = nowNames[i];
+      if (key) now.set(key, row);
+    });
+    for (const [key, row] of now) {
+      const had = was.get(key);
+      if (had === undefined || JSON.stringify(had) !== JSON.stringify(row)) {
+        out.push(`${prefix}.${key}`);
+      }
     }
-    for (let i = shared; i < Math.max(before.length, after.length); i++) {
-      out.push(`${prefix}.${i}`);
+    for (const key of was.keys()) {
+      if (!now.has(key)) out.push(`${prefix}.${key}`);
+    }
+
+    const anon = (rows: Json[], names: (string | null)[]) =>
+      rows.map((row, i) => ({ row, i })).filter(({ i }) => !names[i]);
+    const wasAnon = anon(before, wasNames);
+    const nowAnon = anon(after, nowNames);
+    for (let n = 0; n < Math.max(wasAnon.length, nowAnon.length); n++) {
+      const a = wasAnon[n];
+      const b = nowAnon[n];
+      if (a && b && JSON.stringify(a.row) === JSON.stringify(b.row)) continue;
+      const at = b?.i ?? a?.i ?? n;
+      out.push(`${prefix}.${at}`);
     }
     return out;
   }

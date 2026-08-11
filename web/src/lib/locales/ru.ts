@@ -455,6 +455,7 @@ export const ru: Dict = {
   'commit.leadRoot': 'Первый коммит: всё, что в нём объявлено.',
   'commit.leadLive': 'Возврат запишет: прибытий -- {add}, уходов -- {remove}, изменений -- {change}.',
   'commit.builtAs': 'собран как {versions}',
+  'commit.diffUnreadable': 'Разницу между этими состояниями прочитать не удалось.',
   'commit.build': 'Собрать из этого коммита',
   'commit.restore': 'Вернуть это состояние',
 

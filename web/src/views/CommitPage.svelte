@@ -17,11 +17,15 @@
   let {
     packId,
     commitId,
+    building = false,
     onBuildCommit,
     onChanged,
   }: {
     packId: string;
     commitId: string;
+    /// Whether a build of this pack is already running. Starting a second one
+    /// from here would publish the same pack twice over.
+    building?: boolean;
     onBuildCommit: (commitId: string) => void;
     onChanged: () => void;
   } = $props();
@@ -36,11 +40,17 @@
   let against = $state<'parent' | 'live'>('parent');
   let labels = $state<Record<string, string>>({});
 
+  // Which read is the current one. Switching the reading twice quickly issues
+  // two requests, and the slower one is not always the older: without this the
+  // rows of one reading end up under the other's heading.
+  let generation = 0;
+
   $effect(() => {
     void load(packId, commitId, against);
   });
 
   async function load(pack: string, id: string, mode: 'parent' | 'live') {
+    const mine = ++generation;
     loading = true;
     failed = false;
     try {
@@ -48,14 +58,19 @@
         api.commitById(pack, id),
         api.commitDiff(pack, id, mode === 'live' ? 'live' : undefined),
       ]);
+      if (mine !== generation) return;
       commit = meta;
       diff = d;
       void loadLabels(d.changes);
     } catch (e) {
+      if (mine !== generation) return;
+      // The diff on screen belongs to the reading that failed to replace it, so
+      // it is dropped rather than left under the other heading.
+      diff = null;
       failed = true;
       notifyFail(e);
     } finally {
-      loading = false;
+      if (mine === generation) loading = false;
     }
   }
 
@@ -168,6 +183,8 @@
 
     {#if loading}
       <p class="muted">{t('common.loading')}</p>
+    {:else if failed}
+      <p class="muted">{t('commit.diffUnreadable')}</p>
     {:else if diff && diff.changes.length}
       <p class="muted lead">
         {against === 'live'
@@ -184,10 +201,12 @@
     {/if}
 
     <div class="acts">
-      <button onclick={() => onBuildCommit(commitId)} disabled={working}>
-        {t('commit.build')}
+      <button onclick={() => onBuildCommit(commitId)} disabled={working || building}>
+        {building ? t('bld.building') : t('commit.build')}
       </button>
-      <button class="danger" onclick={restore} disabled={working}>{t('commit.restore')}</button>
+      <button class="danger" onclick={restore} disabled={working || building}>
+        {t('commit.restore')}
+      </button>
     </div>
   {/if}
 </div>

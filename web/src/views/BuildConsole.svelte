@@ -11,9 +11,16 @@
     historyTick = 0,
     buildFrom = null,
     onBuildStarted = () => {},
+    jobId = $bindable(null),
+    busy = $bindable(false),
   }: {
     packId: string;
     historyTick?: number;
+    /// The build in flight, held by the editor rather than by this view: the
+    /// console unmounts whenever another surface opens over it, and a build
+    /// does not stop because somebody opened a commit.
+    jobId?: string | null;
+    busy?: boolean;
     // A commit page asked for this build. The console owns building, so the
     // request arrives here rather than being made twice in two places.
     buildFrom?: string | null;
@@ -28,10 +35,18 @@
   // Where the next page of the log starts, or null at the end of the history.
   let logNext = $state<string | null>(null);
   let logFailed = $state(false);
+  let logBusy = $state(false);
+  // Which read of the log is the current one. A page fetched against an older
+  // cursor must not be appended to a list that has since been replaced -- the
+  // paging is keyset, so the row the stale cursor started after is no longer
+  // where the new list ends, and the join would leave a gap in the history.
+  let logGeneration = 0;
 
   async function refreshHistory() {
+    const generation = ++logGeneration;
     try {
       const [s, page] = await Promise.all([api.commitStatus(packId), api.commits(packId)]);
+      if (generation !== logGeneration) return;
       status = s;
       log = page.rows;
       logNext = page.next;
@@ -47,13 +62,21 @@
   /// The next page, appended. Reading further back is a step someone takes, not
   /// something the editor does on its own on a pack with hundreds of them.
   async function moreHistory() {
-    if (!logNext) return;
+    if (!logNext || logBusy) return;
+    const generation = logGeneration;
+    logBusy = true;
     try {
       const page = await api.commitsPage(logNext);
-      log = [...log, ...page.rows];
+      // A refresh that landed meanwhile owns the list now; this page was read
+      // against the state before it.
+      if (generation !== logGeneration) return;
+      const seen = new Set(log.map((c) => c.id));
+      log = [...log, ...page.rows.filter((c) => !seen.has(c.id))];
       logNext = page.next;
     } catch (e) {
       notifyFail(e);
+    } finally {
+      logBusy = false;
     }
   }
 
@@ -74,8 +97,6 @@
     void build(false, id);
   });
 
-  let jobId = $state<string | null>(null);
-  let busy = $state(false);
   let packVersion = $state('');
   // publishing a release is an explicit act; the everyday build is a beta
   let channel = $state<'release' | 'beta' | 'alpha'>('beta');
@@ -93,6 +114,10 @@
   // uncommitted work declares the checkpoint itself, so the same sentence is
   // the one the button uses.
   let commitMessage = $state('');
+  // True while the history view is committing or restoring on its own. The
+  // console's button would otherwise stay live through a commit it cannot see,
+  // and pressing it would write the same message a second time.
+  let historyBusy = $state(false);
   // The rest of the message, under the subject line -- git's shape, and the
   // room a curator needs to say why rather than only what.
   let commitBody = $state('');
@@ -176,14 +201,16 @@
     {busy}
     onChanged={refreshHistory}
     onBuildCommit={(id) => build(false, id)}
+    bind:working={historyBusy}
     hasMore={!!logNext}
     failed={logFailed}
+    loadingMore={logBusy}
     onMore={moreHistory}
     bind:message={commitMessage}
     bind:body={commitBody}
   />
   <div class="bar">
-    <button class="primary" onclick={() => build()} disabled={busy}>
+    <button class="primary" onclick={() => build()} disabled={busy || historyBusy}>
       {busy ? t('bld.building') : needsCommit ? t('bld.commitAndBuild') : t('bld.build')}
     </button>
     <label class="ver">
