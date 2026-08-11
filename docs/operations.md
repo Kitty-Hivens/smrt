@@ -103,9 +103,14 @@ and append-only (#122). What it is worth doing with:
   published build (`config/revert`) does the same and records its own
   checkpoint.
 
-Every build records the commit it came from (`built_from` on the manifest and
-in the versions listing), which is what makes "which state is 0.1.31" a
-question with an answer.
+A build made from a checkpoint records it (`built_from` on the manifest and in
+the versions listing), which is what makes "which state is 0.1.31" a question
+with an answer. A CLI build names none -- it builds the working state -- and
+neither does a dry run.
+
+The log itself is paged: `GET .../commits?limit=` answers a hundred by default,
+`Link` names the next page, and the cursor is the last commit served, so the
+walk continues at its parent.
 
 ### Two people in one pack
 

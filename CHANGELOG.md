@@ -19,9 +19,9 @@ version section when a release is tagged.
   everything that says what changed reads it: the commit box, the count, the
   build's refusal, and what a commit recorded. It matches rows by identity
   rather than position -- a mod is its Modrinth project, else its curator slug,
-  else its filename -- and compares exactly the projection `edit_rev` hashes, so
-  "the revision moved" and "there is something to commit" can no longer
-  disagree.
+  else its filename -- and compares the projection `edit_rev` hashes, minus what
+  only the mirror writes inside a row, so a revision that has not moved answers
+  "nothing to commit" without reading the checkpoint at all.
 - A jar renamed without changing is a rename, not a departure and an unrelated
   arrival. Both rows point at the same artifact, and that is the evidence.
 - A re-pin and a switched install default on one mod are two rows. The old list
@@ -33,37 +33,16 @@ version section when a release is tagged.
 - Reverting to a published build records a checkpoint of its own. It wrote the
   config and stopped, so the pack came back looking changed by nobody, with the
   next build refusing to publish and nothing in the history saying why.
-- A live-edit marker names the row someone touched rather than the position it
-  held. Paths were indexes, so a mod arriving in the middle of the list marked
-  every row below it as touched by whoever added it, and the marker on a row
-  followed the slot rather than the mod when anything shifted above it. The
-  summary line also groups by what it says, where two mods edited in one window
-  read as the same sentence printed twice.
+- The live-edit markers address the row someone touched rather than the position
+  it held. Paths were indexes, so a mod arriving in the middle of the list
+  counted as a change to every row below it, and the summary above the editor
+  said "someone - a mod" once per displaced row. It now groups by what it says,
+  so two mods edited in one window read as one line naming both people. Rows
+  that name nothing (a freshly added asset, a list of tags) keep their
+  positions, and two rows sharing a name are still two rows.
 - Restoring a commit asks first, and says what it will do: how many arrivals,
   departures and changes it writes over the working state. It was a single
   click, next to "build this", with no statement of consequences anywhere.
-
-### Added
-
-- A pack's history is readable past its first page. The log was capped at a
-  hundred commits with nothing to continue from, so a pack that had been curated
-  for long enough simply had no way to reach its older checkpoints. It now pages
-  by the chain itself -- every commit names its parent, so the cursor is a
-  commit id and a page boundary cannot drift when someone commits while another
-  person is reading.
-- A commit has a page and an address (`/packs/<id>/commit/<sha>`): its message,
-  who declared it, everyone whose work it took in, the full id, and what it
-  recorded -- read against the commit before it, against any other checkpoint,
-  or against the working state, which is the question a restore asks. Building
-  from it and putting it back are both there.
-- Every build records the checkpoint it came from, and the history says which
-  versions came out of each commit. The field was written on every build and
-  read by nothing, so "which state is 0.1.31" had no answer; it is now in the
-  public versions listing as `built_from`.
-- A commit message has a subject and a body, and the box offers a first line
-  drawn from the changes themselves. A message written from memory tends to omit
-  the change nobody remembers making.
-
 - A pack whose pinned loader build is older than one of its mods demands no
   longer publishes clean. Mods declare the loader window they run in, and the
   pin next to them is a hand-typed line that nothing moves; when JEI raised its
@@ -191,6 +170,26 @@ version section when a release is tagged.
   come back as whole numbers so a `u32` field still deserializes.
 
 ### Added
+
+- A pack's history is readable past its first page. The log answered a hundred
+  commits by default and five hundred at most, with nothing to continue from, so a pack that had been curated
+  for long enough simply had no way to reach its older checkpoints. It now pages
+  by the chain itself -- every commit names its parent, so the cursor is a
+  commit id and a page boundary cannot drift when someone commits while another
+  person is reading.
+- A commit has a page and an address (`/packs/<id>/commit/<sha>`): its message,
+  who declared it, everyone whose work it took in, the full id, and what it
+  recorded -- read against the commit before it, or against the working state,
+  which is the question a restore asks (the endpoint takes any other checkpoint
+  as well). Building from it and putting it back are both there.
+- A build made from a checkpoint records which one, and the history says which
+  versions came out of each commit. The field was written and read by nothing,
+  so "which state is 0.1.31" had no answer; it is now in the public versions
+  listing as `built_from`. A CLI build has none to name -- it builds the working
+  config -- and neither does a dry run.
+- A commit message has a subject and a body, and the box offers a first line
+  drawn from the changes themselves. A message written from memory tends to omit
+  the change nobody remembers making.
 
 - The commit box lists what is about to be recorded. It showed a count and a
   message field, so the sentence beside it was written from memory -- and the
