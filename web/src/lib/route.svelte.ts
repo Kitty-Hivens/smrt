@@ -100,7 +100,20 @@ function modFromPath(path: string): string | null {
 /// (member). A community id carries slashes (`u/<uid>/<pack>`), so it rides
 /// percent-encoded in the one segment.
 function packFromPath(path: string): string | null {
+  // A commit sits under the pack that declared it, so the pack is still open
+  // behind it -- and an id written out unencoded (an older link) still resolves,
+  // which is why this reads the commit form first rather than tightening the id.
+  const c = path.match(/^\/(?:packs|mypacks)\/(.+)\/commit\/[^/]+$/);
+  if (c) return decodeURIComponent(c[1]);
   const m = path.match(/^\/(?:packs|mypacks)\/(.+)$/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+/// The commit being read, out of `/packs/<id>/commit/<sha>`. A checkpoint is a
+/// place: it has an address, back leaves it, and the link can be handed to
+/// whoever asks what a build was made from.
+function commitFromPath(path: string): string | null {
+  const m = path.match(/^\/(?:packs|mypacks)\/.+\/commit\/([^/]+)$/);
   return m ? decodeURIComponent(m[1]) : null;
 }
 
@@ -122,6 +135,9 @@ let focusMod = $state<string | null>(modFromPath(location.pathname));
 // nothing about opening it entered history and back could not close it (#54).
 // As a location it closes on back, survives a reload and can be linked to.
 let editPack = $state<string | null>(packFromPath(location.pathname));
+// The commit open over the editor. Same reasoning as the pack itself: it is a
+// location, so it survives a reload and can be linked to.
+let focusCommit = $state<string | null>(commitFromPath(location.pathname));
 
 // What the editor wants asked before it is left with edits the server has not
 // accepted. It lives on the route rather than on the Close button, because
@@ -168,6 +184,7 @@ if (typeof window !== 'undefined') {
       return;
     }
     editPack = pack;
+    focusCommit = commitFromPath(location.pathname);
     const mod = modFromPath(location.pathname);
     focusMod = mod;
     if (!mod) {
@@ -194,6 +211,8 @@ export const href = {
   section: (s: Section) => `/${s}`,
   mod: (ref: number | string) => `/mod/${encodeURIComponent(String(ref))}`,
   pack: (id: string, from: Section = section) => `/${from}/${encodeURIComponent(id)}`,
+  commit: (id: string, commitId: string, from: Section = section) =>
+    `/${from}/${encodeURIComponent(id)}/commit/${encodeURIComponent(commitId)}`,
 };
 
 /// True for a click the app should handle itself. A modified or middle click is
@@ -214,12 +233,17 @@ export const route = {
   get pack(): string | null {
     return editPack;
   },
+  /// The commit being read over the open editor, or null.
+  get commit(): string | null {
+    return focusCommit;
+  },
   /// `replace` is for a correction rather than a navigation -- landing on a
   /// section your role cannot see should not leave a step to go back to.
   async go(s: Section, replace = false) {
     if (!(await mayLeaveEditor())) return;
     focusMod = null; // picking a section leaves any open mod page
     editPack = null;
+    focusCommit = null;
     section = s;
     remember(s);
     pushPath(`/${s}`, replace);
@@ -228,6 +252,7 @@ export const route = {
   /// so back closes it and the URL can be shared.
   openPack(id: string) {
     editPack = id;
+    focusCommit = null;
     pushPath(`/${section}/${encodeURIComponent(id)}`);
   },
   /// Open a pack's editor from another section (the overview's recent list), as
@@ -238,6 +263,7 @@ export const route = {
     section = s;
     remember(s);
     editPack = id;
+    focusCommit = null;
     pushPath(href.pack(id, s));
   },
   /// Close the editor the same way the back button does, so both routes through
@@ -248,6 +274,21 @@ export const route = {
       return;
     }
     editPack = null;
+  },
+  /// Open a commit over the pack that declared it. The editor stays where it is
+  /// underneath, so closing the commit returns to it rather than to a section.
+  openCommit(packId: string, commitId: string) {
+    editPack = packId;
+    focusCommit = commitId;
+    pushPath(href.commit(packId, commitId));
+  },
+  /// Leave a commit the same way back does, so both routes are one route.
+  closeCommit() {
+    if (commitFromPath(location.pathname)) {
+      history.back();
+      return;
+    }
+    focusCommit = null;
   },
   /// Register what to ask before an open editor is left; `null` clears it. The
   /// editor sets this while it holds edits the server has not accepted.

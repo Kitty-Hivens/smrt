@@ -24,6 +24,13 @@ date_published: string,
  */
 fingerprint?: string, 
 /**
+ * The commit this build was made from (#122), where it names one. Absent
+ * on CLI builds, which build the working config, and on every build from
+ * before a pack had history. Carried in the listing so "which builds came
+ * out of this checkpoint" is answerable without opening every manifest.
+ */
+built_from?: string, 
+/**
  * Curator-authored release notes, where the build carries them.
  */
 changelog?: string, 

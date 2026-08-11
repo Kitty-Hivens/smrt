@@ -8,6 +8,50 @@ version section when a release is tagged.
 
 ### Fixed
 
+- "47 changes since the last commit" and the list under it were two different
+  answers, computed twice from different rules. The count came from a JSON walk
+  that compared arrays by position, so adding one mod to an alphabetically
+  ordered pack reported every row below it as changed -- 79, for a single
+  arrival -- while the list beside it correctly showed one. The walk also
+  compared the whole config, including the fields only the server writes and the
+  rows the dependency fill appends, which is how a save that changed nothing a
+  person did could still report 22. There is now one diff, on the mirror, and
+  everything that says what changed reads it: the commit box, the count, the
+  build's refusal, and what a commit recorded. It matches rows by identity
+  rather than position -- a mod is its Modrinth project, else its curator slug,
+  else its filename -- and compares exactly the projection `edit_rev` hashes, so
+  "the revision moved" and "there is something to commit" can no longer
+  disagree.
+- A jar renamed without changing is a rename, not a departure and an unrelated
+  arrival. Both rows point at the same artifact, and that is the evidence.
+- A re-pin and a switched install default on one mod are two rows. The old list
+  showed the first and dropped the second, so a pack could ship a mod nobody
+  meant to turn off with a message that only mentioned the version bump.
+- An edit to a mod's project url no longer passes unnoticed: the panel's list of
+  authored fields named `homepage`, which is not a field the manifest has -- the
+  one it does have is `url`, and it was never compared.
+- Reverting to a published build records a checkpoint of its own. It wrote the
+  config and stopped, so the pack came back looking changed by nobody, with the
+  next build refusing to publish and nothing in the history saying why.
+- Restoring a commit asks first, and says what it will do: how many arrivals,
+  departures and changes it writes over the working state. It was a single
+  click, next to "build this", with no statement of consequences anywhere.
+
+### Added
+
+- A commit has a page and an address (`/packs/<id>/commit/<sha>`): its message,
+  who declared it, everyone whose work it took in, the full id, and what it
+  recorded -- read against the commit before it, against any other checkpoint,
+  or against the working state, which is the question a restore asks. Building
+  from it and putting it back are both there.
+- Every build records the checkpoint it came from, and the history says which
+  versions came out of each commit. The field was written on every build and
+  read by nothing, so "which state is 0.1.31" had no answer; it is now in the
+  public versions listing as `built_from`.
+- A commit message has a subject and a body, and the box offers a first line
+  drawn from the changes themselves. A message written from memory tends to omit
+  the change nobody remembers making.
+
 - A pack whose pinned loader build is older than one of its mods demands no
   longer publishes clean. Mods declare the loader window they run in, and the
   pin next to them is a hand-typed line that nothing moves; when JEI raised its

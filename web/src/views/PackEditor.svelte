@@ -24,6 +24,7 @@
     ValidateReport,
   } from '../lib/types';
   import BuildConsole from './BuildConsole.svelte';
+  import CommitPage from './CommitPage.svelte';
   import BrandingEditor from './BrandingEditor.svelte';
   import PackGraph from './PackGraph.svelte';
   import JobLog from './JobLog.svelte';
@@ -192,6 +193,8 @@
   // commit -- but this is where the pack's event stream is read, so the fact
   // that it moved is passed down rather than subscribed to twice.
   let historyTick = $state(0);
+  // A build a commit page asked for; handed to the console, which owns building.
+  let buildFrom = $state<string | null>(null);
   // Who else has this pack open, from the stream. Names, not a count: "bo is
   // here" is a different fact from "1 other person", and it is the one that
   // changes what you do next.
@@ -1133,6 +1136,19 @@
   <div class="editcol">
     {#if loading}
       <div class="muted mono">{t('common.loading')}</div>
+    {:else if route.commit}
+      <!-- A checkpoint is a place of its own (ADR 0005): it has an address, and
+           the editor it was opened from is still underneath when it closes. -->
+      <CommitPage
+        {packId}
+        commitId={route.commit}
+        onBuildCommit={(id) => {
+          buildFrom = id;
+          tab = 'build';
+          route.closeCommit();
+        }}
+        onChanged={() => (historyTick += 1)}
+      />
     {:else if tab === 'config'}
       {#if !cfg}
         <div class="panel empty">
@@ -1450,7 +1466,12 @@
     {:else if tab === 'graph'}
       <PackGraph {packId} />
     {:else if tab === 'build'}
-      <BuildConsole {packId} {historyTick} />
+      <BuildConsole
+        {packId}
+        {historyTick}
+        {buildFrom}
+        onBuildStarted={() => (buildFrom = null)}
+      />
     {/if}
   </div>
   {#if previewOpen}

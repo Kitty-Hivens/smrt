@@ -2,17 +2,29 @@
   import { api } from '../lib/api';
   import { notifyFail, toasts } from '../lib/toasts.svelte';
   import { t, LOCALES, type Locale } from '../lib/i18n.svelte';
-  import type { Commit, CommitStatus, JobStatus } from '../lib/types';
+  import type { CommitLogEntry, CommitStatus, JobStatus } from '../lib/types';
   import JobLog from './JobLog.svelte';
   import PackHistory from './PackHistory.svelte';
 
-  let { packId, historyTick = 0 }: { packId: string; historyTick?: number } = $props();
+  let {
+    packId,
+    historyTick = 0,
+    buildFrom = null,
+    onBuildStarted = () => {},
+  }: {
+    packId: string;
+    historyTick?: number;
+    // A commit page asked for this build. The console owns building, so the
+    // request arrives here rather than being made twice in two places.
+    buildFrom?: string | null;
+    onBuildStarted?: () => void;
+  } = $props();
 
   // The history, read here because a build is made from a commit (#122) -- the
   // state that decides whether the build button can do anything is the same
   // state the history shows.
   let status = $state<CommitStatus | null>(null);
-  let log = $state<Commit[]>([]);
+  let log = $state<CommitLogEntry[]>([]);
 
   async function refreshHistory() {
     try {
@@ -27,6 +39,16 @@
     void packId;
     void historyTick;
     void refreshHistory();
+  });
+
+  // A build asked for from a commit page: the console is where a build happens,
+  // so the request lands here and the log below shows it. Clearing the request
+  // first keeps the effect from re-firing on its own build.
+  $effect(() => {
+    if (!buildFrom) return;
+    const id = buildFrom;
+    onBuildStarted();
+    void build(false, id);
   });
 
   let jobId = $state<string | null>(null);
@@ -48,6 +70,9 @@
   // uncommitted work declares the checkpoint itself, so the same sentence is
   // the one the button uses.
   let commitMessage = $state('');
+  // The rest of the message, under the subject line -- git's shape, and the
+  // room a curator needs to say why rather than only what.
+  let commitBody = $state('');
 
   // Whether the next publish has to declare a checkpoint first -- work sitting
   // uncommitted, or a pack that has never committed at all.
@@ -59,15 +84,17 @@
     // honest answer for anything driving the API, but nobody should have to
     // meet it here and press the same button twice.
     if (!fromCommit && needsCommit) {
-      const text = commitMessage.trim();
-      if (!text) {
+      const subject = commitMessage.trim();
+      if (!subject) {
         toasts.push({ kind: 'info', text: t('bld.needsMessage') });
         return;
       }
+      const rest = commitBody.trim();
       busy = true;
       try {
-        await api.commit(packId, text);
+        await api.commit(packId, rest ? `${subject}\n\n${rest}` : subject);
         commitMessage = '';
+        commitBody = '';
         await refreshHistory();
       } catch (e) {
         notifyFail(e);
@@ -127,6 +154,7 @@
     onChanged={refreshHistory}
     onBuildCommit={(id) => build(false, id)}
     bind:message={commitMessage}
+    bind:body={commitBody}
   />
   <div class="bar">
     <button class="primary" onclick={() => build()} disabled={busy}>
