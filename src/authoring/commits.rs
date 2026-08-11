@@ -87,8 +87,11 @@ pub struct CommitStatus {
     pub changes: Vec<ConfigChange>,
     /// How many of them there are. Zero means the working state is exactly the
     /// last checkpoint, which is the only state in which a build needs no new
-    /// commit. It is the length of `changes`, so the number beside a list can
-    /// never disagree with the list.
+    /// commit. It is the length of `changes` wherever there is a `head` to
+    /// compare against, so a number can never disagree with the list beside it;
+    /// on a pack that has never committed it is 1 with nothing listed, because
+    /// the outstanding change is the pack itself and there is nothing to
+    /// compare it against.
     #[ts(type = "number")]
     pub uncommitted: usize,
     /// Who has saved since `head`, so the commit dialog can name them before it

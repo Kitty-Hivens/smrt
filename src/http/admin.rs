@@ -1621,14 +1621,9 @@ async fn revert_pack_config(
     // reverted config, which is what a revert means to them.
     state.docs.forget(&pack_id);
     let (cfg, rev) = store_edited_config(&state, &pack_id, cfg, &identity.login, false).await?;
-    checkpoint(
-        &state,
-        &pack_id,
-        &cfg,
-        &identity,
-        format!("revert to {}", p.version),
-    )
-    .await?;
+    // Recorded before the checkpoint: the config is already overwritten by this
+    // point, and a checkpoint that fails must not take the record of the
+    // overwrite with it.
     audit(
         &state,
         &identity,
@@ -1637,6 +1632,14 @@ async fn revert_pack_config(
         Some(&p.version),
     )
     .await;
+    checkpoint(
+        &state,
+        &pack_id,
+        &cfg,
+        &identity,
+        format!("revert to {}", p.version),
+    )
+    .await?;
     Ok((etag(&rev), Json(cfg)))
 }
 
@@ -1732,6 +1735,11 @@ pub struct CommitLogEntry {
     pub builds: Vec<String>,
 }
 
+/// How much history a caller that named no limit is answered with. The log was
+/// capped before it could be paged, and a listing that suddenly walks a pack's
+/// whole chain is a cost nobody asked for; naming a `limit` pages past it.
+const DEFAULT_LOG_PAGE: usize = 100;
+
 /// The log, newest first, paged by the chain itself: the cursor names the last
 /// commit answered, and the next page starts at its parent. A pack whose history
 /// outgrew one page was unreadable past its head before this -- the limit was
@@ -1752,7 +1760,7 @@ async fn list_commits(
         .commit_log(
             &pack_id,
             after.as_deref(),
-            page.probe().unwrap_or(usize::MAX),
+            page.probe().unwrap_or(DEFAULT_LOG_PAGE),
         )
         .await?;
     // One pass over the manifest headers for the whole log, not one per commit.
@@ -1788,25 +1796,31 @@ async fn commit_status(
         return Err(ApiError::Forbidden);
     }
     let live = state.storage.load_pack_config(&pack_id).await?;
-    let head = match state.storage.commit_head(&pack_id).await {
-        Some(id) => state.storage.load_commit(&pack_id, &id).await.ok(),
+    // Whether there is a checkpoint and whether its metadata reads are separate
+    // questions: a commit whose metadata file is damaged is still a commit, and
+    // answering "this pack has no history" would say the working state needs no
+    // checkpoint while the build gate -- which reads `HEAD` -- refuses it.
+    let head_id = state.storage.commit_head(&pack_id).await;
+    let head = match &head_id {
+        Some(id) => state.storage.load_commit(&pack_id, id).await.ok(),
         None => None,
     };
-    let changes = match &head {
-        None => Vec::new(),
-        // `config_rev` is a hash of the same projection the diff compares over,
-        // so a matching revision settles the question without reading the
-        // snapshot at all -- which is the everyday answer on a clean pack.
-        Some(c) if rev_of(&live).is_ok_and(|rev| rev == c.config_rev) => Vec::new(),
-        Some(c) => match state.storage.load_commit_config(&pack_id, &c.id).await {
+    let changes = match (&head_id, &head) {
+        (None, _) => Vec::new(),
+        // `config_rev` hashes a projection covering everything the diff reads,
+        // so an equal revision means an empty diff and the snapshot need not be
+        // read at all -- the everyday answer on a clean pack. The converse does
+        // not hold, which is why this is a fast path and not the answer itself.
+        (Some(_), Some(c)) if rev_of(&live).is_ok_and(|rev| rev == c.config_rev) => Vec::new(),
+        (Some(id), _) => match state.storage.load_commit_config(&pack_id, id).await {
             Ok(snapshot) => crate::authoring::diff_configs(&snapshot, &live),
-            Err(_) => vec![crate::authoring::configdiff::whole_config()],
+            Err(_) => vec![crate::authoring::whole_config()],
         },
     };
     Ok(Json(crate::authoring::CommitStatus {
         // A pack with no history has nothing to diff against, and one
         // outstanding change: the pack itself.
-        uncommitted: if head.is_none() { 1 } else { changes.len() },
+        uncommitted: if head_id.is_none() { 1 } else { changes.len() },
         changes,
         pending_authors: state.storage.pending_authors(&pack_id).await,
         head,
@@ -1914,7 +1928,7 @@ async fn commit_diff(
     };
     let changes = match &before {
         Some(before) => crate::authoring::diff_configs(before, &target),
-        None => crate::authoring::configdiff::initial(&target),
+        None => crate::authoring::initial(&target),
     };
     Ok(Json(CommitDiff {
         from,

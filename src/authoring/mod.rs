@@ -38,7 +38,10 @@ pub mod versions;
 pub use bootstrap::{BootstrapArgs, bootstrap};
 pub use build::{Built, build_manifest, make_pack_summary};
 pub use commits::{Commit, CommitSnapshot, CommitStatus, make_commit};
-pub use configdiff::{ChangeField, ChangeGroup, ChangeOp, ConfigChange, diff_configs, uncommitted};
+pub use configdiff::{
+    ChangeField, ChangeGroup, ChangeOp, ConfigChange, diff_configs, initial, uncommitted,
+    whole_config,
+};
 pub use curator::{
     McModInfo, enrich_from_mcmod_info, infer_requires_from_mcmod_info, jar_icon, read_mcmod_info,
 };
