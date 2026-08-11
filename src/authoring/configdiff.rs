@@ -20,9 +20,14 @@
 //! `pulled`, and `display.requires` / `display.presence` are written by the fill
 //! and the classifier on every save. Counting those is what made the old number
 //! meaningless -- a save whose only effect was the fill writing two requires
-//! lists reported 22 changes. The projection here is deliberately the same one
-//! `PackConfig::edit_rev` hashes, so "the revision moved" and "there is
-//! something to commit" cannot disagree.
+//! lists reported 22 changes.
+//!
+//! The projection is the one `PackConfig::edit_rev` hashes, minus what only the
+//! mirror writes inside a row: `edit_rev` still covers `display.requires`,
+//! `display.presence` and the order rows sit in, and this does not. So an equal
+//! revision means an empty diff, and the converse does not hold -- which is the
+//! direction the cheap path in `commit_status` reads it, and the only direction
+//! that is safe to.
 
 use crate::domain::{DeclaredAsset, DeclaredMod, Display, PackConfig, SourceDecl};
 use serde::{Deserialize, Serialize};
@@ -338,6 +343,15 @@ fn mod_changes(key: &str, was: &DeclaredMod, now: &DeclaredMod) -> Vec<ConfigCha
     let (from, to) = (pin(&was.source), pin(&now.source));
     if from != to {
         out.push(row(ChangeField::Pin, Some(from), Some(to)));
+    } else if project_of(&was.source) != project_of(&now.source) {
+        // The same version id under a different project: the pin reads
+        // unchanged and the artifact is not the same one. Rare from the panel,
+        // which writes both ids together, and silent without this.
+        out.push(row(
+            ChangeField::Pin,
+            project_of(&was.source),
+            project_of(&now.source),
+        ));
     }
     if was.filename != now.filename {
         out.push(row(
@@ -461,11 +475,25 @@ fn asset_changes(dest: &str, was: &DeclaredAsset, now: &DeclaredAsset) -> Vec<Co
 /// are dropped: the fill appends and prunes them on every save, and a library
 /// arriving because a mod needs it is not a decision anyone made.
 fn authored_mods(cfg: &PackConfig) -> BTreeMap<String, &DeclaredMod> {
-    cfg.mods
-        .iter()
-        .filter(|m| !m.pulled)
-        .map(|m| (identity(m), m))
-        .collect()
+    let mut out: BTreeMap<String, &DeclaredMod> = BTreeMap::new();
+    for m in cfg.mods.iter().filter(|m| !m.pulled) {
+        // A key two rows share is no key at all: the second would replace the
+        // first, and every edit on the row that lost would be missing from the
+        // diff -- which is the count the build gate trusts. A slug is typed by
+        // hand, checked for uniqueness nowhere, and the editor offers the field
+        // empty on every cached jar, so two rows keying alike is an ordinary
+        // accident rather than a corrupt config. The filename is unique by
+        // construction (`PackConfig::duplicate_declaration`), so it is what a
+        // collision falls back to.
+        let key = identity(m);
+        let key = if out.contains_key(&key) {
+            format!("f:{}", m.filename)
+        } else {
+            key
+        };
+        out.insert(key, m);
+    }
+    out
 }
 
 /// The identity a declared mod is matched by across two configs: the Modrinth
@@ -475,7 +503,10 @@ fn authored_mods(cfg: &PackConfig) -> BTreeMap<String, &DeclaredMod> {
 fn identity(m: &DeclaredMod) -> String {
     match &m.source {
         SourceDecl::Modrinth { project_id, .. } => format!("m:{project_id}"),
-        _ => match &m.slug {
+        // A blank slug is the editor's own default for a cached jar, not an
+        // identity anyone assigned: keying by it would make every jar nobody
+        // named the same row.
+        _ => match m.slug.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             Some(s) => format!("s:{s}"),
             None => format!("f:{}", m.filename),
         },
@@ -748,6 +779,57 @@ mod tests {
         assert_eq!(rows[0].field, Some(ChangeField::Filename));
         assert_eq!(rows[0].from.as_deref(), Some("FTBLibrary.jar"));
         assert_eq!(rows[0].to.as_deref(), Some("FTBLibrary-2110.jar"));
+    }
+
+    #[test]
+    fn two_rows_sharing_a_slug_are_two_rows() {
+        // a slug is typed by hand and unique nowhere; keying two jars alike
+        // would drop one of them out of the diff, and the count with it
+        let mut base = cfg();
+        base.mods[1].slug = Some("lib".into());
+        base.mods.push(DeclaredMod {
+            slug: Some("lib".into()),
+            ..cache_mod("Other.jar", "e".repeat(40))
+        });
+        let mut after = base.clone();
+        after.mods[1].default_enabled = false;
+        let rows = diff_configs(&base, &after);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].label, "FTBLibrary.jar");
+        assert_eq!(rows[0].field, Some(ChangeField::DefaultEnabled));
+    }
+
+    #[test]
+    fn a_blank_slug_is_not_an_identity() {
+        // the editor offers the field empty on every cached jar, so two blank
+        // ones must not read as one row
+        let mut base = cfg();
+        base.mods[1].slug = Some("  ".into());
+        base.mods.push(DeclaredMod {
+            slug: Some(String::new()),
+            ..cache_mod("Other.jar", "e".repeat(40))
+        });
+        let mut after = base.clone();
+        after.mods[2].default_enabled = false;
+        let rows = diff_configs(&base, &after);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].label, "Other.jar");
+    }
+
+    #[test]
+    fn a_row_repointed_at_another_project_is_a_change() {
+        // same version id, different project: the pin reads unchanged and the
+        // artifact is not the same one
+        let mut after = cfg();
+        after.mods[0].source = SourceDecl::Modrinth {
+            project_id: "AANobbMI".into(),
+            version_id: "sc43sMLj".into(),
+        };
+        let rows = diff_configs(&cfg(), &after);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].field, Some(ChangeField::Pin));
+        assert_eq!(rows[0].from.as_deref(), Some("LNytGWDc"));
+        assert_eq!(rows[0].to.as_deref(), Some("AANobbMI"));
     }
 
     #[test]
