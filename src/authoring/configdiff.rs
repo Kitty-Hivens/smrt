@@ -127,55 +127,8 @@ const PACK_FIELDS: &[&str] = &[
 /// assets; arrivals, departures and moves in that order within each group.
 pub fn diff_configs(before: &PackConfig, after: &PackConfig) -> Vec<ConfigChange> {
     let mut out = pack_rows(before, after);
-    out.extend(sorted(pair_renames(mod_rows(before, after))));
-    out.extend(sorted(pair_renames(asset_rows(before, after))));
-    out
-}
-
-/// Fold a departure and an arrival of the same artifact into the rename it is.
-///
-/// Identity carries a mod across a re-pin, but a jar the mirror knows only by
-/// its hash has no identity beyond its name -- so renaming one reads as two
-/// unrelated rows, which is a worse answer than the one the material allows:
-/// both rows point at the same artifact, and that is what makes it a rename.
-/// Content is the evidence here, as it is in git.
-fn pair_renames(rows: Vec<ConfigChange>) -> Vec<ConfigChange> {
-    let gone: Vec<usize> = rows
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| r.op == ChangeOp::Remove)
-        .map(|(i, _)| i)
-        .collect();
-    let mut dropped = std::collections::HashSet::new();
-    let mut renames: Vec<(usize, String)> = Vec::new();
-    for i in gone {
-        let from = rows[i].from.clone();
-        let Some(from) = from else { continue };
-        let found = rows.iter().enumerate().find(|(j, r)| {
-            r.op == ChangeOp::Add && !dropped.contains(j) && r.to.as_deref() == Some(from.as_str())
-        });
-        if let Some((j, _)) = found {
-            dropped.insert(i);
-            dropped.insert(j);
-            renames.push((j, rows[i].label.clone()));
-        }
-    }
-    let mut out: Vec<ConfigChange> = Vec::new();
-    for (i, row) in rows.iter().enumerate() {
-        if dropped.contains(&i) {
-            if let Some((_, was)) = renames.iter().find(|(j, _)| *j == i) {
-                out.push(ConfigChange {
-                    op: ChangeOp::Change,
-                    field: Some(ChangeField::Filename),
-                    from: Some(was.clone()),
-                    to: Some(row.label.clone()),
-                    ..row.clone()
-                });
-            }
-            continue;
-        }
-        out.push(row.clone());
-    }
+    out.extend(sorted(mod_rows(before, after)));
+    out.extend(sorted(asset_rows(before, after)));
     out
 }
 
@@ -309,33 +262,57 @@ fn mod_rows(before: &PackConfig, after: &PackConfig) -> Vec<ConfigChange> {
     let now: BTreeMap<String, &DeclaredMod> = authored_mods(after);
     let mut out = Vec::new();
     for (key, m) in &now {
-        match was.get(key) {
-            None => out.push(ConfigChange {
-                group: ChangeGroup::Mods,
-                op: ChangeOp::Add,
-                key: key.clone(),
-                label: m.filename.clone(),
-                field: None,
-                from: None,
-                to: Some(pin(&m.source)),
-                project: project_of(&m.source),
-            }),
-            Some(old) => out.extend(mod_changes(key, old, m)),
+        if let Some(old) = was.get(key) {
+            out.extend(mod_changes(key, old, m));
         }
     }
-    for (key, m) in &was {
-        if !now.contains_key(key) {
-            out.push(ConfigChange {
+
+    // What identity could not carry, content can: a jar the mirror knows only by
+    // its hash has no key beyond its filename, so renaming one leaves a
+    // departure and an arrival pointing at the same artifact. Pairing them here,
+    // before their changes are read, is what makes the rename a rename and still
+    // reports whatever else moved on the same row.
+    let gone: Vec<(&String, &&DeclaredMod)> = was
+        .iter()
+        .filter(|(key, _)| !now.contains_key(*key))
+        .collect();
+    let mut taken: std::collections::HashSet<&String> = std::collections::HashSet::new();
+    for (key, old) in &gone {
+        let pin_of = pin(&old.source);
+        let paired = now.iter().find(|(k, m)| {
+            !was.contains_key(*k) && !taken.contains(*k) && pin(&m.source) == pin_of
+        });
+        match paired {
+            Some((new_key, new_mod)) => {
+                taken.insert(new_key);
+                out.extend(mod_changes(new_key, old, new_mod));
+            }
+            None => out.push(ConfigChange {
                 group: ChangeGroup::Mods,
                 op: ChangeOp::Remove,
-                key: key.clone(),
-                label: m.filename.clone(),
+                key: (*key).clone(),
+                label: old.filename.clone(),
                 field: None,
-                from: Some(pin(&m.source)),
+                from: Some(pin_of),
                 to: None,
-                project: project_of(&m.source),
-            });
+                project: project_of(&old.source),
+            }),
         }
+    }
+    for (key, m) in &now {
+        if was.contains_key(key) || taken.contains(key) {
+            continue;
+        }
+        out.push(ConfigChange {
+            group: ChangeGroup::Mods,
+            op: ChangeOp::Add,
+            key: key.clone(),
+            label: m.filename.clone(),
+            field: None,
+            from: None,
+            to: Some(pin(&m.source)),
+            project: project_of(&m.source),
+        });
     }
     out
 }
@@ -392,33 +369,54 @@ fn asset_rows(before: &PackConfig, after: &PackConfig) -> Vec<ConfigChange> {
         after.assets.iter().map(|a| (a.dest.as_str(), a)).collect();
     let mut out = Vec::new();
     for (dest, a) in &now {
-        match was.get(dest) {
-            None => out.push(ConfigChange {
-                group: ChangeGroup::Assets,
-                op: ChangeOp::Add,
-                key: (*dest).to_string(),
-                label: (*dest).to_string(),
-                field: None,
-                from: None,
-                to: Some(pin(&a.source)),
-                project: project_of(&a.source),
-            }),
-            Some(old) => out.extend(asset_changes(dest, old, a)),
+        if let Some(old) = was.get(dest) {
+            out.extend(asset_changes(dest, old, a));
         }
     }
-    for (dest, a) in &was {
-        if !now.contains_key(dest) {
-            out.push(ConfigChange {
+
+    // An asset installed to another path is the same file moved, on the same
+    // evidence a renamed jar is: both sides point at one source.
+    let gone: Vec<(&&str, &&DeclaredAsset)> = was
+        .iter()
+        .filter(|(dest, _)| !now.contains_key(*dest))
+        .collect();
+    let mut taken: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for (dest, old) in &gone {
+        let pin_of = pin(&old.source);
+        let paired = now.iter().find(|(d, a)| {
+            !was.contains_key(*d) && !taken.contains(*d) && pin(&a.source) == pin_of
+        });
+        match paired {
+            Some((new_dest, new_asset)) => {
+                taken.insert(new_dest);
+                out.extend(asset_changes(new_dest, old, new_asset));
+            }
+            None => out.push(ConfigChange {
                 group: ChangeGroup::Assets,
                 op: ChangeOp::Remove,
-                key: (*dest).to_string(),
-                label: (*dest).to_string(),
+                key: (**dest).to_string(),
+                label: (**dest).to_string(),
                 field: None,
-                from: Some(pin(&a.source)),
+                from: Some(pin_of),
                 to: None,
-                project: project_of(&a.source),
-            });
+                project: project_of(&old.source),
+            }),
         }
+    }
+    for (dest, a) in &now {
+        if was.contains_key(dest) || taken.contains(dest) {
+            continue;
+        }
+        out.push(ConfigChange {
+            group: ChangeGroup::Assets,
+            op: ChangeOp::Add,
+            key: (*dest).to_string(),
+            label: (*dest).to_string(),
+            field: None,
+            from: None,
+            to: Some(pin(&a.source)),
+            project: project_of(&a.source),
+        });
     }
     out
 }
@@ -438,6 +436,13 @@ fn asset_changes(dest: &str, was: &DeclaredAsset, now: &DeclaredAsset) -> Vec<Co
     let (from, to) = (pin(&was.source), pin(&now.source));
     if from != to {
         out.push(row(ChangeField::Pin, Some(from), Some(to)));
+    }
+    if was.dest != now.dest {
+        out.push(row(
+            ChangeField::Filename,
+            Some(was.dest.clone()),
+            Some(now.dest.clone()),
+        ));
     }
     if was.required != now.required {
         out.push(row(
@@ -743,6 +748,31 @@ mod tests {
         assert_eq!(rows[0].field, Some(ChangeField::Filename));
         assert_eq!(rows[0].from.as_deref(), Some("FTBLibrary.jar"));
         assert_eq!(rows[0].to.as_deref(), Some("FTBLibrary-2110.jar"));
+    }
+
+    #[test]
+    fn a_rename_still_reports_what_else_moved_on_the_row() {
+        // pairing a departure with an arrival must not swallow the rest of the
+        // row: renaming a jar and switching it off is two decisions
+        let mut after = cfg();
+        after.mods[1].filename = "FTBLibrary-2110.jar".into();
+        after.mods[1].default_enabled = false;
+        let rows = diff_configs(&cfg(), &after);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(rows[0].field, Some(ChangeField::Filename));
+        assert_eq!(rows[1].field, Some(ChangeField::DefaultEnabled));
+        assert_eq!(rows[1].to.as_deref(), Some("off"));
+    }
+
+    #[test]
+    fn a_moved_asset_reports_the_move_and_the_rest() {
+        let mut after = cfg();
+        after.assets[0].dest = "config/b.json".into();
+        after.assets[0].required = false;
+        let rows = diff_configs(&cfg(), &after);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(rows[0].field, Some(ChangeField::Filename));
+        assert_eq!(rows[1].field, Some(ChangeField::Required));
     }
 
     #[test]
