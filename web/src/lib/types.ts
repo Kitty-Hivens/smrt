@@ -73,6 +73,8 @@ export type { VersionRow } from './bindings/VersionRow';
 export type { ReleaseRow } from './bindings/ReleaseRow';
 export type { UnassignedJar } from './bindings/UnassignedJar';
 export type { BuildSummary } from './bindings/BuildSummary';
+export type { PackGrant } from './bindings/PackGrant';
+export type { PackLevel } from './bindings/PackLevel';
 export type { Commit } from './bindings/Commit';
 export type { CommitLogEntry } from './bindings/CommitLogEntry';
 export type { CommitStatus } from './bindings/CommitStatus';

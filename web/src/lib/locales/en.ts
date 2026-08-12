@@ -401,6 +401,23 @@ export const en = {
   'mrp.searching': 'searching...',
   'mrp.noResults': 'No results.',
 
+  'pe.tab.access': 'Access',
+  'acc.lead': 'Who has been let into this pack. The owner and the mirror\u2019s admins reach it without being listed.',
+  'acc.none': 'Nobody else has been let in.',
+  'acc.unreadable': 'The access list could not be read.',
+  'acc.level.view': 'view',
+  'acc.level.edit': 'edit',
+  'acc.level.own': 'own',
+  'acc.grant': 'Let in',
+  'acc.revoke': 'Take away',
+  'acc.revokeAsk': 'Take {who} out of this pack?',
+  'acc.uidPlaceholder': 'GitHub uid',
+  'acc.needUid': 'A grant is keyed by GitHub uid -- a number, not a name.',
+  'acc.grantedBy': 'by {by}, {at}',
+  'acc.unknownUser': 'uid {uid}',
+  'acc.hint':
+    'View reads a draft, its history and its reports. Edit writes the config, commits and builds. Own also hands out and takes away access, changes visibility, and deletes the pack.',
+
   'hist.commit': 'Commit',
   'hist.messagePlaceholder': 'What changed, and why',
   'hist.uncommitted': '{n} change(s) since the last commit',

@@ -3,7 +3,7 @@
 //! requires the admin role -- this is the member tier of the ladder.
 
 use super::{ApiError, audit};
-use crate::accounts::{Identity, Role, UploadRow};
+use crate::accounts::{Identity, PackLevel, Role, UploadRow};
 use crate::authoring::curator::{clean_mc_version, jar_facts, read_mcmod_info};
 use crate::authoring::modmeta;
 use crate::domain::{PackConfig, PackSummary, Visibility};
@@ -98,13 +98,15 @@ async fn my_authoring(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
 ) -> Result<Json<Vec<String>>, ApiError> {
-    let mine = state
-        .storage
-        .list_authoring_packs()
-        .await?
-        .into_iter()
-        .filter(|id| super::auth::may_author(&identity, id))
-        .collect();
+    // One membership question per pack rather than a rule applied to the list:
+    // a grant is a row, so "which packs can I reach" cannot be derived from the
+    // id alone any more.
+    let mut mine = Vec::new();
+    for id in state.storage.list_authoring_packs().await? {
+        if super::auth::may(&state, &identity, &id, PackLevel::View).await {
+            mine.push(id);
+        }
+    }
     Ok(Json(mine))
 }
 
@@ -134,9 +136,7 @@ async fn upload_jar(
     Query(p): Query<UploadParams>,
     body: Bytes,
 ) -> Result<(StatusCode, Json<UploadRow>), ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Edit).await?;
     let sha1 = crate::storage::sha1_hex(&body);
 
     // Auto-gate: a jar Modrinth already serves is the genuine file, not archival.
@@ -291,8 +291,10 @@ async fn fork_pack(
         .await
         .map(|s| s.visibility == Visibility::Published)
         .unwrap_or(false);
-    if !published && !super::auth::may_author(&identity, &req.source) {
-        return Err(ApiError::Forbidden);
+    // a published pack is forkable by anyone; an unpublished one only by
+    // somebody who can already see it
+    if !published {
+        super::auth::authorize(&state, &identity, &req.source, PackLevel::View).await?;
     }
     let target = format!("u/{}/{}", identity.uid, req.name);
     let cfg = state

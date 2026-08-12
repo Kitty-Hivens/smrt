@@ -177,6 +177,19 @@ version section when a release is tagged.
 
 ### Added
 
+- Access to a pack can be given to one person, on one pack (ADR 0006). Until
+  now the only way to let somebody help was to make them an admin of the whole
+  mirror -- every pack, the registry, moderation, takedowns and the user list --
+  because who may author a pack was a function of an identity with exactly two
+  answers: the owner of a community namespace, or an admin. Three levels are
+  now grantable per pack: `view` (a draft, its history, its reports), `edit`
+  (config, commits, builds) and `own` (also access, visibility, deletion). The
+  two old answers still need no lookup and are deliberately not rows in the
+  list: the namespace owner and the admins reach a pack without being granted
+  anything, and the list says so rather than inventing entries. One gate decides
+  all of it, ahead of every authored read and write, so the levels are compared
+  in one place rather than re-derived in each of the thirty-nine handlers that
+  used to ask.
 - A pack's history is readable past its first page. The log answered a hundred
   commits by default and five hundred at most, with nothing to continue from, so a pack that had been curated
   for long enough simply had no way to reach its older checkpoints. It now pages

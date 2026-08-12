@@ -11,6 +11,8 @@ import type {
   CommunityPack,
   Commit,
   CommitDiff,
+  PackGrant,
+  PackLevel,
   CommitLogEntry,
   CommitStatus,
   DeclaredAsset,
@@ -284,6 +286,20 @@ export const api = {
     if (!r.ok) throw await toError(r);
     return { config: (await r.json()) as PackConfig, rev: revisionOf(r) };
   },
+  // ── authoring: who may reach a pack (ADR 0006) ──
+  //
+  // The list holds grants only: ownership and the admin rung are answers the
+  // gate knows without a row, so they are never in it.
+  packAccess: (id: string) =>
+    getJson<PackGrant[]>(`/v1/authoring/packs/${encodeURIComponent(id)}/access`),
+  grantPackAccess: (id: string, githubUid: number, level: PackLevel) =>
+    send('POST', `/v1/authoring/packs/${encodeURIComponent(id)}/access`, {
+      github_uid: githubUid,
+      level,
+    }),
+  revokePackAccess: (id: string, githubUid: number) =>
+    send('DELETE', `/v1/authoring/packs/${encodeURIComponent(id)}/access/${githubUid}`),
+
   // ── authoring: history (#122) ──
   //
   // A commit is what a build is made from, so these sit beside the build rather

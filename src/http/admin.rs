@@ -1,5 +1,5 @@
 use super::ApiError;
-use crate::accounts::{Identity, UploadRow, UserRow};
+use crate::accounts::{Identity, PackLevel, UploadRow, UserRow};
 use crate::authoring::{
     ResolveReport, ValidateReport, modrinth, pack_graph, reconstruct_config, resolve_pack, validate,
 };
@@ -57,9 +57,10 @@ fn operator_router(state: AppState) -> Router {
 }
 
 /// Pack-authoring surface: any signed-in member may reach it, but every
-/// pack-scoped handler gates on `may_author` -- a member touches only their own
-/// community packs, officials stay admin-only. The Modrinth proxy needs just a
-/// session (no pack, no ownership).
+/// pack-scoped handler gates on `authorize` at the level that act needs (ADR
+/// 0006) -- a member reaches their own community packs and whatever else they
+/// were granted, officials stay admin-owned. The Modrinth proxy needs just a
+/// session (no pack, no access).
 fn authoring_router(state: AppState) -> Router {
     Router::new()
         .route(
@@ -86,6 +87,14 @@ fn authoring_router(state: AppState) -> Router {
             get(get_pack_doc).post(post_pack_doc),
         )
         .route("/v1/authoring/packs/{pack_id}", delete(delete_pack))
+        .route(
+            "/v1/authoring/packs/{pack_id}/access",
+            get(list_access).post(grant_access),
+        )
+        .route(
+            "/v1/authoring/packs/{pack_id}/access/{uid}",
+            delete(revoke_access),
+        )
         .route(
             "/v1/authoring/packs/{pack_id}/visibility",
             put(set_pack_visibility),
@@ -348,9 +357,7 @@ async fn pack_spoof(
     Path(pack_id): Path<String>,
 ) -> Result<Json<SpoofReport>, ApiError> {
     use crate::authoring::spoof::{Spoof, drift};
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     let cfg = state.storage.load_pack_config(&pack_id).await?;
 
     // What the pack ships, if it ships one: the asset the launcher writes into
@@ -471,9 +478,7 @@ async fn generate_pack_spoof(
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
 ) -> Result<Json<SpoofReport>, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Edit).await?;
     let _guard = state.storage.lock_pack_config(&pack_id).await;
     let mut cfg = state.storage.load_pack_config(&pack_id).await?;
     let (current, asked, unasked) = ask_packs_server(&state, &cfg).await;
@@ -649,9 +654,7 @@ async fn put_pack_static(
     Path((pack_id, rel_path)): Path<(String, String)>,
     body: Bytes,
 ) -> Result<(StatusCode, Json<PutStaticResponse>), ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Edit).await?;
     state
         .storage
         .save_pack_static(&pack_id, &rel_path, &body)
@@ -672,9 +675,7 @@ async fn delete_pack_static(
     Extension(identity): Extension<Identity>,
     Path((pack_id, rel_path)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Edit).await?;
     state
         .storage
         .delete_pack_static(&pack_id, &rel_path)
@@ -687,9 +688,7 @@ async fn list_pack_static(
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
 ) -> Result<Json<StaticListing>, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     let files = state.storage.list_pack_static(&pack_id).await?;
     Ok(Json(StaticListing {
         schema_version: SCHEMA_VERSION,
@@ -735,9 +734,7 @@ async fn search_mods_combined(
     // the rest of the authoring surface is.
     let present: std::collections::HashSet<String> = match &q.pack {
         Some(pack_id) => {
-            if !super::auth::may_author(&identity, pack_id) {
-                return Err(ApiError::Forbidden);
-            }
+            super::auth::authorize(&state, &identity, pack_id, PackLevel::View).await?;
             state
                 .storage
                 .load_pack_config(pack_id)
@@ -838,9 +835,7 @@ async fn validate_pack(
     Path(pack_id): Path<String>,
     body: Bytes,
 ) -> Result<Json<ValidateReport>, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     let cfg = state.storage.load_pack_config(&pack_id).await?;
     let report = tokio::task::spawn_blocking(move || validate(&cfg, &body))
         .await
@@ -865,9 +860,7 @@ async fn preview_dependencies(
     Path(pack_id): Path<String>,
     Json(cfg): Json<PackConfig>,
 ) -> Result<Json<Vec<crate::authoring::depfill::PulledPreview>>, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     let cached: std::collections::HashSet<String> = state
         .storage
         .list_cache_inventory()
@@ -893,9 +886,7 @@ async fn pack_resolve(
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
 ) -> Result<Json<ResolveReport>, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     let cfg = state.storage.load_pack_config(&pack_id).await?;
     let registry = state.registry.clone();
     let for_registry = cfg.clone();
@@ -925,9 +916,7 @@ async fn pack_graph_view(
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
 ) -> Result<Json<GraphData>, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     let cfg = state.storage.load_pack_config(&pack_id).await?;
     let registry = state.registry.clone();
     let graph = tokio::task::spawn_blocking(move || registry.with_conn(|c| pack_graph(c, &cfg)))
@@ -1152,9 +1141,7 @@ async fn pack_events(
 ) -> Result<axum::response::Response, ApiError> {
     use axum::response::IntoResponse;
     use axum::response::sse::{Event, KeepAlive, Sse};
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     // The subscription is held by the stream itself: when the client goes away
     // the stream drops, the guard drops with it, and the leave is announced --
     // no separate goodbye to miss.
@@ -1229,9 +1216,7 @@ async fn get_pack_doc(
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     let cfg = state.storage.load_pack_config(&pack_id).await?;
     let doc = state
         .docs
@@ -1251,9 +1236,7 @@ async fn post_pack_doc(
     Path(pack_id): Path<String>,
     body: Bytes,
 ) -> Result<StatusCode, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Edit).await?;
     // The config is read only when there is no document yet: seeding happens
     // once per pack, and a file read per keystroke would be the cost of writing
     // this the obvious way.
@@ -1421,9 +1404,7 @@ async fn get_pack_config(
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
 ) -> Result<([(HeaderName, String); 1], Json<PackConfig>), ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     let cfg = state.storage.load_pack_config(&pack_id).await?;
     let rev = rev_of(&cfg)?;
     Ok((etag(&rev), Json(cfg)))
@@ -1444,9 +1425,7 @@ async fn put_pack_config(
             cfg.pack_id, pack_id
         )));
     }
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Edit).await?;
     // One row per mod and per asset dest: the same artifact twice, or two rows
     // writing one path, is an authoring mistake no build can act on. Checked on
     // the incoming body, before anything server-side touches it.
@@ -1602,9 +1581,7 @@ async fn revert_pack_config(
     Path(pack_id): Path<String>,
     Query(p): Query<RevertParams>,
 ) -> Result<([(HeaderName, String); 1], Json<PackConfig>), ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Edit).await?;
     let manifest = state
         .storage
         .load_manifest_version(&pack_id, &p.version)
@@ -1663,9 +1640,7 @@ async fn create_commit(
     Path(pack_id): Path<String>,
     Json(req): Json<CommitReq>,
 ) -> Result<(StatusCode, Json<crate::authoring::Commit>), ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Edit).await?;
     let message = req.message.trim().to_string();
     if message.is_empty() {
         return Err(ApiError::BadRequest(
@@ -1751,9 +1726,7 @@ async fn list_commits(
     Query(page): Query<PageQuery>,
     uri: Uri,
 ) -> Result<Response, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     let after = page.cursor().and_then(|parts| parts.first().cloned());
     let log = state
         .storage
@@ -1784,9 +1757,7 @@ async fn commit_status(
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
 ) -> Result<Json<crate::authoring::CommitStatus>, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     let live = state.storage.load_pack_config(&pack_id).await?;
     // Whether there is a checkpoint and whether its metadata reads are separate
     // questions: a commit whose metadata file is damaged is still a commit, and
@@ -1829,9 +1800,7 @@ async fn get_commit(
     Extension(identity): Extension<Identity>,
     Path((pack_id, commit_id)): Path<(String, String)>,
 ) -> Result<Json<CommitLogEntry>, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     let commit = state.storage.load_commit(&pack_id, &commit_id).await?;
     let builds = state
         .storage
@@ -1848,9 +1817,7 @@ async fn get_commit_config(
     Extension(identity): Extension<Identity>,
     Path((pack_id, commit_id)): Path<(String, String)>,
 ) -> Result<Json<PackConfig>, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     Ok(Json(
         state
             .storage
@@ -1892,9 +1859,7 @@ async fn commit_diff(
     Path((pack_id, commit_id)): Path<(String, String)>,
     Query(p): Query<DiffParams>,
 ) -> Result<Json<CommitDiff>, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     let target = state
         .storage
         .load_commit_config(&pack_id, &commit_id)
@@ -1949,9 +1914,7 @@ async fn restore_commit(
     Path((pack_id, commit_id)): Path<(String, String)>,
     Json(req): Json<RestoreReq>,
 ) -> Result<(StatusCode, Json<crate::authoring::Commit>), ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Edit).await?;
     let restored = state
         .storage
         .load_commit_config(&pack_id, &commit_id)
@@ -2048,12 +2011,10 @@ async fn duplicate_pack(
     Path(pack_id): Path<String>,
     Json(req): Json<DuplicatePackReq>,
 ) -> Result<(StatusCode, Json<PackConfig>), ApiError> {
-    // must own (or admin) both the source pack and the target namespace
-    if !super::auth::may_author(&identity, &pack_id)
-        || !super::auth::may_author(&identity, &req.target_id)
-    {
-        return Err(ApiError::Forbidden);
-    }
+    // reading the source is enough to copy it; the copy itself is written into
+    // the target, which the caller must be able to edit
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
+    super::auth::authorize(&state, &identity, &req.target_id, PackLevel::Edit).await?;
     // the clone is owned by the target's namespace (a member's own uid), or by
     // the caller for an official (flat) target
     let owner = super::auth::pack_namespace_uid(&req.target_id).unwrap_or(identity.uid);
@@ -2085,10 +2046,13 @@ async fn delete_pack(
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Own).await?;
     state.storage.delete_pack(&pack_id).await?;
+    // The id can be minted again; its access list must not outlive the pack it
+    // was written for.
+    let acc = state.accounts.clone();
+    let gone = pack_id.clone();
+    let _ = tokio::task::spawn_blocking(move || acc.forget_pack_access(&gone)).await;
     state.events.pack(&pack_id, "deleted");
     audit(&state, &identity, "pack.delete", Some(&pack_id), None).await;
     Ok(StatusCode::NO_CONTENT)
@@ -2102,9 +2066,7 @@ async fn set_pack_visibility(
     Path(pack_id): Path<String>,
     Json(req): Json<VisibilityReq>,
 ) -> Result<StatusCode, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Own).await?;
     state
         .storage
         .set_pack_visibility(&pack_id, req.visibility)
@@ -2118,6 +2080,99 @@ async fn set_pack_visibility(
         Some(&format!("{:?}", req.visibility)),
     )
     .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── access to a pack (ADR 0006) ─────────────────────────────────────────────
+
+/// Who has been let into this pack, and at what level.
+///
+/// Only the granted rows: the owner of a community namespace and the admins are
+/// not in the list because they are not in the table -- the view says so in
+/// words rather than inventing rows the store does not have.
+async fn list_access(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+) -> Result<Json<Vec<crate::accounts::PackGrant>>, ApiError> {
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
+    let acc = state.accounts.clone();
+    let pack = pack_id.clone();
+    let rows = tokio::task::spawn_blocking(move || acc.list_pack_access(&pack))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("access task: {e}")))??;
+    Ok(Json(rows))
+}
+
+#[derive(serde::Deserialize)]
+struct GrantReq {
+    /// GitHub uid of the person being let in.
+    #[serde(alias = "uid")]
+    github_uid: i64,
+    /// `view` | `edit` | `own`.
+    level: String,
+}
+
+/// Let somebody into this pack, or move the level they already have.
+async fn grant_access(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+    Json(req): Json<GrantReq>,
+) -> Result<StatusCode, ApiError> {
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Own).await?;
+    let level = PackLevel::parse(&req.level)
+        .ok_or_else(|| ApiError::BadRequest(format!("unknown level {:?}", req.level)))?;
+    // Granting to yourself is the one move that cannot mean anything: whoever
+    // can grant already owns the pack.
+    if req.github_uid == identity.uid {
+        return Err(ApiError::BadRequest(
+            "you already own this pack; a grant to yourself would say nothing".into(),
+        ));
+    }
+    let acc = state.accounts.clone();
+    let (pack, by) = (pack_id.clone(), identity.uid);
+    let uid = req.github_uid;
+    tokio::task::spawn_blocking(move || acc.grant_pack_access(&pack, uid, level, by))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("access task: {e}")))?
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    audit(
+        &state,
+        &identity,
+        "pack.access.grant",
+        Some(&pack_id),
+        Some(&format!("{} -> {}", req.github_uid, level.as_str())),
+    )
+    .await;
+    state.events.pack(&pack_id, "access");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Take somebody's access away. A uid that had none is not an error: the state
+/// asked for is the state that results either way.
+async fn revoke_access(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path((pack_id, uid)): Path<(String, i64)>,
+) -> Result<StatusCode, ApiError> {
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Own).await?;
+    let acc = state.accounts.clone();
+    let pack = pack_id.clone();
+    let removed = tokio::task::spawn_blocking(move || acc.revoke_pack_access(&pack, uid))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("access task: {e}")))??;
+    if removed {
+        audit(
+            &state,
+            &identity,
+            "pack.access.revoke",
+            Some(&pack_id),
+            Some(&uid.to_string()),
+        )
+        .await;
+        state.events.pack(&pack_id, "access");
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

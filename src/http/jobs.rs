@@ -3,7 +3,7 @@
 //! `crate::jobs`; these handlers are the thin HTTP surface.
 
 use super::ApiError;
-use crate::accounts::Identity;
+use crate::accounts::{Identity, PackLevel};
 use crate::authoring::BootstrapArgs;
 use crate::domain::{LoaderSpec, VersionChannel};
 use crate::jobs::{BuildDeps, BuildRequest, DryRun, Status};
@@ -111,9 +111,7 @@ async fn build_pack(
     Query(p): Query<BuildParams>,
     body: Option<Json<BuildBody>>,
 ) -> Result<Json<JobRef>, ApiError> {
-    if !super::auth::may_author(&identity, &pack_id) {
-        return Err(ApiError::Forbidden);
-    }
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Edit).await?;
     let from_commit = resolve_build_commit(&state, &pack_id, &p).await?;
     let pack_version = p.pack_version.filter(|v| !v.trim().is_empty());
     let channel = match p.channel.as_deref() {
