@@ -177,6 +177,18 @@ version section when a release is tagged.
 
 ### Added
 
+- A fork can be offered back to the pack it came from. Forking was already
+  possible and entirely one-way: `fork_of` was recorded and read by nothing, so
+  somebody who improved a fork of your pack had no way to offer the improvement
+  and you had no way to take it. A proposal is now a request around a commit --
+  the offered state is an immutable snapshot in the fork, so what a reviewer
+  reads cannot move while they read it -- and the review shows what taking it
+  would do to the pack as it stands now, not against the fork's parent. Taking
+  it writes the offered content in as an ordinary commit, readable afterwards by
+  the same history as everything else; ownership, tier, visibility and identity
+  stay the target's, because a proposal that could move them would be a rename
+  away from a takeover. Saying no keeps the row, and settling is a one-time
+  write, so two reviewers pressing at once cannot both decide it.
 - Access to a pack can be given to one person, on one pack (ADR 0006). Until
   now the only way to let somebody help was to make them an admin of the whole
   mirror -- every pack, the registry, moderation, takedowns and the user list --

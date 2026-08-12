@@ -130,6 +130,46 @@ pub struct PackGrant {
     pub granted_at: i64,
 }
 
+/// A fork offered back to the pack it came from.
+///
+/// The proposed state is not stored here: it is `source_commit` in
+/// `source_pack`, which is already an immutable snapshot with an author, a
+/// message and a parent. This row is the request around it.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct Proposal {
+    #[ts(type = "number")]
+    pub id: i64,
+    /// The pack being asked to take the change.
+    pub target_pack: String,
+    /// The fork the change lives in.
+    pub source_pack: String,
+    /// The commit in `source_pack` being offered.
+    pub source_commit: String,
+    #[ts(type = "number")]
+    pub by_uid: i64,
+    /// The proposer's login, where they have signed in here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub by_login: Option<String>,
+    pub message: String,
+    /// `open` | `merged` | `declined` | `withdrawn`.
+    pub status: String,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub decided_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub decided_by: Option<i64>,
+    /// What the merge wrote into the target, so a settled proposal points at
+    /// what it became and not only at what it asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub merged_commit: Option<String>,
+}
+
 /// A registered user, for the operator's user-management view.
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "bindings/")]
@@ -434,6 +474,117 @@ impl Accounts {
         Ok(())
     }
 
+    /// Record a proposal and return its id. Blocking; wrap in `spawn_blocking`.
+    pub fn open_proposal(
+        &self,
+        target_pack: &str,
+        source_pack: &str,
+        source_commit: &str,
+        by_uid: i64,
+        message: &str,
+    ) -> Result<i64> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard.execute(
+            "INSERT INTO pack_proposals
+                 (target_pack, source_pack, source_commit, by_uid, message, status, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'open', ?6)",
+            params![
+                target_pack,
+                source_pack,
+                source_commit,
+                by_uid,
+                message,
+                unix_now()
+            ],
+        )?;
+        Ok(guard.last_insert_rowid())
+    }
+
+    /// One proposal by id. Blocking; wrap in `spawn_blocking`.
+    pub fn proposal(&self, id: i64) -> Result<Option<Proposal>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard
+            .query_row(
+                &format!(
+                    "SELECT {PROPOSAL_COLS} FROM pack_proposals p \
+                          LEFT JOIN users u ON u.github_uid = p.by_uid WHERE p.id = ?1"
+                ),
+                params![id],
+                proposal_from_row,
+            )
+            .optional()
+            .context("read proposal")
+    }
+
+    /// Proposals made to a pack, newest first. `open_only` is what a reviewer
+    /// wants by default; the settled ones stay readable because "we said no in
+    /// March" is the answer somebody looks for in April. Blocking.
+    pub fn proposals_for(&self, target_pack: &str, open_only: bool) -> Result<Vec<Proposal>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let sql = format!(
+            "SELECT {PROPOSAL_COLS} FROM pack_proposals p \
+             LEFT JOIN users u ON u.github_uid = p.by_uid \
+             WHERE p.target_pack = ?1 {} ORDER BY p.created_at DESC",
+            if open_only {
+                "AND p.status = 'open'"
+            } else {
+                ""
+            }
+        );
+        let mut stmt = guard.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params![target_pack], proposal_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Proposals somebody has made, newest first. Blocking.
+    pub fn proposals_by(&self, by_uid: i64) -> Result<Vec<Proposal>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let mut stmt = guard.prepare(&format!(
+            "SELECT {PROPOSAL_COLS} FROM pack_proposals p \
+             LEFT JOIN users u ON u.github_uid = p.by_uid \
+             WHERE p.by_uid = ?1 ORDER BY p.created_at DESC"
+        ))?;
+        let rows = stmt
+            .query_map(params![by_uid], proposal_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Settle a proposal. Only an open one can be settled, so two reviewers
+    /// pressing at once cannot both decide it: the second write matches nothing
+    /// and answers `false`.
+    pub fn settle_proposal(
+        &self,
+        id: i64,
+        status: &str,
+        decided_by: i64,
+        merged_commit: Option<&str>,
+    ) -> Result<bool> {
+        if !matches!(status, "merged" | "declined" | "withdrawn") {
+            anyhow::bail!("unknown proposal status {status:?}");
+        }
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let n = guard.execute(
+            "UPDATE pack_proposals
+             SET status = ?2, decided_at = ?3, decided_by = ?4, merged_commit = ?5
+             WHERE id = ?1 AND status = 'open'",
+            params![id, status, unix_now(), decided_by, merged_commit],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Drop a deleted pack's proposals, from either side of the request.
+    pub fn forget_pack_proposals(&self, pack_id: &str) -> Result<()> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard.execute(
+            "DELETE FROM pack_proposals WHERE target_pack = ?1 OR source_pack = ?1",
+            params![pack_id],
+        )?;
+        Ok(())
+    }
+
     /// Drop a session (logout). Blocking; wrap in `spawn_blocking`.
     pub fn delete_session(&self, session_id: &str) -> Result<()> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
@@ -652,6 +803,29 @@ impl Accounts {
     }
 }
 
+/// The `pack_proposals` columns `proposal_from_row` reads, in its index order,
+/// with the proposer's login joined on. One source so the several proposal
+/// SELECTs cannot drift from the row mapper.
+const PROPOSAL_COLS: &str = "p.id, p.target_pack, p.source_pack, p.source_commit, p.by_uid, \
+     u.login, p.message, p.status, p.created_at, p.decided_at, p.decided_by, p.merged_commit";
+
+fn proposal_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Proposal> {
+    Ok(Proposal {
+        id: r.get(0)?,
+        target_pack: r.get(1)?,
+        source_pack: r.get(2)?,
+        source_commit: r.get(3)?,
+        by_uid: r.get(4)?,
+        by_login: r.get(5)?,
+        message: r.get(6)?,
+        status: r.get(7)?,
+        created_at: r.get(8)?,
+        decided_at: r.get(9)?,
+        decided_by: r.get(10)?,
+        merged_commit: r.get(11)?,
+    })
+}
+
 /// Add a nullable column to an existing table when it is absent -- the ADD
 /// COLUMN counterpart to `CREATE TABLE IF NOT EXISTS`, so a schema addition
 /// reaches a DB that predates it. `table`/`column`/`decl` are code constants,
@@ -758,6 +932,57 @@ pub fn random_token() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_proposal_is_opened_read_and_settled_once() {
+        let a = Accounts::open_in_memory().unwrap();
+        a.sign_in_github(42, "helper", None).unwrap();
+        let id = a
+            .open_proposal("Create", "u/42/Create", &"a".repeat(40), 42, "take my mod")
+            .unwrap();
+
+        let p = a.proposal(id).unwrap().expect("proposal reads back");
+        assert_eq!(p.status, "open");
+        assert_eq!(p.by_login.as_deref(), Some("helper"));
+        assert_eq!(a.proposals_for("Create", true).unwrap().len(), 1);
+        assert_eq!(a.proposals_by(42).unwrap().len(), 1);
+
+        // two reviewers pressing at once: only the first decides it
+        assert!(
+            a.settle_proposal(id, "merged", 7, Some(&"b".repeat(40)))
+                .unwrap()
+        );
+        assert!(!a.settle_proposal(id, "declined", 9, None).unwrap());
+
+        let p = a.proposal(id).unwrap().unwrap();
+        assert_eq!(p.status, "merged");
+        assert_eq!(p.decided_by, Some(7));
+        assert_eq!(p.merged_commit.as_deref(), Some(&*"b".repeat(40)));
+        // settled ones leave the open list but stay readable
+        assert!(a.proposals_for("Create", true).unwrap().is_empty());
+        assert_eq!(a.proposals_for("Create", false).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_deleted_pack_forgets_requests_from_either_side() {
+        let a = Accounts::open_in_memory().unwrap();
+        a.open_proposal("Create", "u/42/fork", &"a".repeat(40), 42, "x")
+            .unwrap();
+        a.open_proposal("u/42/fork", "Create", &"c".repeat(40), 1, "y")
+            .unwrap();
+        a.forget_pack_proposals("u/42/fork").unwrap();
+        assert!(a.proposals_for("Create", false).unwrap().is_empty());
+        assert!(a.proposals_for("u/42/fork", false).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_proposal_cannot_be_settled_into_a_state_nobody_defined() {
+        let a = Accounts::open_in_memory().unwrap();
+        let id = a
+            .open_proposal("Create", "u/42/fork", &"a".repeat(40), 42, "x")
+            .unwrap();
+        assert!(a.settle_proposal(id, "eaten", 1, None).is_err());
+    }
 
     #[test]
     fn access_is_granted_moved_and_taken_away() {

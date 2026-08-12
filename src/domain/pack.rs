@@ -290,6 +290,26 @@ impl PackConfig {
         Ok(crate::storage::sha1_hex(&serde_json::to_vec(&projected)?))
     }
 
+    /// This config's server-controlled fields, wearing another config's authored
+    /// content.
+    ///
+    /// What a proposal offers is the authored half -- the mods, the assets, the
+    /// card, the target and the pins. What it must never carry across is who
+    /// owns the pack, what tier it is, whether it is published, or which pack it
+    /// was forked from: those belong to the pack being merged into, and a
+    /// proposal that moved them would let a fork rename its way into ownership.
+    /// The identity stays too, for the same reason.
+    pub fn with_authored_from(&self, other: &PackConfig) -> PackConfig {
+        PackConfig {
+            pack_id: self.pack_id.clone(),
+            owner: self.owner,
+            tier: self.tier,
+            visibility: self.visibility,
+            fork_of: self.fork_of.clone(),
+            ..other.clone()
+        }
+    }
+
     /// The first duplicate declaration in `mods`, described for an error
     /// message, or `None` when every row is distinct.
     ///
@@ -571,6 +591,33 @@ mod tests {
     // The conditional-write rev must move on exactly what a client can author,
     // so a save is rejected when someone else edited the same fields, and only
     // then.
+    #[test]
+    fn a_merge_takes_content_and_leaves_ownership() {
+        // what a proposal offers is the authored half; who owns the pack, what
+        // tier it is and whether it is published belong to the pack merged into
+        let mut target = config_with(vec![]);
+        target.pack_id = "Create".into();
+        target.owner = 1;
+        target.tier = PackTier::Official;
+        target.visibility = Visibility::Published;
+
+        let mut offered = config_with(vec![]);
+        offered.pack_id = "u/42/Create".into();
+        offered.owner = 42;
+        offered.tier = PackTier::Community;
+        offered.visibility = Visibility::Draft;
+        offered.fork_of = Some("Create".into());
+        offered.tagline = "with the mod they wanted".into();
+
+        let merged = target.with_authored_from(&offered);
+        assert_eq!(merged.tagline, "with the mod they wanted");
+        assert_eq!(merged.pack_id, "Create");
+        assert_eq!(merged.owner, 1);
+        assert_eq!(merged.tier, PackTier::Official);
+        assert_eq!(merged.visibility, Visibility::Published);
+        assert_eq!(merged.fork_of, None);
+    }
+
     #[test]
     fn edit_rev_tracks_authored_content() {
         let base = config_with(vec![mr("jei.jar", "PROJ_JEI", "v1")]);

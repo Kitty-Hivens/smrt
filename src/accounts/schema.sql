@@ -101,3 +101,28 @@ CREATE TABLE IF NOT EXISTS pack_access (
     PRIMARY KEY (pack_id, github_uid)
 );
 CREATE INDEX IF NOT EXISTS idx_pack_access_uid ON pack_access(github_uid);
+
+-- Proposals: somebody's fork offered back to the pack it came from (ADR 0006's
+-- next layer). The proposed content is not copied here -- it is a commit in the
+-- source pack, which is already an immutable snapshot with an author and a
+-- message. This row is the request around it: who asks, of whom, and what was
+-- decided. Closing states keep the row rather than deleting it, because "we
+-- said no in March" is the answer somebody will look for in April.
+CREATE TABLE IF NOT EXISTS pack_proposals (
+    id          INTEGER PRIMARY KEY,
+    target_pack TEXT NOT NULL,
+    source_pack TEXT NOT NULL,
+    source_commit TEXT NOT NULL,
+    by_uid      INTEGER NOT NULL,
+    message     TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'open'
+                CHECK (status IN ('open', 'merged', 'declined', 'withdrawn')),
+    created_at  INTEGER NOT NULL,
+    decided_at  INTEGER,
+    decided_by  INTEGER,
+    -- the commit the merge wrote into the target, so a merged proposal points at
+    -- what it became rather than only at what it asked for
+    merged_commit TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_proposals_target ON pack_proposals(target_pack, status);
+CREATE INDEX IF NOT EXISTS idx_proposals_by ON pack_proposals(by_uid);

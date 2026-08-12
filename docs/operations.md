@@ -103,6 +103,30 @@ grants or moves one, `DELETE .../access/{uid}` takes it away; the last two need
 its owner's to change. Every grant and revocation lands in the audit log, and
 a deleted pack forgets its list so a re-minted id inherits nobody.
 
+### Proposing a change to somebody else's pack
+
+A fork can be offered back. `POST .../packs/{target}/proposals`
+(`{source_pack, source_commit?, message}`) opens the request: the proposer needs
+`edit` on the fork they are offering and `view` on the target -- or nothing at
+all beyond a session when the target is published, which is what makes an
+unsolicited proposal possible.
+
+What is offered is a **commit**, not "whatever that fork says today", so what a
+reviewer reads cannot move while they read it. `GET .../proposals/{id}/diff`
+answers what taking it would do to the target **as it stands now** rather than
+against the fork's parent: a review answers "what happens to my pack if I take
+this", and that question moves as the pack moves.
+
+`POST .../proposals/{id}/merge` (needs `edit` on the target) writes the offered
+authored content in as an ordinary commit, so what a merge did is readable
+afterwards by the same history everything else uses. Ownership does not travel:
+the pack id, owner, tier, visibility and `fork_of` stay the target's, and a
+proposal that could move them would be a rename away from a takeover.
+`POST .../proposals/{id}/decline` says no; the proposer hitting the same
+endpoint withdraws instead. Settled proposals keep their row -- "we said no in
+March" is what somebody looks for in April -- and settling is a one-time write,
+so two reviewers pressing at once cannot both decide it.
+
 ### History
 
 A commit is a snapshot, an author, a message and a parent, content-addressed
