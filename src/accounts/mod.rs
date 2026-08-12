@@ -130,31 +130,42 @@ pub struct PackGrant {
     pub granted_at: i64,
 }
 
-/// A fork offered back to the pack it came from.
+/// Something said about a pack: a report, or a fork offered back.
 ///
-/// The proposed state is not stored here: it is `source_commit` in
-/// `source_pack`, which is already an immutable snapshot with an author, a
-/// message and a parent. This row is the request around it.
+/// One shape for both because they differ only in what opens them and how they
+/// settle. A proposal names the state it offers (`source_pack` /
+/// `source_commit`), which is a commit rather than "whatever that fork says
+/// today", so what a reviewer reads cannot move while they read it. An issue
+/// leaves those empty and is simply a thing somebody asked for.
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "bindings/")]
-pub struct Proposal {
+pub struct Thread {
     #[ts(type = "number")]
     pub id: i64,
-    /// The pack being asked to take the change.
-    pub target_pack: String,
-    /// The fork the change lives in.
-    pub source_pack: String,
-    /// The commit in `source_pack` being offered.
-    pub source_commit: String,
+    pub pack_id: String,
+    /// `issue` | `proposal`.
+    pub kind: String,
+    pub title: String,
+    pub body: String,
     #[ts(type = "number")]
     pub by_uid: i64,
-    /// The proposer's login, where they have signed in here.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub by_login: Option<String>,
-    pub message: String,
-    /// `open` | `merged` | `declined` | `withdrawn`.
+    /// An issue is `open` or `closed`; a proposal is `open`, `merged`,
+    /// `declined` or `withdrawn`.
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source_pack: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source_commit: Option<String>,
+    /// What a merge wrote into the target, so a settled proposal points at what
+    /// it became and not only at what it asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub merged_commit: Option<String>,
     #[ts(type = "number")]
     pub created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -163,11 +174,34 @@ pub struct Proposal {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "number")]
     pub decided_by: Option<i64>,
-    /// What the merge wrote into the target, so a settled proposal points at
-    /// what it became and not only at what it asked for.
+    /// How many comments are on it, so a list can say so without reading them.
+    #[ts(type = "number")]
+    pub comments: i64,
+}
+
+/// One thing said on a thread.
+///
+/// A moderated comment is hidden, not deleted: that something was said and
+/// taken down is itself part of the record, and a hole in a discussion reads
+/// worse than a marked gap. The body of a hidden comment never leaves the
+/// mirror -- the reader is told there was one and who took it down.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct ThreadComment {
+    #[ts(type = "number")]
+    pub id: i64,
+    #[ts(type = "number")]
+    pub by_uid: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub merged_commit: Option<String>,
+    pub by_login: Option<String>,
+    /// Absent when the comment is hidden.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub body: Option<String>,
+    pub hidden: bool,
+    #[ts(type = "number")]
+    pub created_at: i64,
 }
 
 /// A registered user, for the operator's user-management view.
@@ -474,100 +508,116 @@ impl Accounts {
         Ok(())
     }
 
-    /// Record a proposal and return its id. Blocking; wrap in `spawn_blocking`.
-    pub fn open_proposal(
+    /// Open a thread on a pack and return its id. `source` is `None` for an
+    /// issue and the offered `(pack, commit)` for a proposal. Blocking; wrap in
+    /// `spawn_blocking`.
+    pub fn open_thread(
         &self,
-        target_pack: &str,
-        source_pack: &str,
-        source_commit: &str,
+        pack_id: &str,
+        kind: &str,
+        title: &str,
+        body: &str,
         by_uid: i64,
-        message: &str,
+        source: Option<(&str, &str)>,
     ) -> Result<i64> {
+        if !matches!(kind, "issue" | "proposal") {
+            anyhow::bail!("unknown thread kind {kind:?}");
+        }
+        let (source_pack, source_commit) = match source {
+            Some((p, c)) => (Some(p), Some(c)),
+            None => (None, None),
+        };
         let guard = self.conn.lock().expect("accounts mutex poisoned");
         guard.execute(
-            "INSERT INTO pack_proposals
-                 (target_pack, source_pack, source_commit, by_uid, message, status, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 'open', ?6)",
-            params![
-                target_pack,
-                source_pack,
-                source_commit,
-                by_uid,
-                message,
-                unix_now()
-            ],
+            "INSERT INTO pack_threads
+                 (pack_id, kind, title, body, by_uid, status, source_pack, source_commit, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'open', ?6, ?7, ?8)",
+            params![pack_id, kind, title, body, by_uid, source_pack, source_commit, unix_now()],
         )?;
         Ok(guard.last_insert_rowid())
     }
 
-    /// One proposal by id. Blocking; wrap in `spawn_blocking`.
-    pub fn proposal(&self, id: i64) -> Result<Option<Proposal>> {
+    /// One thread by id. Blocking; wrap in `spawn_blocking`.
+    pub fn thread(&self, id: i64) -> Result<Option<Thread>> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
         guard
             .query_row(
                 &format!(
-                    "SELECT {PROPOSAL_COLS} FROM pack_proposals p \
-                          LEFT JOIN users u ON u.github_uid = p.by_uid WHERE p.id = ?1"
+                    "SELECT {THREAD_COLS} FROM pack_threads t \
+                          LEFT JOIN users u ON u.github_uid = t.by_uid WHERE t.id = ?1"
                 ),
                 params![id],
-                proposal_from_row,
+                thread_from_row,
             )
             .optional()
-            .context("read proposal")
+            .context("read thread")
     }
 
-    /// Proposals made to a pack, newest first. `open_only` is what a reviewer
-    /// wants by default; the settled ones stay readable because "we said no in
-    /// March" is the answer somebody looks for in April. Blocking.
-    pub fn proposals_for(&self, target_pack: &str, open_only: bool) -> Result<Vec<Proposal>> {
+    /// Threads on a pack, newest first. `kind` narrows to issues or proposals;
+    /// `open_only` is what a reader wants by default. Blocking.
+    pub fn threads_for(
+        &self,
+        pack_id: &str,
+        kind: Option<&str>,
+        open_only: bool,
+    ) -> Result<Vec<Thread>> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
         let sql = format!(
-            "SELECT {PROPOSAL_COLS} FROM pack_proposals p \
-             LEFT JOIN users u ON u.github_uid = p.by_uid \
-             WHERE p.target_pack = ?1 {} ORDER BY p.created_at DESC",
-            if open_only {
-                "AND p.status = 'open'"
+            "SELECT {THREAD_COLS} FROM pack_threads t \
+             LEFT JOIN users u ON u.github_uid = t.by_uid \
+             WHERE t.pack_id = ?1 {} {} ORDER BY t.created_at DESC",
+            if kind.is_some() {
+                "AND t.kind = ?2"
             } else {
                 ""
-            }
+            },
+            if open_only {
+                "AND t.status = 'open'"
+            } else {
+                ""
+            },
         );
         let mut stmt = guard.prepare(&sql)?;
-        let rows = stmt
-            .query_map(params![target_pack], proposal_from_row)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows: Vec<Thread> = match kind {
+            Some(k) => stmt
+                .query_map(params![pack_id, k], thread_from_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?,
+            None => stmt
+                .query_map(params![pack_id], thread_from_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?,
+        };
         Ok(rows)
     }
 
-    /// Proposals somebody has made, newest first. Blocking.
-    pub fn proposals_by(&self, by_uid: i64) -> Result<Vec<Proposal>> {
+    /// Threads somebody opened, newest first. Blocking.
+    pub fn threads_by(&self, by_uid: i64) -> Result<Vec<Thread>> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
         let mut stmt = guard.prepare(&format!(
-            "SELECT {PROPOSAL_COLS} FROM pack_proposals p \
-             LEFT JOIN users u ON u.github_uid = p.by_uid \
-             WHERE p.by_uid = ?1 ORDER BY p.created_at DESC"
+            "SELECT {THREAD_COLS} FROM pack_threads t \
+             LEFT JOIN users u ON u.github_uid = t.by_uid \
+             WHERE t.by_uid = ?1 ORDER BY t.created_at DESC"
         ))?;
         let rows = stmt
-            .query_map(params![by_uid], proposal_from_row)?
+            .query_map(params![by_uid], thread_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
-    /// Settle a proposal. Only an open one can be settled, so two reviewers
-    /// pressing at once cannot both decide it: the second write matches nothing
-    /// and answers `false`.
-    pub fn settle_proposal(
+    /// Settle a thread. Only an open one settles, so two people deciding at once
+    /// cannot both win: the second write matches nothing and answers `false`.
+    pub fn settle_thread(
         &self,
         id: i64,
         status: &str,
         decided_by: i64,
         merged_commit: Option<&str>,
     ) -> Result<bool> {
-        if !matches!(status, "merged" | "declined" | "withdrawn") {
-            anyhow::bail!("unknown proposal status {status:?}");
+        if !matches!(status, "closed" | "merged" | "declined" | "withdrawn") {
+            anyhow::bail!("unknown thread status {status:?}");
         }
         let guard = self.conn.lock().expect("accounts mutex poisoned");
         let n = guard.execute(
-            "UPDATE pack_proposals
+            "UPDATE pack_threads
              SET status = ?2, decided_at = ?3, decided_by = ?4, merged_commit = ?5
              WHERE id = ?1 AND status = 'open'",
             params![id, status, unix_now(), decided_by, merged_commit],
@@ -575,11 +625,94 @@ impl Accounts {
         Ok(n > 0)
     }
 
-    /// Drop a deleted pack's proposals, from either side of the request.
-    pub fn forget_pack_proposals(&self, pack_id: &str) -> Result<()> {
+    /// Reopen a closed issue. Proposals do not reopen: their offer was a commit,
+    /// and offering again is a new proposal rather than a resurrected one.
+    pub fn reopen_issue(&self, id: i64) -> Result<bool> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let n = guard.execute(
+            "UPDATE pack_threads SET status = 'open', decided_at = NULL, decided_by = NULL
+             WHERE id = ?1 AND kind = 'issue' AND status = 'closed'",
+            params![id],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Say something on a thread. Blocking; wrap in `spawn_blocking`.
+    pub fn comment(&self, thread_id: i64, by_uid: i64, body: &str) -> Result<i64> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
         guard.execute(
-            "DELETE FROM pack_proposals WHERE target_pack = ?1 OR source_pack = ?1",
+            "INSERT INTO thread_comments (thread_id, by_uid, body, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![thread_id, by_uid, body, unix_now()],
+        )?;
+        Ok(guard.last_insert_rowid())
+    }
+
+    /// A thread's discussion, oldest first. A hidden comment keeps its place and
+    /// loses its body: the mirror never serves what a moderator took down.
+    pub fn comments_on(&self, thread_id: i64) -> Result<Vec<ThreadComment>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let mut stmt = guard.prepare(
+            "SELECT c.id, c.by_uid, u.login, c.body, c.hidden_at, c.created_at
+             FROM thread_comments c LEFT JOIN users u ON u.github_uid = c.by_uid
+             WHERE c.thread_id = ?1 ORDER BY c.created_at, c.id",
+        )?;
+        let rows = stmt
+            .query_map(params![thread_id], |r| {
+                let hidden: Option<i64> = r.get(4)?;
+                Ok(ThreadComment {
+                    id: r.get(0)?,
+                    by_uid: r.get(1)?,
+                    by_login: r.get(2)?,
+                    body: if hidden.is_some() {
+                        None
+                    } else {
+                        Some(r.get(3)?)
+                    },
+                    hidden: hidden.is_some(),
+                    created_at: r.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Take a comment down, or put it back. Hiding keeps the row so the gap in
+    /// the discussion is marked rather than silent.
+    pub fn set_comment_hidden(&self, id: i64, hidden: bool, by: i64) -> Result<bool> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let n = if hidden {
+            guard.execute(
+                "UPDATE thread_comments SET hidden_at = ?2, hidden_by = ?3 WHERE id = ?1",
+                params![id, unix_now(), by],
+            )?
+        } else {
+            guard.execute(
+                "UPDATE thread_comments SET hidden_at = NULL, hidden_by = NULL WHERE id = ?1",
+                params![id],
+            )?
+        };
+        Ok(n > 0)
+    }
+
+    /// The thread a comment belongs to, for gating a moderation call.
+    pub fn thread_of_comment(&self, comment_id: i64) -> Result<Option<i64>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard
+            .query_row(
+                "SELECT thread_id FROM thread_comments WHERE id = ?1",
+                params![comment_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .context("read comment thread")
+    }
+
+    /// Drop a deleted pack's threads, from either side of a proposal.
+    pub fn forget_pack_threads(&self, pack_id: &str) -> Result<()> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard.execute(
+            "DELETE FROM pack_threads WHERE pack_id = ?1 OR source_pack = ?1",
             params![pack_id],
         )?;
         Ok(())
@@ -803,26 +936,30 @@ impl Accounts {
     }
 }
 
-/// The `pack_proposals` columns `proposal_from_row` reads, in its index order,
-/// with the proposer's login joined on. One source so the several proposal
-/// SELECTs cannot drift from the row mapper.
-const PROPOSAL_COLS: &str = "p.id, p.target_pack, p.source_pack, p.source_commit, p.by_uid, \
-     u.login, p.message, p.status, p.created_at, p.decided_at, p.decided_by, p.merged_commit";
+/// The `pack_threads` columns `thread_from_row` reads, in its index order, with
+/// the opener's login and the comment count joined on. One source so the several
+/// thread SELECTs cannot drift from the row mapper.
+const THREAD_COLS: &str = "t.id, t.pack_id, t.kind, t.title, t.body, t.by_uid, u.login, \
+     t.status, t.source_pack, t.source_commit, t.merged_commit, t.created_at, t.decided_at, \
+     t.decided_by, (SELECT COUNT(*) FROM thread_comments c WHERE c.thread_id = t.id)";
 
-fn proposal_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Proposal> {
-    Ok(Proposal {
+fn thread_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
+    Ok(Thread {
         id: r.get(0)?,
-        target_pack: r.get(1)?,
-        source_pack: r.get(2)?,
-        source_commit: r.get(3)?,
-        by_uid: r.get(4)?,
-        by_login: r.get(5)?,
-        message: r.get(6)?,
+        pack_id: r.get(1)?,
+        kind: r.get(2)?,
+        title: r.get(3)?,
+        body: r.get(4)?,
+        by_uid: r.get(5)?,
+        by_login: r.get(6)?,
         status: r.get(7)?,
-        created_at: r.get(8)?,
-        decided_at: r.get(9)?,
-        decided_by: r.get(10)?,
-        merged_commit: r.get(11)?,
+        source_pack: r.get(8)?,
+        source_commit: r.get(9)?,
+        merged_commit: r.get(10)?,
+        created_at: r.get(11)?,
+        decided_at: r.get(12)?,
+        decided_by: r.get(13)?,
+        comments: r.get(14)?,
     })
 }
 
@@ -934,54 +1071,109 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_proposal_is_opened_read_and_settled_once() {
+    fn a_thread_is_opened_read_and_settled_once() {
         let a = Accounts::open_in_memory().unwrap();
         a.sign_in_github(42, "helper", None).unwrap();
         let id = a
-            .open_proposal("Create", "u/42/Create", &"a".repeat(40), 42, "take my mod")
+            .open_thread("Create", "issue", "sodium crashes", "on entry", 42, None)
             .unwrap();
 
-        let p = a.proposal(id).unwrap().expect("proposal reads back");
-        assert_eq!(p.status, "open");
-        assert_eq!(p.by_login.as_deref(), Some("helper"));
-        assert_eq!(a.proposals_for("Create", true).unwrap().len(), 1);
-        assert_eq!(a.proposals_by(42).unwrap().len(), 1);
+        let t = a.thread(id).unwrap().expect("thread reads back");
+        assert_eq!(t.status, "open");
+        assert_eq!(t.kind, "issue");
+        assert_eq!(t.by_login.as_deref(), Some("helper"));
+        assert_eq!(t.comments, 0);
 
-        // two reviewers pressing at once: only the first decides it
-        assert!(
-            a.settle_proposal(id, "merged", 7, Some(&"b".repeat(40)))
-                .unwrap()
-        );
-        assert!(!a.settle_proposal(id, "declined", 9, None).unwrap());
-
-        let p = a.proposal(id).unwrap().unwrap();
-        assert_eq!(p.status, "merged");
-        assert_eq!(p.decided_by, Some(7));
-        assert_eq!(p.merged_commit.as_deref(), Some(&*"b".repeat(40)));
-        // settled ones leave the open list but stay readable
-        assert!(a.proposals_for("Create", true).unwrap().is_empty());
-        assert_eq!(a.proposals_for("Create", false).unwrap().len(), 1);
+        // two people closing at once: only the first decides it
+        assert!(a.settle_thread(id, "closed", 7, None).unwrap());
+        assert!(!a.settle_thread(id, "closed", 9, None).unwrap());
+        // and a closed issue reopens, where a proposal would not
+        assert!(a.reopen_issue(id).unwrap());
+        assert_eq!(a.thread(id).unwrap().unwrap().status, "open");
     }
 
     #[test]
-    fn a_deleted_pack_forgets_requests_from_either_side() {
-        let a = Accounts::open_in_memory().unwrap();
-        a.open_proposal("Create", "u/42/fork", &"a".repeat(40), 42, "x")
-            .unwrap();
-        a.open_proposal("u/42/fork", "Create", &"c".repeat(40), 1, "y")
-            .unwrap();
-        a.forget_pack_proposals("u/42/fork").unwrap();
-        assert!(a.proposals_for("Create", false).unwrap().is_empty());
-        assert!(a.proposals_for("u/42/fork", false).unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_proposal_cannot_be_settled_into_a_state_nobody_defined() {
+    fn a_proposal_carries_what_it_offers_and_does_not_reopen() {
         let a = Accounts::open_in_memory().unwrap();
         let id = a
-            .open_proposal("Create", "u/42/fork", &"a".repeat(40), 42, "x")
+            .open_thread(
+                "Create",
+                "proposal",
+                "add sodium",
+                "",
+                42,
+                Some(("u/42/Create", &"a".repeat(40))),
+            )
             .unwrap();
-        assert!(a.settle_proposal(id, "eaten", 1, None).is_err());
+        let t = a.thread(id).unwrap().unwrap();
+        assert_eq!(t.source_pack.as_deref(), Some("u/42/Create"));
+
+        assert!(
+            a.settle_thread(id, "merged", 7, Some(&"b".repeat(40)))
+                .unwrap()
+        );
+        assert_eq!(
+            a.thread(id).unwrap().unwrap().merged_commit.as_deref(),
+            Some(&*"b".repeat(40))
+        );
+        // offering again is a new proposal, not a resurrected one
+        assert!(!a.reopen_issue(id).unwrap());
+    }
+
+    #[test]
+    fn a_moderated_comment_keeps_its_place_and_loses_its_words() {
+        let a = Accounts::open_in_memory().unwrap();
+        a.sign_in_github(42, "helper", None).unwrap();
+        let t = a.open_thread("Create", "issue", "x", "", 42, None).unwrap();
+        let c1 = a.comment(t, 42, "a fair point").unwrap();
+        let c2 = a.comment(t, 42, "an unfair one").unwrap();
+
+        assert_eq!(a.thread(t).unwrap().unwrap().comments, 2);
+        assert!(a.set_comment_hidden(c2, true, 1).unwrap());
+
+        let rows = a.comments_on(t).unwrap();
+        assert_eq!(rows.len(), 2, "a hidden comment keeps its place");
+        assert_eq!(rows[0].id, c1);
+        assert_eq!(rows[0].body.as_deref(), Some("a fair point"));
+        assert!(rows[1].hidden);
+        assert_eq!(
+            rows[1].body, None,
+            "the mirror never serves what was taken down"
+        );
+
+        // and it can be put back
+        assert!(a.set_comment_hidden(c2, false, 1).unwrap());
+        assert_eq!(
+            a.comments_on(t).unwrap()[1].body.as_deref(),
+            Some("an unfair one")
+        );
+    }
+
+    #[test]
+    fn a_deleted_pack_forgets_threads_from_either_side() {
+        let a = Accounts::open_in_memory().unwrap();
+        a.open_thread(
+            "Create",
+            "proposal",
+            "x",
+            "",
+            42,
+            Some(("u/42/fork", &"a".repeat(40))),
+        )
+        .unwrap();
+        a.open_thread("u/42/fork", "issue", "y", "", 1, None)
+            .unwrap();
+        a.forget_pack_threads("u/42/fork").unwrap();
+        assert!(a.threads_for("Create", None, false).unwrap().is_empty());
+        assert!(a.threads_for("u/42/fork", None, false).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_thread_cannot_be_opened_or_settled_into_a_state_nobody_defined() {
+        let a = Accounts::open_in_memory().unwrap();
+        assert!(a.open_thread("Create", "rant", "x", "", 42, None).is_err());
+        let id = a.open_thread("Create", "issue", "x", "", 42, None).unwrap();
+        assert!(a.settle_thread(id, "eaten", 1, None).is_err());
     }
 
     #[test]

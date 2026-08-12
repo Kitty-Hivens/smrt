@@ -88,15 +88,20 @@ fn authoring_router(state: AppState) -> Router {
         )
         .route("/v1/authoring/packs/{pack_id}", delete(delete_pack))
         .route(
-            "/v1/authoring/packs/{pack_id}/proposals",
-            get(list_proposals).post(open_proposal),
+            "/v1/authoring/packs/{pack_id}/issues",
+            get(list_threads).post(open_issue),
         )
-        .route("/v1/authoring/proposals/{id}/diff", get(proposal_diff))
-        .route("/v1/authoring/proposals/{id}/merge", post(merge_proposal))
         .route(
-            "/v1/authoring/proposals/{id}/decline",
-            post(decline_proposal),
+            "/v1/authoring/packs/{pack_id}/proposals",
+            get(list_threads).post(open_proposal),
         )
+        .route("/v1/authoring/threads/{id}", get(read_thread))
+        .route("/v1/authoring/threads/{id}/diff", get(thread_diff))
+        .route("/v1/authoring/threads/{id}/comments", post(post_comment))
+        .route("/v1/authoring/comments/{id}/hidden", put(moderate_comment))
+        .route("/v1/authoring/threads/{id}/merge", post(merge_proposal))
+        .route("/v1/authoring/threads/{id}/close", post(close_thread))
+        .route("/v1/authoring/threads/{id}/reopen", post(reopen_thread))
         .route(
             "/v1/authoring/packs/{pack_id}/access",
             get(list_access).post(grant_access),
@@ -2064,7 +2069,7 @@ async fn delete_pack(
     let gone = pack_id.clone();
     let _ = tokio::task::spawn_blocking(move || {
         acc.forget_pack_access(&gone)?;
-        acc.forget_pack_proposals(&gone)
+        acc.forget_pack_threads(&gone)
     })
     .await;
     state.events.pack(&pack_id, "deleted");
@@ -2190,7 +2195,14 @@ async fn revoke_access(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ── proposals: a fork offered back (ADR 0006) ───────────────────────────────
+// ── threads: what is said about a pack (ADR 0006) ───────────────────────────
+
+#[derive(serde::Deserialize)]
+struct OpenIssueReq {
+    title: String,
+    #[serde(default)]
+    body: String,
+}
 
 #[derive(serde::Deserialize)]
 struct OpenProposalReq {
@@ -2199,37 +2211,53 @@ struct OpenProposalReq {
     /// The commit being offered; absent means that fork's head.
     #[serde(default)]
     source_commit: Option<String>,
-    message: String,
+    title: String,
+    #[serde(default)]
+    body: String,
+}
+
+/// Report something about a pack.
+///
+/// A published pack takes reports from anyone signed in -- that is what makes a
+/// report worth having. An unpublished one takes them from whoever can see it.
+async fn open_issue(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+    Json(req): Json<OpenIssueReq>,
+) -> Result<(StatusCode, Json<crate::accounts::Thread>), ApiError> {
+    if !is_published(&state, &pack_id).await {
+        super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
+    }
+    let title = trimmed(&req.title, "an issue needs a title")?;
+    let id = open_thread(
+        &state, &identity, &pack_id, "issue", &title, &req.body, None,
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(load_thread(&state, id).await?)))
 }
 
 /// Offer a fork's state back to the pack it came from.
 ///
 /// The proposer needs to be able to edit what they are offering and to see what
-/// they are offering it to -- a published pack is visible to everyone, which is
-/// what makes an unsolicited proposal possible at all.
+/// they are offering it to. What is offered is a commit rather than "whatever
+/// that fork says today": what a reviewer reads must not move while they read it.
 async fn open_proposal(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
-    Path(target): Path<String>,
+    Path(pack_id): Path<String>,
     Json(req): Json<OpenProposalReq>,
-) -> Result<(StatusCode, Json<crate::accounts::Proposal>), ApiError> {
+) -> Result<(StatusCode, Json<crate::accounts::Thread>), ApiError> {
     super::auth::authorize(&state, &identity, &req.source_pack, PackLevel::Edit).await?;
-    if !is_published(&state, &target).await {
-        super::auth::authorize(&state, &identity, &target, PackLevel::View).await?;
+    if !is_published(&state, &pack_id).await {
+        super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     }
-    let message = req.message.trim().to_string();
-    if message.is_empty() {
-        return Err(ApiError::BadRequest(
-            "a proposal needs a message; the diff says what, not why".into(),
-        ));
-    }
-    if req.source_pack == target {
+    if req.source_pack == pack_id {
         return Err(ApiError::BadRequest(
             "a pack cannot propose to itself; commit instead".into(),
         ));
     }
-    // The offer is a commit, not "whatever that fork says today": what a
-    // reviewer reads must not move under them while they read it.
+    let title = trimmed(&req.title, "a proposal needs a title")?;
     let commit = match req.source_commit {
         Some(id) => state.storage.load_commit(&req.source_pack, &id).await?.id,
         None => state
@@ -2244,32 +2272,65 @@ async fn open_proposal(
                 )
             })?,
     };
-    let acc = state.accounts.clone();
-    let (t, sp, c, by, m) = (
-        target.clone(),
-        req.source_pack.clone(),
-        commit.clone(),
-        identity.uid,
-        message.clone(),
-    );
-    let id = tokio::task::spawn_blocking(move || acc.open_proposal(&t, &sp, &c, by, &m))
-        .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("proposal task: {e}")))??;
-    audit(
+    let id = open_thread(
         &state,
         &identity,
-        "pack.proposal.open",
-        Some(&target),
-        Some(&format!("#{id} from {}", req.source_pack)),
+        &pack_id,
+        "proposal",
+        &title,
+        &req.body,
+        Some((req.source_pack.as_str(), commit.as_str())),
     )
-    .await;
-    state.events.pack(&target, "proposal");
-    let row = load_proposal(&state, id).await?;
-    Ok((StatusCode::CREATED, Json(row)))
+    .await?;
+    Ok((StatusCode::CREATED, Json(load_thread(&state, id).await?)))
 }
 
-/// Whether a pack is published, which is what makes it proposable to by
-/// somebody who was never let into it.
+fn trimmed(value: &str, complaint: &str) -> Result<String, ApiError> {
+    let t = value.trim().to_string();
+    if t.is_empty() {
+        return Err(ApiError::BadRequest(complaint.into()));
+    }
+    Ok(t)
+}
+
+async fn open_thread(
+    state: &AppState,
+    identity: &Identity,
+    pack_id: &str,
+    kind: &str,
+    title: &str,
+    body: &str,
+    source: Option<(&str, &str)>,
+) -> Result<i64, ApiError> {
+    let acc = state.accounts.clone();
+    let (pack, k, t, b, by) = (
+        pack_id.to_string(),
+        kind.to_string(),
+        title.to_string(),
+        body.trim().to_string(),
+        identity.uid,
+    );
+    let source = source.map(|(p, c)| (p.to_string(), c.to_string()));
+    let id = tokio::task::spawn_blocking(move || {
+        let src = source.as_ref().map(|(p, c)| (p.as_str(), c.as_str()));
+        acc.open_thread(&pack, &k, &t, &b, by, src)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
+    audit(
+        state,
+        identity,
+        &format!("pack.{kind}.open"),
+        Some(pack_id),
+        Some(&format!("#{id} {title}")),
+    )
+    .await;
+    state.events.pack(pack_id, "thread");
+    Ok(id)
+}
+
+/// Whether a pack is published, which is what makes it reportable and
+/// proposable to by somebody who was never let into it.
 async fn is_published(state: &AppState, pack_id: &str) -> bool {
     state
         .storage
@@ -2279,64 +2340,189 @@ async fn is_published(state: &AppState, pack_id: &str) -> bool {
         .unwrap_or(false)
 }
 
-async fn load_proposal(state: &AppState, id: i64) -> Result<crate::accounts::Proposal, ApiError> {
+async fn load_thread(state: &AppState, id: i64) -> Result<crate::accounts::Thread, ApiError> {
     let acc = state.accounts.clone();
-    tokio::task::spawn_blocking(move || acc.proposal(id))
+    tokio::task::spawn_blocking(move || acc.thread(id))
         .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("proposal task: {e}")))??
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??
         .ok_or(ApiError::NotFound)
 }
 
+/// May this caller read this pack's threads at all? A published pack's
+/// discussion is public; an unpublished one's is for whoever can see the pack.
+async fn may_read_threads(state: &AppState, identity: &Identity, pack_id: &str) -> bool {
+    is_published(state, pack_id).await
+        || super::auth::may(state, identity, pack_id, PackLevel::View).await
+}
+
 #[derive(serde::Deserialize)]
-struct ProposalListParams {
+struct ThreadListParams {
+    /// `issue` | `proposal`; absent lists both.
+    kind: Option<String>,
     /// `?all=true` includes the settled ones; the default is what is still open.
     #[serde(default)]
     all: bool,
 }
 
-/// What has been offered to this pack.
-async fn list_proposals(
+async fn list_threads(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
     Path(pack_id): Path<String>,
-    Query(p): Query<ProposalListParams>,
-) -> Result<Json<Vec<crate::accounts::Proposal>>, ApiError> {
-    super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
+    Query(p): Query<ThreadListParams>,
+) -> Result<Json<Vec<crate::accounts::Thread>>, ApiError> {
+    if !may_read_threads(&state, &identity, &pack_id).await {
+        return Err(ApiError::Forbidden);
+    }
     let acc = state.accounts.clone();
-    let pack = pack_id.clone();
-    let rows = tokio::task::spawn_blocking(move || acc.proposals_for(&pack, !p.all))
+    let (pack, kind) = (pack_id.clone(), p.kind.clone());
+    let rows = tokio::task::spawn_blocking(move || acc.threads_for(&pack, kind.as_deref(), !p.all))
         .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("proposal task: {e}")))??;
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
     Ok(Json(rows))
+}
+
+/// One thread and everything said on it.
+#[derive(serde::Serialize, ts_rs::TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct ThreadView {
+    pub thread: crate::accounts::Thread,
+    pub comments: Vec<crate::accounts::ThreadComment>,
+}
+
+async fn read_thread(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(id): Path<i64>,
+) -> Result<Json<ThreadView>, ApiError> {
+    let thread = load_thread(&state, id).await?;
+    if !may_read_threads(&state, &identity, &thread.pack_id).await {
+        return Err(ApiError::Forbidden);
+    }
+    let acc = state.accounts.clone();
+    let comments = tokio::task::spawn_blocking(move || acc.comments_on(id))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
+    Ok(Json(ThreadView { thread, comments }))
 }
 
 /// What a proposal would change, read against the target as it stands now --
 /// not against the fork's parent. A review answers "what happens to my pack if
 /// I take this", and that question moves as the pack moves.
-async fn proposal_diff(
+async fn thread_diff(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
     Path(id): Path<i64>,
 ) -> Result<Json<CommitDiff>, ApiError> {
-    let p = load_proposal(&state, id).await?;
-    if p.by_uid != identity.uid {
-        super::auth::authorize(&state, &identity, &p.target_pack, PackLevel::View).await?;
+    let t = load_thread(&state, id).await?;
+    if !may_read_threads(&state, &identity, &t.pack_id).await {
+        return Err(ApiError::Forbidden);
     }
+    let (Some(source_pack), Some(source_commit)) = (&t.source_pack, &t.source_commit) else {
+        return Err(ApiError::BadRequest("this thread offers no state".into()));
+    };
     let offered = state
         .storage
-        .load_commit_config(&p.source_pack, &p.source_commit)
+        .load_commit_config(source_pack, source_commit)
         .await?;
-    let current = state.storage.load_pack_config(&p.target_pack).await?;
+    let current = state.storage.load_pack_config(&t.pack_id).await?;
     Ok(Json(CommitDiff {
-        from: Some(p.target_pack.clone()),
-        to: p.source_commit.clone(),
+        from: Some(t.pack_id.clone()),
+        to: source_commit.clone(),
         changes: crate::authoring::diff_configs(&current, &offered),
     }))
 }
 
 #[derive(serde::Deserialize)]
+struct CommentReq {
+    body: String,
+}
+
+/// Say something on a thread. Anyone who can read the discussion can join it.
+async fn post_comment(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(id): Path<i64>,
+    Json(req): Json<CommentReq>,
+) -> Result<(StatusCode, Json<crate::accounts::ThreadComment>), ApiError> {
+    let t = load_thread(&state, id).await?;
+    if !may_read_threads(&state, &identity, &t.pack_id).await {
+        return Err(ApiError::Forbidden);
+    }
+    let body = trimmed(&req.body, "an empty comment says nothing")?;
+    if body.chars().count() > 4000 {
+        return Err(ApiError::BadRequest("that comment is too long".into()));
+    }
+    let acc = state.accounts.clone();
+    let (by, text) = (identity.uid, body.clone());
+    let cid = tokio::task::spawn_blocking(move || acc.comment(id, by, &text))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("comment task: {e}")))??;
+    state.events.pack(&t.pack_id, "thread");
+    let acc = state.accounts.clone();
+    let all = tokio::task::spawn_blocking(move || acc.comments_on(id))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("comment task: {e}")))??;
+    let mine = all
+        .into_iter()
+        .find(|c| c.id == cid)
+        .ok_or(ApiError::NotFound)?;
+    Ok((StatusCode::CREATED, Json(mine)))
+}
+
+#[derive(serde::Deserialize)]
+struct HideReq {
+    #[serde(default = "yes")]
+    hidden: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Take a comment down, or put it back. The pack's keepers moderate their own
+/// discussion; an admin moderates anywhere.
+async fn moderate_comment(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(comment_id): Path<i64>,
+    Json(req): Json<HideReq>,
+) -> Result<StatusCode, ApiError> {
+    let acc = state.accounts.clone();
+    let thread_id = tokio::task::spawn_blocking(move || acc.thread_of_comment(comment_id))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("comment task: {e}")))??
+        .ok_or(ApiError::NotFound)?;
+    let t = load_thread(&state, thread_id).await?;
+    super::auth::authorize(&state, &identity, &t.pack_id, PackLevel::Edit).await?;
+    let acc = state.accounts.clone();
+    let by = identity.uid;
+    let hidden = req.hidden;
+    let changed =
+        tokio::task::spawn_blocking(move || acc.set_comment_hidden(comment_id, hidden, by))
+            .await
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("comment task: {e}")))??;
+    if !changed {
+        return Err(ApiError::NotFound);
+    }
+    audit(
+        &state,
+        &identity,
+        if hidden {
+            "pack.comment.hide"
+        } else {
+            "pack.comment.show"
+        },
+        Some(&t.pack_id),
+        Some(&format!("comment {comment_id}")),
+    )
+    .await;
+    state.events.pack(&t.pack_id, "thread");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(serde::Deserialize)]
 struct DecideReq {
-    /// What the merge commit should say; absent names the proposal.
+    /// What a merge commit should say; absent names the proposal.
     #[serde(default)]
     message: Option<String>,
 }
@@ -2344,49 +2530,51 @@ struct DecideReq {
 /// Take a proposal: write its authored content into the target as a commit.
 ///
 /// The server-controlled fields stay the target's -- ownership does not travel
-/// with a proposal. The merge is a commit like any other, so what it did is
-/// readable afterwards by the same history everything else uses.
+/// with a proposal, or a fork could rename its way into a takeover.
 async fn merge_proposal(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
     Path(id): Path<i64>,
     Json(req): Json<DecideReq>,
-) -> Result<Json<crate::accounts::Proposal>, ApiError> {
-    let p = load_proposal(&state, id).await?;
-    super::auth::authorize(&state, &identity, &p.target_pack, PackLevel::Edit).await?;
-    if p.status != "open" {
+) -> Result<Json<crate::accounts::Thread>, ApiError> {
+    let t = load_thread(&state, id).await?;
+    super::auth::authorize(&state, &identity, &t.pack_id, PackLevel::Edit).await?;
+    if t.status != "open" {
         return Err(ApiError::Conflict(format!(
             "this proposal is already {}",
-            p.status
+            t.status
         )));
     }
+    let (Some(source_pack), Some(source_commit)) = (&t.source_pack, &t.source_commit) else {
+        return Err(ApiError::BadRequest("this thread offers no state".into()));
+    };
     let offered = state
         .storage
-        .load_commit_config(&p.source_pack, &p.source_commit)
+        .load_commit_config(source_pack, source_commit)
         .await?;
 
-    let _guard = state.storage.lock_pack_config(&p.target_pack).await;
-    let current = state.storage.load_pack_config(&p.target_pack).await?;
+    let _guard = state.storage.lock_pack_config(&t.pack_id).await;
+    let current = state.storage.load_pack_config(&t.pack_id).await?;
     let merged = current.with_authored_from(&offered);
     if let Some(dup) = merged.duplicate_declaration() {
         return Err(ApiError::BadRequest(dup));
     }
-    state.docs.forget(&p.target_pack);
+    state.docs.forget(&t.pack_id);
     let (cfg, _rev) =
-        store_edited_config(&state, &p.target_pack, merged, &identity.login, false).await?;
+        store_edited_config(&state, &t.pack_id, merged, &identity.login, false).await?;
     let message = req
         .message
         .map(|m| m.trim().to_string())
         .filter(|m| !m.is_empty())
-        .unwrap_or_else(|| format!("merge proposal #{id} from {}", p.source_pack));
-    let commit = checkpoint(&state, &p.target_pack, &cfg, &identity, message).await?;
+        .unwrap_or_else(|| format!("merge #{id} from {source_pack}"));
+    let commit = checkpoint(&state, &t.pack_id, &cfg, &identity, message).await?;
 
     let acc = state.accounts.clone();
     let (by, cid) = (identity.uid, commit.id.clone());
     let settled =
-        tokio::task::spawn_blocking(move || acc.settle_proposal(id, "merged", by, Some(&cid)))
+        tokio::task::spawn_blocking(move || acc.settle_thread(id, "merged", by, Some(&cid)))
             .await
-            .map_err(|e| ApiError::Internal(anyhow::anyhow!("proposal task: {e}")))??;
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
     if !settled {
         return Err(ApiError::Conflict(
             "this proposal was already settled".into(),
@@ -2396,51 +2584,72 @@ async fn merge_proposal(
         &state,
         &identity,
         "pack.proposal.merge",
-        Some(&p.target_pack),
+        Some(&t.pack_id),
         Some(&format!("#{id} as {}", commit.id)),
     )
     .await;
-    state.events.pack(&p.target_pack, "proposal");
-    Ok(Json(load_proposal(&state, id).await?))
+    state.events.pack(&t.pack_id, "thread");
+    Ok(Json(load_thread(&state, id).await?))
 }
 
-/// Say no, or take back your own. Both settle the row rather than deleting it.
-async fn decline_proposal(
+/// Close an issue, decline a proposal, or take back your own of either.
+async fn close_thread(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
     Path(id): Path<i64>,
-) -> Result<Json<crate::accounts::Proposal>, ApiError> {
-    let p = load_proposal(&state, id).await?;
-    // the proposer may withdraw; anyone who can edit the target may decline
-    let withdrawing = p.by_uid == identity.uid;
-    if !withdrawing {
-        super::auth::authorize(&state, &identity, &p.target_pack, PackLevel::Edit).await?;
+) -> Result<Json<crate::accounts::Thread>, ApiError> {
+    let t = load_thread(&state, id).await?;
+    let mine = t.by_uid == identity.uid;
+    if !mine {
+        super::auth::authorize(&state, &identity, &t.pack_id, PackLevel::Edit).await?;
     }
-    let status = if withdrawing { "withdrawn" } else { "declined" };
+    let status = match (t.kind.as_str(), mine) {
+        ("proposal", true) => "withdrawn",
+        ("proposal", false) => "declined",
+        _ => "closed",
+    };
     let acc = state.accounts.clone();
     let by = identity.uid;
-    let settled = tokio::task::spawn_blocking(move || acc.settle_proposal(id, status, by, None))
+    let settled = tokio::task::spawn_blocking(move || acc.settle_thread(id, status, by, None))
         .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("proposal task: {e}")))??;
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
     if !settled {
-        return Err(ApiError::Conflict(
-            "this proposal was already settled".into(),
-        ));
+        return Err(ApiError::Conflict("this thread was already settled".into()));
     }
     audit(
         &state,
         &identity,
-        if withdrawing {
-            "pack.proposal.withdraw"
-        } else {
-            "pack.proposal.decline"
-        },
-        Some(&p.target_pack),
+        &format!("pack.{}.{status}", t.kind),
+        Some(&t.pack_id),
         Some(&format!("#{id}")),
     )
     .await;
-    state.events.pack(&p.target_pack, "proposal");
-    Ok(Json(load_proposal(&state, id).await?))
+    state.events.pack(&t.pack_id, "thread");
+    Ok(Json(load_thread(&state, id).await?))
+}
+
+/// Reopen a closed issue. A proposal does not reopen: its offer was a commit,
+/// and offering again is a new proposal rather than a resurrected one.
+async fn reopen_thread(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(id): Path<i64>,
+) -> Result<Json<crate::accounts::Thread>, ApiError> {
+    let t = load_thread(&state, id).await?;
+    if t.by_uid != identity.uid {
+        super::auth::authorize(&state, &identity, &t.pack_id, PackLevel::Edit).await?;
+    }
+    let acc = state.accounts.clone();
+    let reopened = tokio::task::spawn_blocking(move || acc.reopen_issue(id))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
+    if !reopened {
+        return Err(ApiError::Conflict(
+            "only a closed issue reopens; a proposal is offered again as a new one".into(),
+        ));
+    }
+    state.events.pack(&t.pack_id, "thread");
+    Ok(Json(load_thread(&state, id).await?))
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────

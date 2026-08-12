@@ -102,27 +102,49 @@ CREATE TABLE IF NOT EXISTS pack_access (
 );
 CREATE INDEX IF NOT EXISTS idx_pack_access_uid ON pack_access(github_uid);
 
--- Proposals: somebody's fork offered back to the pack it came from (ADR 0006's
--- next layer). The proposed content is not copied here -- it is a commit in the
--- source pack, which is already an immutable snapshot with an author and a
--- message. This row is the request around it: who asks, of whom, and what was
--- decided. Closing states keep the row rather than deleting it, because "we
--- said no in March" is the answer somebody will look for in April.
-CREATE TABLE IF NOT EXISTS pack_proposals (
-    id          INTEGER PRIMARY KEY,
-    target_pack TEXT NOT NULL,
-    source_pack TEXT NOT NULL,
-    source_commit TEXT NOT NULL,
-    by_uid      INTEGER NOT NULL,
-    message     TEXT NOT NULL,
-    status      TEXT NOT NULL DEFAULT 'open'
-                CHECK (status IN ('open', 'merged', 'declined', 'withdrawn')),
-    created_at  INTEGER NOT NULL,
-    decided_at  INTEGER,
-    decided_by  INTEGER,
-    -- the commit the merge wrote into the target, so a merged proposal points at
-    -- what it became rather than only at what it asked for
-    merged_commit TEXT
+-- Threads: everything said about a pack that is not the pack itself -- a report
+-- ("mod X crashes on entry"), or a fork offered back. One table because they
+-- differ in what opens them and how they settle, and in nothing else: both are
+-- somebody asking a pack's keepers for something, both carry a discussion, both
+-- end in a decision that is worth reading afterwards. Two tables would mean two
+-- of everything below, starting with comments.
+--
+-- A proposal is a thread whose `source_pack`/`source_commit` name the state it
+-- offers; an issue leaves them null. `status` is the thread's own vocabulary:
+-- an issue is open or closed, a proposal is open, merged, declined or withdrawn.
+-- Settled threads keep their rows -- "we said no in March" is what somebody
+-- looks for in April.
+CREATE TABLE IF NOT EXISTS pack_threads (
+    id            INTEGER PRIMARY KEY,
+    pack_id       TEXT NOT NULL,
+    kind          TEXT NOT NULL CHECK (kind IN ('issue', 'proposal')),
+    title         TEXT NOT NULL,
+    body          TEXT NOT NULL DEFAULT '',
+    by_uid        INTEGER NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'open'
+                  CHECK (status IN ('open', 'closed', 'merged', 'declined', 'withdrawn')),
+    -- proposals only
+    source_pack   TEXT,
+    source_commit TEXT,
+    merged_commit TEXT,
+    created_at    INTEGER NOT NULL,
+    decided_at    INTEGER,
+    decided_by    INTEGER
 );
-CREATE INDEX IF NOT EXISTS idx_proposals_target ON pack_proposals(target_pack, status);
-CREATE INDEX IF NOT EXISTS idx_proposals_by ON pack_proposals(by_uid);
+CREATE INDEX IF NOT EXISTS idx_threads_pack ON pack_threads(pack_id, status);
+CREATE INDEX IF NOT EXISTS idx_threads_by ON pack_threads(by_uid);
+
+-- What people said on a thread. Hidden rather than deleted when moderated: the
+-- fact that something was said and taken down is itself part of the record, and
+-- a hole in a numbered discussion is worse than a marked gap. `hidden_by` is the
+-- moderator, so the trail names who decided.
+CREATE TABLE IF NOT EXISTS thread_comments (
+    id         INTEGER PRIMARY KEY,
+    thread_id  INTEGER NOT NULL REFERENCES pack_threads(id) ON DELETE CASCADE,
+    by_uid     INTEGER NOT NULL,
+    body       TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    hidden_at  INTEGER,
+    hidden_by  INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_comments_thread ON thread_comments(thread_id, created_at);

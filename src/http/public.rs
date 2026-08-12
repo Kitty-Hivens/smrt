@@ -33,6 +33,8 @@ pub fn router(state: AppState) -> Router {
             get(get_manifest_version),
         )
         .route("/v1/packs/{pack_id}/diff", get(get_pack_diff))
+        .route("/v1/packs/{pack_id}/threads", get(public_threads))
+        .route("/v1/threads/{id}", get(public_thread))
         .route(
             "/v1/packs/{pack_id}/static/{*rel_path}",
             get(get_pack_static),
@@ -486,6 +488,62 @@ async fn gate_pack_read(
 ) -> Result<(), ApiError> {
     let summary = state.storage.load_pack_summary(pack_id).await?;
     gate_summary(state, headers, pack_id, &summary).await
+}
+
+// ── discussions, in the open ────────────────────────────────────────────────
+
+/// What is being said about a published pack: reports and proposals, with their
+/// outcomes. Readable without a session, because a decision nobody can see is
+/// indistinguishable from one nobody made -- an unpublished pack's discussion
+/// stays with whoever can see the pack.
+async fn public_threads(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(pack_id): Path<String>,
+    Query(p): Query<PublicThreadParams>,
+) -> Result<Json<Vec<crate::accounts::Thread>>, ApiError> {
+    gate_pack_read(&state, &headers, &pack_id).await?;
+    let acc = state.accounts.clone();
+    let (pack, kind) = (pack_id.clone(), p.kind.clone());
+    let rows = tokio::task::spawn_blocking(move || acc.threads_for(&pack, kind.as_deref(), !p.all))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
+    Ok(Json(rows))
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct PublicThreadParams {
+    kind: Option<String>,
+    #[serde(default)]
+    all: bool,
+}
+
+/// One discussion in full. The pack it belongs to decides who may read it, so a
+/// draft's thread stays as private as the draft.
+async fn public_thread(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Result<Json<PublicThreadView>, ApiError> {
+    let acc = state.accounts.clone();
+    let thread = tokio::task::spawn_blocking(move || acc.thread(id))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??
+        .ok_or(ApiError::NotFound)?;
+    gate_pack_read(&state, &headers, &thread.pack_id).await?;
+    let acc = state.accounts.clone();
+    let comments = tokio::task::spawn_blocking(move || acc.comments_on(id))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
+    Ok(Json(PublicThreadView { thread, comments }))
+}
+
+/// A discussion as the public reads it.
+#[derive(serde::Serialize, ts_rs::TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct PublicThreadView {
+    pub thread: crate::accounts::Thread,
+    pub comments: Vec<crate::accounts::ThreadComment>,
 }
 
 // ── /v1/servers ────────────────────────────────────────────────────────────

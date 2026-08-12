@@ -103,6 +103,28 @@ grants or moves one, `DELETE .../access/{uid}` takes it away; the last two need
 its owner's to change. Every grant and revocation lands in the audit log, and
 a deleted pack forgets its list so a re-minted id inherits nobody.
 
+### Discussions: reports and proposals
+
+Everything said about a pack that is not the pack itself is a thread on it: an
+`issue` (a report -- "mod X crashes on entry") or a `proposal` (a fork offered
+back, naming the commit it offers). One shape for both, because they differ in
+what opens them and how they settle and in nothing else, and because a
+discussion belongs to both.
+
+Reading is as public as the pack: `GET /v1/packs/{id}/threads` and
+`GET /v1/threads/{id}` answer without a session for a published pack, and stay
+private for a draft. A decision nobody can see is indistinguishable from one
+nobody made, which is the whole reason the read is public.
+
+Writing needs a session. Anyone signed in may open an issue on a published pack
+and join any discussion they can read; `edit` on the pack closes, declines,
+merges and moderates; the person who opened a thread may withdraw or close it
+themselves. Comments are hidden rather than deleted -- that something was said
+and taken down is part of the record, and the mirror stops serving the body
+while keeping the gap visible with who took it down. Closed issues reopen;
+proposals do not, because their offer was a commit and offering again is a new
+proposal.
+
 ### Proposing a change to somebody else's pack
 
 A fork can be offered back. `POST .../packs/{target}/proposals`

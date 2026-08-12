@@ -177,6 +177,17 @@ version section when a release is tagged.
 
 ### Added
 
+- Packs have discussions, in the open. Two kinds of thread: an issue (a report)
+  and a proposal (a fork offered back, which is the same thread with a commit
+  attached). Reading is as public as the pack -- a published pack's reports,
+  proposals, comments and outcomes are readable without signing in, because a
+  decision nobody can see is indistinguishable from one nobody made -- and a
+  draft's discussion stays as private as the draft. Anyone signed in may report
+  something or join a discussion they can read; closing, declining, merging and
+  moderating need `edit` on the pack, and whoever opened a thread may withdraw
+  it. A moderated comment is hidden rather than deleted: the mirror stops
+  serving its body and keeps the gap visible, because a hole in a discussion
+  reads worse than a marked one.
 - A fork can be offered back to the pack it came from. Forking was already
   possible and entirely one-way: `fork_of` was recorded and read by nothing, so
   somebody who improved a fork of your pack had no way to offer the improvement
