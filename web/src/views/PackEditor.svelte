@@ -24,6 +24,7 @@
     ValidateReport,
   } from '../lib/types';
   import BuildConsole from './BuildConsole.svelte';
+  import CommitPage from './CommitPage.svelte';
   import BrandingEditor from './BrandingEditor.svelte';
   import PackGraph from './PackGraph.svelte';
   import JobLog from './JobLog.svelte';
@@ -192,6 +193,13 @@
   // commit -- but this is where the pack's event stream is read, so the fact
   // that it moved is passed down rather than subscribed to twice.
   let historyTick = $state(0);
+  // A build a commit page asked for; handed to the console, which owns building.
+  let buildFrom = $state<string | null>(null);
+  // The build in flight. Held here because the console is one surface among
+  // several in this editor: opening a commit over it must not lose a running
+  // build, re-enable the button, and let a second one start.
+  let buildJobId = $state<string | null>(null);
+  let buildBusy = $state(false);
   // Who else has this pack open, from the stream. Names, not a count: "bo is
   // here" is a different fact from "1 other person", and it is the one that
   // changes what you do next.
@@ -295,8 +303,9 @@
     return () => clearInterval(timer);
   });
   /// A path as something a person reads. The first segment is the part -- the
-  /// rest ("mods.3", "pack_meta.description_md") is an address for the marker,
-  /// not for the sentence, which would only get longer without getting clearer.
+  /// rest ("mods.sodium.jar", "pack_meta.description_md") is an address for the
+  /// marker, not for the sentence, which would only get longer without getting
+  /// clearer.
   const fieldLabel = (path: string) => {
     const head = path.split('.')[0];
     const known = [
@@ -308,17 +317,28 @@
 
   /// The recent changes, as sentences. Three at most: a longer list is not read,
   /// and the ones under it are the older ones.
-  const touchLines = $derived(
-    touches.live.slice(0, 3).map((entry) => ({
-      path: entry.path,
+  ///
+  /// Grouped by what a reader is told, not by path: two mods edited in one
+  /// window are two paths and one sentence, and the ungrouped list said
+  /// "someone - a mod" twice in a row.
+  const touchLines = $derived.by(() => {
+    const byLabel = new Map<string, string[]>();
+    for (const entry of touches.live) {
+      const label = fieldLabel(entry.path);
+      const who = byLabel.get(label) ?? [];
+      for (const name of entry.who) if (!who.includes(name)) who.push(name);
+      byLabel.set(label, who);
+    }
+    return [...byLabel.entries()].slice(0, 3).map(([label, people]) => ({
+      label,
       who:
-        entry.who.length === 1
-          ? entry.who[0]
-          : entry.who.length === 2
-            ? entry.who.join(' & ')
-            : t('pe.touchedByN', { n: String(entry.who.length) }),
-    })),
-  );
+        people.length === 1
+          ? people[0]
+          : people.length === 2
+            ? people.join(' & ')
+            : t('pe.touchedByN', { n: String(people.length) }),
+    }));
+  });
 
   // The handshake claim and its drift. Loaded on demand: it asks a game server,
   // which is slower than everything else here and pointless for a pack that
@@ -1076,8 +1096,8 @@
   {#if touchLines.length}
     <div class="touched" aria-live="polite">
       <span class="faint">{t('pe.touchedTitle')}</span>
-      {#each touchLines as line (line.path)}
-        <span class="touch">{line.who} &middot; {fieldLabel(line.path)}</span>
+      {#each touchLines as line (line.label)}
+        <span class="touch">{line.who} &middot; {line.label}</span>
       {/each}
     </div>
   {/if}
@@ -1133,6 +1153,20 @@
   <div class="editcol">
     {#if loading}
       <div class="muted mono">{t('common.loading')}</div>
+    {:else if route.commit}
+      <!-- A checkpoint is a place of its own (ADR 0005): it has an address, and
+           the editor it was opened from is still underneath when it closes. -->
+      <CommitPage
+        {packId}
+        commitId={route.commit}
+        building={buildBusy}
+        onBuildCommit={(id) => {
+          buildFrom = id;
+          tab = 'build';
+          route.closeCommit();
+        }}
+        onChanged={() => (historyTick += 1)}
+      />
     {:else if tab === 'config'}
       {#if !cfg}
         <div class="panel empty">
@@ -1450,7 +1484,14 @@
     {:else if tab === 'graph'}
       <PackGraph {packId} />
     {:else if tab === 'build'}
-      <BuildConsole {packId} {historyTick} />
+      <BuildConsole
+        {packId}
+        {historyTick}
+        {buildFrom}
+        bind:jobId={buildJobId}
+        bind:busy={buildBusy}
+        onBuildStarted={() => (buildFrom = null)}
+      />
     {/if}
   </div>
   {#if previewOpen}

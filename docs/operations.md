@@ -60,12 +60,20 @@ Day to day, everything happens in the panel; the CLI mirrors it for scripting.
    loader mismatches, side advisories (server-side mods, coremods,
    side disagreements between Modrinth and bytecode), curator suggestions
    from `Recommends` edges.
-4. **Build** -- pick a channel (default beta; release is deliberate),
+4. **Commit** -- a build is made from a checkpoint, not from what is on
+   screen, so a publish with uncommitted work is refused (`409`, naming the
+   count). The commit box lists what it is about to record -- arrivals,
+   departures, re-pins with both version numbers, renames, install defaults,
+   assets, the pack's own fields -- and offers a first line for the message.
+   Server-filled metadata (the requires graph, presence, depfill's own rows) is
+   never a change, and neither are the server-controlled fields. The panel's
+   build button commits and builds in one press when the pack is dirty.
+5. **Build** -- pick a channel (default beta; release is deliberate),
    optionally pin an explicit version. The build classifies, derives
    required-ness, resolves every source, and publishes manifest + summary +
    latest pointer. Dry-run first when in doubt: same resolution, nothing
    published.
-5. **Converge** freshly added Modrinth mods: the first build downloads their
+6. **Converge** freshly added Modrinth mods: the first build downloads their
    jars and pokes the harvest; the next build waits for that harvest to
    settle and classifies them fully (the job log shows "waiting for the
    registry harvest to settle" when it does). Newly pulled dependencies of
@@ -73,7 +81,36 @@ Day to day, everything happens in the panel; the CLI mirrors it for scripting.
 
 CLI equivalents: `smrt-pack bootstrap | validate | depfill | build
 --channel ... | enrich-mcmod | infer-requires | upload-static |
-reconstruct-config`.
+reconstruct-config`. The CLI writes the config directly and builds the working
+state, so a script commits nothing and is refused nothing.
+
+### History
+
+A commit is a snapshot, an author, a message and a parent, content-addressed
+and append-only (#122). What it is worth doing with:
+
+- **Read one**: `GET .../commits/{id}` (metadata, plus the versions built from
+  it) and `GET .../commits/{id}/diff` -- what the commit recorded, against its
+  parent. `?against=<id>` compares two checkpoints; `?against=live` asks what a
+  restore of it would do to the working state, which is what the panel shows
+  before it asks. In the panel a commit has an address of its own
+  (`/packs/<id>/commit/<sha>`).
+- **Build an old one**: `?from_commit=<id>` on the build, or "build this" in
+  the history. It skips the uncommitted check entirely -- the state being built
+  is the commit, whatever is in the editor.
+- **Put one back**: restore writes it forward as a new commit rather than
+  rewinding, so nothing that was ever declared stops being true. Reverting to a
+  published build (`config/revert`) does the same and records its own
+  checkpoint.
+
+A build made from a checkpoint records it (`built_from` on the manifest and in
+the versions listing), which is what makes "which state is 0.1.31" a question
+with an answer. A CLI build names none -- it builds the working state -- and
+neither does a dry run.
+
+The log itself is paged: `GET .../commits?limit=` answers a hundred by default,
+`Link` names the next page, and the cursor is the last commit served, so the
+walk continues at its parent.
 
 ### Two people in one pack
 

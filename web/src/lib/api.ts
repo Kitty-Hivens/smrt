@@ -10,6 +10,8 @@ import type {
   CacheInventory,
   CommunityPack,
   Commit,
+  CommitDiff,
+  CommitLogEntry,
   CommitStatus,
   DeclaredAsset,
   CacheUsageListing,
@@ -286,15 +288,36 @@ export const api = {
   //
   // A commit is what a build is made from, so these sit beside the build rather
   // than in a corner of their own.
-  commits: (id: string) =>
-    getJson<Commit[]>(`/v1/authoring/packs/${encodeURIComponent(id)}/commits`),
+  // Each line carries the versions built from it, so a checkpoint that shipped
+  // and one that never did do not read the same. Paged by the chain: the `Link`
+  // names where the next page starts, so a history longer than a page is
+  // readable past its head.
+  commits: (id: string, limit = 40) =>
+    getPage<CommitLogEntry>(
+      `/v1/authoring/packs/${encodeURIComponent(id)}/commits?limit=${limit}`,
+    ),
+  commitsPage: (url: string) => getPage<CommitLogEntry>(url),
   // Where the history is, and how far the live config has moved off it -- what
   // the editor needs to say "N changes since the last commit" before a build.
   commitStatus: (id: string) =>
     getJson<CommitStatus>(`/v1/authoring/packs/${encodeURIComponent(id)}/commits/status`),
+  // One commit by name. A commit's address outlives any page of the log: the
+  // checkpoint a build was made from can sit far behind the newest page.
+  commitById: (id: string, commitId: string) =>
+    getJson<CommitLogEntry>(
+      `/v1/authoring/packs/${encodeURIComponent(id)}/commits/${encodeURIComponent(commitId)}`,
+    ),
   commitConfig: (id: string, commitId: string) =>
     getJson<PackConfig>(
       `/v1/authoring/packs/${encodeURIComponent(id)}/commits/${encodeURIComponent(commitId)}/config`,
+    ),
+  // What a commit recorded (against its parent), or what separates it from any
+  // other state. `against: 'live'` is the question a restore asks: what happens
+  // if this goes back.
+  commitDiff: (id: string, commitId: string, against?: string) =>
+    getJson<CommitDiff>(
+      `/v1/authoring/packs/${encodeURIComponent(id)}/commits/${encodeURIComponent(commitId)}/diff` +
+        (against ? `?against=${encodeURIComponent(against)}` : ''),
     ),
   async commit(id: string, message: string): Promise<Commit> {
     activity.begin();

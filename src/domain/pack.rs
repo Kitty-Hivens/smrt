@@ -159,6 +159,13 @@ pub struct ManifestBuildInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub fingerprint: Option<String>,
+    /// The commit this build was made from (#122), where it names one. Absent
+    /// on CLI builds, which build the working config, and on every build from
+    /// before a pack had history. Carried in the listing so "which builds came
+    /// out of this checkpoint" is answerable without opening every manifest.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub built_from: Option<String>,
     /// Curator-authored release notes, where the build carries them.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

@@ -1,7 +1,7 @@
 use crate::domain::*;
 use crate::http::ApiError;
 use sha1::{Digest, Sha1};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,16 +16,25 @@ pub struct Storage {
     removed_lock: Arc<tokio::sync::Mutex<()>>,
     /// One lock per pack id, serializing the read-modify-write of that pack's
     /// authoring config. See [`Storage::lock_pack_config`].
-    config_locks:
-        Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    config_locks: Arc<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    /// Which builds came out of each commit, per pack. Derived from the
+    /// manifests, which is a read of every retained manifest header -- fine
+    /// once, wasteful on every page of a log and on every commit page. Dropped
+    /// whenever a manifest is written, so it can only ever be behind by a build
+    /// nobody has published yet.
+    builds_by_commit: Arc<std::sync::Mutex<HashMap<String, Arc<BuildsByCommit>>>>,
 }
+
+/// Published versions per commit id, newest first within a commit.
+type BuildsByCommit = HashMap<String, Vec<String>>;
 
 impl Storage {
     pub fn new(root: PathBuf) -> Self {
         Self {
             root,
             removed_lock: Arc::new(tokio::sync::Mutex::new(())),
-            config_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            config_locks: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            builds_by_commit: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -256,7 +265,45 @@ impl Storage {
         }
         let bytes = serde_json::to_vec_pretty(manifest)
             .map_err(|e| ApiError::Internal(anyhow::anyhow!("manifest json encode: {e}")))?;
-        atomic_write(&path, &bytes).await
+        atomic_write(&path, &bytes).await?;
+        self.forget_builds_by_commit(pack_id);
+        Ok(())
+    }
+
+    /// Which published versions came out of each commit of this pack, newest
+    /// first within a commit.
+    ///
+    /// Answered from the manifests, and remembered: the alternative is reading
+    /// every retained manifest header on every page of a log and again on every
+    /// commit page. A pack whose manifests cannot be listed has no builds to
+    /// name, which is the same answer as a pack that never published.
+    pub async fn builds_by_commit(&self, pack_id: &str) -> Arc<BuildsByCommit> {
+        if let Ok(cache) = self.builds_by_commit.lock()
+            && let Some(known) = cache.get(pack_id)
+        {
+            return known.clone();
+        }
+        let mut built: BuildsByCommit = HashMap::new();
+        if let Ok(builds) = self.list_manifest_builds(pack_id).await {
+            for b in builds {
+                if let Some(commit) = b.built_from {
+                    built.entry(commit).or_default().push(b.version_number);
+                }
+            }
+        }
+        let built = Arc::new(built);
+        if let Ok(mut cache) = self.builds_by_commit.lock() {
+            cache.insert(pack_id.to_string(), built.clone());
+        }
+        built
+    }
+
+    /// Drop what was remembered about a pack's builds, because a manifest just
+    /// moved under it.
+    fn forget_builds_by_commit(&self, pack_id: &str) {
+        if let Ok(mut cache) = self.builds_by_commit.lock() {
+            cache.remove(pack_id);
+        }
     }
 
     /// Point `manifests/latest` at `<version>.json` via an atomic symlink
@@ -422,7 +469,14 @@ impl Storage {
         Ok(snapshot.config)
     }
 
-    /// The history newest first, walking parents from `HEAD`.
+    /// The history newest first, walking parents from `HEAD` -- or from the
+    /// commit after `after`, which is how a second page continues the first.
+    ///
+    /// The chain is the cursor: every commit names its parent, so continuing a
+    /// walk needs no index and no offset, and a page boundary cannot drift when
+    /// a commit lands while someone is reading. An `after` that will not load is
+    /// treated as the end of the history rather than as the start of it --
+    /// answering the whole log again would silently repeat the first page.
     ///
     /// Stops at a parent that will not load rather than failing the whole read:
     /// a truncated log still tells someone what the recent history was, where
@@ -430,10 +484,17 @@ impl Storage {
     pub async fn commit_log(
         &self,
         pack_id: &str,
+        after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<crate::authoring::Commit>, ApiError> {
         let mut out = Vec::new();
-        let mut next = self.commit_head(pack_id).await;
+        let mut next = match after {
+            Some(id) => match self.load_commit(pack_id, id).await {
+                Ok(commit) => commit.parent,
+                Err(_) => return Ok(out),
+            },
+            None => self.commit_head(pack_id).await,
+        };
         while let Some(id) = next {
             if out.len() >= limit {
                 break;
@@ -1347,6 +1408,8 @@ struct ManifestHead {
     generated_at: String,
     #[serde(default)]
     fingerprint: Option<String>,
+    #[serde(default)]
+    built_from: Option<String>,
     minecraft: MinecraftSpec,
     loader: LoaderSpec,
     #[serde(default)]
@@ -1374,6 +1437,7 @@ fn build_info_from_head(head: ManifestHead) -> ManifestBuildInfo {
         version_number: head.pack_version,
         date_published: head.generated_at,
         fingerprint: head.fingerprint,
+        built_from: head.built_from,
         changelog: head.changelog,
         changelog_i18n: head.changelog_i18n,
         mods_count: head.mods.len() as u64,
@@ -1733,7 +1797,7 @@ mod tests {
         cfg.tagline = "second".into();
         let second = commit(&s, &cfg, Some(first.id.clone()), "second state").await;
 
-        let log = s.commit_log("Industrial", 100).await.unwrap();
+        let log = s.commit_log("Industrial", None, 100).await.unwrap();
         assert_eq!(
             log.iter().map(|c| &*c.id).collect::<Vec<_>>(),
             vec![&*second.id, &*first.id]
@@ -1749,6 +1813,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn publishing_a_build_moves_what_the_history_says_shipped() {
+        // the index is derived from the manifests, so writing one must drop it
+        // -- a checkpoint that just shipped reading as "never built" is worse
+        // than the read it saves
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let c = commit(&s, &sample_config(), None, "first").await;
+        assert!(s.builds_by_commit("Industrial").await.is_empty());
+
+        let mut built_manifest = manifest("0.1.0", "2026-08-11T00:00:00Z", 1);
+        built_manifest.built_from = Some(c.id.clone());
+        s.save_manifest("Industrial", &built_manifest, false)
+            .await
+            .unwrap();
+
+        let built = s.builds_by_commit("Industrial").await;
+        assert_eq!(
+            built.get(&c.id).map(Vec::as_slice),
+            Some(&["0.1.0".to_string()][..])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_page_continues_where_the_last_one_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        let mut cfg = sample_config();
+        let mut ids = Vec::new();
+        let mut parent = None;
+        for n in 0..5 {
+            cfg.tagline = format!("take {n}");
+            let c = commit(&s, &cfg, parent.clone(), &format!("take {n}")).await;
+            parent = Some(c.id.clone());
+            ids.push(c.id);
+        }
+        ids.reverse(); // the log answers newest first
+
+        let first = s.commit_log("Industrial", None, 2).await.unwrap();
+        assert_eq!(
+            first.iter().map(|c| &*c.id).collect::<Vec<_>>(),
+            vec![&*ids[0], &*ids[1]]
+        );
+        let second = s
+            .commit_log("Industrial", Some(&first[1].id), 2)
+            .await
+            .unwrap();
+        assert_eq!(
+            second.iter().map(|c| &*c.id).collect::<Vec<_>>(),
+            vec![&*ids[2], &*ids[3]]
+        );
+        // and the walk ends where the history does
+        let last = s
+            .commit_log("Industrial", Some(&second[1].id), 2)
+            .await
+            .unwrap();
+        assert_eq!(
+            last.iter().map(|c| &*c.id).collect::<Vec<_>>(),
+            vec![&*ids[4]]
+        );
+        assert!(
+            s.commit_log("Industrial", Some(&ids[4]), 2)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cursor_naming_no_commit_ends_the_walk() {
+        // answering from the head again would look like the log looping rather
+        // than ending
+        let dir = tempfile::tempdir().unwrap();
+        let s = Storage::new(dir.path().to_path_buf());
+        commit(&s, &sample_config(), None, "only").await;
+        let rows = s
+            .commit_log("Industrial", Some(&"f".repeat(40)), 10)
+            .await
+            .unwrap();
+        assert!(rows.is_empty(), "{rows:?}");
+    }
+
+    #[tokio::test]
     async fn the_same_state_committed_twice_is_two_commits() {
         // The id covers the parent, so a snapshot identical to its predecessor
         // is still a distinct checkpoint -- otherwise "I committed and nothing
@@ -1759,7 +1905,10 @@ mod tests {
         let first = commit(&s, &cfg, None, "first").await;
         let again = commit(&s, &cfg, Some(first.id.clone()), "first").await;
         assert_ne!(first.id, again.id);
-        assert_eq!(s.commit_log("Industrial", 100).await.unwrap().len(), 2);
+        assert_eq!(
+            s.commit_log("Industrial", None, 100).await.unwrap().len(),
+            2
+        );
     }
 
     #[tokio::test]

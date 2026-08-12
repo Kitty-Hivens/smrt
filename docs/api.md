@@ -46,8 +46,11 @@ GET /v1/packs/{id}/manifest/{version}      # a specific build
    `date_published` and follows the Modrinth version-object naming
    (`version_number`, `version_type`, `date_published`, `changelog` --
    curator-authored release notes where given -- plus `fingerprint`,
-   `mods_count`, `assets_count`). `latest` names the build the latest pointer
-   serves. Filter by `version_type` to hide prereleases.
+   `mods_count`, `assets_count`). A build made from a checkpoint also carries
+   `built_from`, the commit id its config came from -- absent on a CLI build,
+   which builds the working config, and on anything built before a pack had
+   history. `latest` names the build the latest pointer serves. Filter by
+   `version_type` to hide prereleases.
    Each build also states what it targets and what it costs:
    `minecraft_version` and `loader` (`{name, version}`), so "this update moves
    you to 1.20.1" is answerable from the listing rather than by fetching every
@@ -219,6 +222,11 @@ SSE) track builds; finished jobs keep answering the status endpoint from
 persisted snapshots across restarts (a job running at a restart reads failed,
 with an explicit interrupted line), while the live SSE tail is
 memory-only.
+
+A pack's history is paged the same way as the listings above:
+`GET /v1/authoring/packs/{id}/commits?limit=` answers a hundred commits by
+default and names the next page in `Link`, the cursor being the last commit
+served -- the walk continues at that commit's parent.
 
 `GET /v1/events` (SSE, any signed-in caller) is the mirror-wide equivalent:
 what changed, as it changes, so a view listens instead of asking again on a

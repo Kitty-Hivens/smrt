@@ -19,6 +19,7 @@ import { changedPaths } from '../src/lib/touched.svelte.ts';
 import { advertisesModList } from '../src/lib/handshake.ts';
 import { assetPath, isPackFile, ASSET_PREFIX } from '../src/lib/packassets.ts';
 import { nextPageUrl } from '../src/lib/pagelink.ts';
+import { suggest, tally } from '../src/lib/changes.ts';
 
 let failures = 0;
 const check = (name, cond, detail = '') => {
@@ -179,24 +180,59 @@ check('the offered list holds what old packs need', [8, 11, 16, 17, 21].every((v
 
   const row = clone(); row.mods[1].default_enabled = false;
   check('an edited row is reported as the row, not the whole list',
-    JSON.stringify(changedPaths(base, row)) === '["mods.1"]',
+    JSON.stringify(changedPaths(base, row)) === '["mods.ae2.jar"]',
     JSON.stringify(changedPaths(base, row)));
 
   const added = clone(); added.mods.push({ filename: 'thermal.jar' });
   check('an added row is one path, not every field in it',
-    JSON.stringify(changedPaths(base, added)) === '["mods.2"]',
+    JSON.stringify(changedPaths(base, added)) === '["mods.thermal.jar"]',
     JSON.stringify(changedPaths(base, added)));
 
   const removed = clone(); removed.mods.pop();
-  check('a removed row is reported too', JSON.stringify(changedPaths(base, removed)) === '["mods.1"]',
+  check('a removed row is reported too',
+    JSON.stringify(changedPaths(base, removed)) === '["mods.ae2.jar"]',
     JSON.stringify(changedPaths(base, removed)));
 
+  // a marker keyed by position marks the wrong row as soon as one arrives above
+  // it -- and marks every row below as touched by whoever added it
+  const inserted = clone(); inserted.mods.splice(1, 0, { filename: 'create.jar' });
+  check('a row arriving in the middle touches one row',
+    JSON.stringify(changedPaths(base, inserted)) === '["mods.create.jar"]',
+    JSON.stringify(changedPaths(base, inserted)));
+
+  const reordered = clone(); reordered.mods.reverse();
+  check('reordering the list touches nothing',
+    changedPaths(base, reordered).length === 0,
+    JSON.stringify(changedPaths(base, reordered)));
+
   check('an unchanged config reports nothing', changedPaths(base, clone()).length === 0);
+
+  // two rows can carry the same name (nothing enforces otherwise); collapsing
+  // them into one would drop whichever edit landed on the loser
+  const twins = { mods: [{ filename: 'a.jar', on: true }, { filename: 'a.jar', on: true }] };
+  const twinEdit = { mods: [{ filename: 'a.jar', on: false }, { filename: 'a.jar', on: true }] };
+  check('rows sharing a name keep their edits',
+    JSON.stringify(changedPaths(twins, twinEdit)) === '["mods.0"]',
+    JSON.stringify(changedPaths(twins, twinEdit)));
+
+  // the editor adds an asset with an empty dest and lets you fill it in; that
+  // one blank row must not put every named row back on positions
+  const named2 = { assets: [{ dest: 'a.json' }, { dest: 'b.json' }] };
+  const withBlank = { assets: [{ dest: '' }, { dest: 'a.json' }, { dest: 'b.json' }] };
+  check('a blank row does not drag the named ones back to positions',
+    JSON.stringify(changedPaths(named2, withBlank)) === '["assets.0"]',
+    JSON.stringify(changedPaths(named2, withBlank)));
+
+  // plain values have nothing to be named by, so they stay positional
+  const tagged = { tags: ['tech', 'magic'] };
+  check('a list of plain values is still addressed by position',
+    JSON.stringify(changedPaths(tagged, { tags: ['tech', 'quests'] })) === '["tags.1"]',
+    JSON.stringify(changedPaths(tagged, { tags: ['tech', 'quests'] })));
 
   const two = clone();
   two.display_name = 'X'; two.mods[0].default_enabled = false;
   check('two independent changes are two paths',
-    JSON.stringify(changedPaths(base, two).sort()) === '["display_name","mods.0"]',
+    JSON.stringify(changedPaths(base, two).sort()) === '["display_name","mods.jei.jar"]',
     JSON.stringify(changedPaths(base, two)));
 }
 
@@ -245,6 +281,47 @@ check('the offered list holds what old packs need', [8, 11, 16, 17, 21].every((v
   check('a cursor is taken whole',
     nextPageUrl('</v1/registry/mods?q=a-b_c&after=eyJhIjoxfQ>; rel="next"')
       === '/v1/registry/mods?q=a-b_c&after=eyJhIjoxfQ');
+}
+
+// ── reading a list of changes ───────────────────────────────────────────────
+// The diff itself moved to the mirror (`src/authoring/configdiff.rs`), which is
+// what made the count beside the list and the list agree. What stays here is
+// what the panel does with the rows: sum them, and offer a first line for the
+// message box, so nobody writes "misc" over four mods they no longer remember.
+{
+  const row = (op, label, group = 'mods') => ({ group, op, label, key: `f:${label}` });
+
+  check('nothing changed suggests nothing', suggest([]) === null);
+
+  check('one arrival is named',
+    JSON.stringify(suggest([row('add', 'Cosmetica.jar')])) ===
+      JSON.stringify({ kind: 'add', what: ['Cosmetica.jar'], counts: { add: 1, remove: 0, change: 0 } }),
+    JSON.stringify(suggest([row('add', 'Cosmetica.jar')])));
+
+  const three = ['a.jar', 'b.jar', 'c.jar'].map((f) => row('add', f));
+  check('three are still named', suggest(three).kind === 'add' && suggest(three).what.length === 3);
+
+  const four = ['a.jar', 'b.jar', 'c.jar', 'd.jar'].map((f) => row('add', f));
+  check('four are counted, not listed',
+    suggest(four).kind === 'mixed' && suggest(four).counts.add === 4,
+    JSON.stringify(suggest(four)));
+
+  check('arrivals and departures together are counted',
+    suggest([row('add', 'a.jar'), row('remove', 'b.jar')]).kind === 'mixed');
+
+  // a re-pin and a toggle on one mod are two rows and one name: the message
+  // should read "Update sodium.jar", not "Update sodium.jar, sodium.jar"
+  const twice = [
+    { ...row('change', 'sodium.jar'), field: 'pin' },
+    { ...row('change', 'sodium.jar'), field: 'default_enabled' },
+  ];
+  check('one file changed twice is one name',
+    suggest(twice).kind === 'update' && suggest(twice).what.join() === 'sodium.jar',
+    JSON.stringify(suggest(twice)));
+
+  check('the tally counts each operation',
+    JSON.stringify(tally([row('add', 'a.jar'), row('add', 'b.jar'), row('remove', 'c.jar')])) ===
+      JSON.stringify({ add: 2, remove: 1, change: 0 }));
 }
 
 console.log(failures ? `\n${failures} failed` : '\nall good');

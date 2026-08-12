@@ -8,6 +8,47 @@ version section when a release is tagged.
 
 ### Fixed
 
+- "47 changes since the last commit" and the list under it were two different
+  answers, computed twice from different rules. The count came from a JSON walk
+  that compared arrays by position, so adding one mod to an alphabetically
+  ordered pack reported every row below it as changed -- 79, for a single
+  arrival -- while the list beside it correctly showed one. The walk also
+  compared the whole config, including the fields only the server writes and the
+  rows the dependency fill appends, which is how a save that changed nothing a
+  person did could still report 22. There is now one diff, on the mirror, and
+  everything that says what changed reads it: the commit box, the count, the
+  build's refusal, and what a commit recorded. It matches rows by identity
+  rather than position -- a mod is its Modrinth project, else its curator slug,
+  else its filename -- and compares the projection `edit_rev` hashes, minus what
+  only the mirror writes inside a row, so a revision that has not moved answers
+  "nothing to commit" without reading the checkpoint at all.
+- A jar renamed without changing is a rename, not a departure and an unrelated
+  arrival. Both rows point at the same artifact, and that is the evidence.
+- A re-pin and a switched install default on one mod are two rows. The old list
+  showed the first and dropped the second, so a pack could ship a mod nobody
+  meant to turn off with a message that only mentioned the version bump.
+- An edit to a mod's project url no longer passes unnoticed: the panel's list of
+  authored fields named `homepage`, which is not a field the manifest has -- the
+  one it does have is `url`, and it was never compared.
+- Reverting to a published build records a checkpoint of its own. It wrote the
+  config and stopped, so the pack came back looking changed by nobody, with the
+  next build refusing to publish and nothing in the history saying why.
+- Reading a pack's history no longer reads every manifest it ever published.
+  Both the log and a commit page answered "which versions came out of this
+  checkpoint" by parsing the header of every retained manifest -- a hundred and
+  thirty files on the reference deployment's flagship pack, once per page. The
+  answer is now kept and dropped whenever a manifest is written, so it can only
+  be behind by a build nobody has published yet.
+- The live-edit markers address the row someone touched rather than the position
+  it held. Paths were indexes, so a mod arriving in the middle of the list
+  counted as a change to every row below it, and the summary above the editor
+  said "someone - a mod" once per displaced row. It now groups by what it says,
+  so two mods edited in one window read as one line naming both people. Rows
+  that name nothing (a freshly added asset, a list of tags) keep their
+  positions, and two rows sharing a name are still two rows.
+- Restoring a commit asks first, and says what it will do: how many arrivals,
+  departures and changes it writes over the working state. It was a single
+  click, next to "build this", with no statement of consequences anywhere.
 - A pack whose pinned loader build is older than one of its mods demands no
   longer publishes clean. Mods declare the loader window they run in, and the
   pin next to them is a hand-typed line that nothing moves; when JEI raised its
@@ -135,6 +176,36 @@ version section when a release is tagged.
   come back as whole numbers so a `u32` field still deserializes.
 
 ### Added
+
+- A pack's history is readable past its first page. The log answered a hundred
+  commits by default and five hundred at most, with nothing to continue from, so a pack that had been curated
+  for long enough simply had no way to reach its older checkpoints. It now pages
+  by the chain itself -- every commit names its parent, so the cursor is a
+  commit id and a page boundary cannot drift when someone commits while another
+  person is reading.
+- A commit has a page and an address (`/packs/<id>/commit/<sha>`): its message,
+  who declared it, everyone whose work it took in, the full id, and what it
+  recorded -- read against the commit before it, or against the working state,
+  which is the question a restore asks (the endpoint takes any other checkpoint
+  as well). Building from it and putting it back are both there.
+- A build made from a checkpoint records which one, and the history says which
+  versions came out of each commit. The field was written and read by nothing,
+  so "which state is 0.1.31" had no answer; it is now in the public versions
+  listing as `built_from`. A CLI build has none to name -- it builds the working
+  config -- and neither does a dry run.
+- A commit message has a subject and a body, and the box offers a first line
+  drawn from the changes themselves. A message written from memory tends to omit
+  the change nobody remembers making.
+
+- The commit box lists what is about to be recorded. It showed a count and a
+  message field, so the sentence beside it was written from memory -- and the
+  count is of changed JSON paths, which is not a list of things a person did: a
+  save whose only effect was the dependency fill writing two `display.requires`
+  lists reported 22 changes. The box now names them: mods that arrived, left, or
+  moved a pin (with both versions, not the two Modrinth ids), assets, install
+  defaults, the loader, and the pack's own fields. What the mirror fills in
+  server-side is deliberately not a row, and when that is all that moved the box
+  says so rather than showing an empty list under a number.
 
 - Reads cost what they are worth. Four things the whole `/v1` surface does now,
   written up in the API guide:
