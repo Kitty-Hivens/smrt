@@ -2195,6 +2195,37 @@ async fn revoke_access(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// How much somebody may say in a window, before the mirror asks them to slow
+/// down. Public writing without a ceiling is an invitation; these are set where
+/// a person never notices them and a script does.
+const COMMENTS_PER_WINDOW: i64 = 20;
+const THREADS_PER_WINDOW: i64 = 5;
+const RATE_WINDOW_SECS: i64 = 600;
+
+/// Refuse a write that is the caller's twenty-first comment (or sixth thread) in
+/// ten minutes. Counted from the rows themselves, so a restart hands nobody a
+/// fresh allowance.
+async fn within_rate(state: &AppState, kind: &'static str, uid: i64) -> Result<(), ApiError> {
+    let acc = state.accounts.clone();
+    let limit = if kind == "comments" {
+        COMMENTS_PER_WINDOW
+    } else {
+        THREADS_PER_WINDOW
+    };
+    let recent = tokio::task::spawn_blocking(move || {
+        let since = acc.now() - RATE_WINDOW_SECS;
+        acc.recent_by(kind, uid, since)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("rate task: {e}")))??;
+    if recent >= limit {
+        return Err(ApiError::Conflict(
+            "that is a lot in a short time; give it a few minutes".into(),
+        ));
+    }
+    Ok(())
+}
+
 // ── threads: what is said about a pack (ADR 0006) ───────────────────────────
 
 #[derive(serde::Deserialize)]
@@ -2229,6 +2260,7 @@ async fn open_issue(
     if !is_published(&state, &pack_id).await {
         super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     }
+    within_rate(&state, "threads", identity.uid).await?;
     let title = trimmed(&req.title, "an issue needs a title")?;
     let id = open_thread(
         &state, &identity, &pack_id, "issue", &title, &req.body, None,
@@ -2381,19 +2413,11 @@ async fn list_threads(
     Ok(Json(rows))
 }
 
-/// One thread and everything said on it.
-#[derive(serde::Serialize, ts_rs::TS)]
-#[ts(export, export_to = "bindings/")]
-pub struct ThreadView {
-    pub thread: crate::accounts::Thread,
-    pub comments: Vec<crate::accounts::ThreadComment>,
-}
-
 async fn read_thread(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
     Path(id): Path<i64>,
-) -> Result<Json<ThreadView>, ApiError> {
+) -> Result<Json<crate::accounts::ThreadView>, ApiError> {
     let thread = load_thread(&state, id).await?;
     if !may_read_threads(&state, &identity, &thread.pack_id).await {
         return Err(ApiError::Forbidden);
@@ -2402,7 +2426,7 @@ async fn read_thread(
     let comments = tokio::task::spawn_blocking(move || acc.comments_on(id))
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
-    Ok(Json(ThreadView { thread, comments }))
+    Ok(Json(crate::accounts::ThreadView { thread, comments }))
 }
 
 /// What a proposal would change, read against the target as it stands now --
@@ -2448,6 +2472,7 @@ async fn post_comment(
     if !may_read_threads(&state, &identity, &t.pack_id).await {
         return Err(ApiError::Forbidden);
     }
+    within_rate(&state, "comments", identity.uid).await?;
     let body = trimmed(&req.body, "an empty comment says nothing")?;
     if body.chars().count() > 4000 {
         return Err(ApiError::BadRequest("that comment is too long".into()));

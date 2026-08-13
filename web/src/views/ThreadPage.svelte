@@ -100,6 +100,13 @@
     await act(() => api.hideComment(commentId, hidden));
   }
 
+  /// Whose words these are. Uid 0 is the mirror's own break-glass hand rather
+  /// than a person, and "uid 0" on screen reads like a bug.
+  function who(uid: number, login?: string | null): string {
+    if (login) return login;
+    return uid === 0 ? t('thr.byOperator') : t('acc.unknownUser', { uid });
+  }
+
   function when(at: number): string {
     const d = new Date(at * 1000);
     return Number.isNaN(d.getTime()) ? String(at) : d.toLocaleString();
@@ -122,12 +129,13 @@
         <span class="kind" data-kind={thread.kind}>{t(`thr.kind.${thread.kind}` as 'thr.kind.issue')}</span>
         <span class="status" data-status={thread.status}>{t(`thr.status.${thread.status}` as 'thr.status.open')}</span>
         <span>#{thread.id}</span>
-        <span>{thread.by_login ?? t('acc.unknownUser', { uid: thread.by_uid })}</span>
+        <span class="name">{who(thread.by_uid, thread.by_login)}</span>
         <span>{when(thread.created_at)}</span>
       </div>
       {#if thread.body}
         <p class="body">{thread.body}</p>
       {/if}
+      <hr />
       {#if thread.merged_commit}
         <p class="muted small">
           {t('thr.mergedAs', { commit: thread.merged_commit.slice(0, 8) })}
@@ -155,7 +163,7 @@
       {#each view?.comments ?? [] as c (c.id)}
         <article class:hidden={c.hidden}>
           <div class="who muted">
-            <span>{c.by_login ?? t('acc.unknownUser', { uid: c.by_uid })}</span>
+            <span class="name">{who(c.by_uid, c.by_login)}</span>
             <span>{when(c.created_at)}</span>
             {#if canEdit}
               <button class="link small" onclick={() => hide(c.id, !c.hidden)} disabled={working}>
@@ -240,6 +248,11 @@
   .status[data-status='merged'] {
     color: var(--accent, var(--fg));
   }
+  hr {
+    border: 0;
+    border-top: 1px solid var(--line);
+    margin: 14px 0 0;
+  }
   .body {
     margin: 8px 0 0;
     white-space: pre-wrap;
@@ -255,17 +268,31 @@
   }
   .talk {
     margin-top: 18px;
-    border-top: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
   .talk article {
-    padding: 10px 0;
-    border-bottom: 1px solid var(--line);
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-left-width: 2px;
+  }
+  .talk article.hidden {
+    border-left-color: var(--danger, var(--line));
+    opacity: 0.75;
   }
   .who {
     display: flex;
     gap: 12px;
     align-items: baseline;
     font-size: var(--fs-sm);
+  }
+  .who .name {
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .who .link {
+    margin-left: auto;
   }
   .said {
     margin: 4px 0 0;

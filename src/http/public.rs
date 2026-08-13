@@ -1,6 +1,6 @@
 use super::ApiError;
 use super::page::{PageQuery, next_link};
-use crate::accounts::PackLevel;
+use crate::accounts::{PackLevel, Thread, ThreadView};
 use crate::authoring::jar_icon;
 use crate::domain::*;
 use crate::registry::model::{FileDetail, ModDetail};
@@ -496,7 +496,21 @@ async fn gate_pack_read(
 /// outcomes. Readable without a session, because a decision nobody can see is
 /// indistinguishable from one nobody made -- an unpublished pack's discussion
 /// stays with whoever can see the pack.
-async fn public_threads(
+#[utoipa::path(
+    get,
+    path = "/v1/packs/{pack_id}/threads",
+    tag = "public",
+    params(
+        ("pack_id" = String, Path, description = "Pack id"),
+        ("kind" = Option<String>, Query, description = "`issue` | `proposal`; absent lists both"),
+        ("all" = Option<bool>, Query, description = "Include settled threads")
+    ),
+    responses(
+        (status = 200, description = "Reports and proposals on a published pack", body = [Thread]),
+        (status = 404, description = "No such pack, or its draft is not yours to read")
+    )
+)]
+pub(crate) async fn public_threads(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(pack_id): Path<String>,
@@ -520,11 +534,21 @@ pub(crate) struct PublicThreadParams {
 
 /// One discussion in full. The pack it belongs to decides who may read it, so a
 /// draft's thread stays as private as the draft.
-async fn public_thread(
+#[utoipa::path(
+    get,
+    path = "/v1/threads/{id}",
+    tag = "public",
+    params(("id" = i64, Path, description = "Thread id")),
+    responses(
+        (status = 200, description = "One discussion in full", body = ThreadView),
+        (status = 404, description = "No such thread, or its pack is not yours to read")
+    )
+)]
+pub(crate) async fn public_thread(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<i64>,
-) -> Result<Json<PublicThreadView>, ApiError> {
+) -> Result<Json<crate::accounts::ThreadView>, ApiError> {
     let acc = state.accounts.clone();
     let thread = tokio::task::spawn_blocking(move || acc.thread(id))
         .await
@@ -535,15 +559,7 @@ async fn public_thread(
     let comments = tokio::task::spawn_blocking(move || acc.comments_on(id))
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
-    Ok(Json(PublicThreadView { thread, comments }))
-}
-
-/// A discussion as the public reads it.
-#[derive(serde::Serialize, ts_rs::TS)]
-#[ts(export, export_to = "bindings/")]
-pub struct PublicThreadView {
-    pub thread: crate::accounts::Thread,
-    pub comments: Vec<crate::accounts::ThreadComment>,
+    Ok(Json(crate::accounts::ThreadView { thread, comments }))
 }
 
 // ── /v1/servers ────────────────────────────────────────────────────────────

@@ -1127,49 +1127,57 @@
     </div>
   {/if}
   <h2 class="ttl mono">{packId}<span class="faint">/{t('pe.edit')}</span></h2>
-  <TabStrip value={tab} tabs={tabItems} ariaLabel={t('pe.edit')} onChange={(v) => (tab = v as Tab)} />
-  <div class="spacer"></div>
-  {#if !loading && cfg && tab === 'config' && revertVersions.length}
-    <span class="revertsel">
-      <Select
-        compact
-        full
-        bind:value={revertPick}
-        options={revertOptions}
-        placeholder={t('pe.revertPick')}
-        title={t('pe.revertTo')}
-        ariaLabel={t('pe.revertTo')}
-        onChange={(v) => {
-          if (v) revertTo(v);
-          revertPick = '';
-        }}
-      />
-    </span>
-  {/if}
-  {#if !loading && cfg && tab === 'config'}
-    <span class="savestate" class:err={unsaved} title={saveErr}>
-      {#if saveState === 'saving'}{t('pe.saving')}
-      {:else if saveState === 'saved'}{t('pe.saved')}
-      {:else if saveState === 'conflict'}{t('pe.conflictShort')}
-      {:else if saveState === 'error'}{t('pe.saveError')}{/if}
-    </span>
-  {/if}
-  {#if alsoHere.length}
-    <span class="alsohere" title={t('pe.alsoHereHint')}>
-      {t('pe.alsoHere', { who: alsoHere.join(', ') })}
-    </span>
-  {/if}
-  {#if saveState === 'conflict'}
-    <!-- the notice carries the same action, but it can be dismissed; a refused
-         save must not become unreachable because a toast was closed -->
-    <button class="sm danger" onclick={resolveConflict}>{t('pe.conflictResolve')}</button>
-  {/if}
-  {#if !loading && cfg}
-    <button class="pv" class:active={previewOpen} onclick={() => (previewOpen = !previewOpen)}>
-      {previewOpen ? t('pe.hidePreview') : t('pe.preview')}
-    </button>
-  {/if}
-  <button onclick={onClose}>{t('common.close')}</button>
+  <!-- The tabs scroll inside their own strip rather than pushing the actions
+       onto a second row: six of them plus a revert picker outgrow a narrow
+       window, and Preview and Close are what the header is for. -->
+  <div class="tabs">
+    <TabStrip value={tab} tabs={tabItems} ariaLabel={t('pe.edit')} onChange={(v) => (tab = v as Tab)} />
+  </div>
+  <!-- One group, pinned right: a wrapping header must move the actions
+       together, not strand Close on a row of its own. -->
+  <div class="actions">
+    {#if !loading && cfg && tab === 'config' && revertVersions.length}
+      <span class="revertsel">
+        <Select
+          compact
+          full
+          bind:value={revertPick}
+          options={revertOptions}
+          placeholder={t('pe.revertPick')}
+          title={t('pe.revertTo')}
+          ariaLabel={t('pe.revertTo')}
+          onChange={(v) => {
+            if (v) revertTo(v);
+            revertPick = '';
+          }}
+        />
+      </span>
+    {/if}
+    {#if !loading && cfg && tab === 'config'}
+      <span class="savestate" class:err={unsaved} title={saveErr}>
+        {#if saveState === 'saving'}{t('pe.saving')}
+        {:else if saveState === 'saved'}{t('pe.saved')}
+        {:else if saveState === 'conflict'}{t('pe.conflictShort')}
+        {:else if saveState === 'error'}{t('pe.saveError')}{/if}
+      </span>
+    {/if}
+    {#if alsoHere.length}
+      <span class="alsohere" title={t('pe.alsoHereHint')}>
+        {t('pe.alsoHere', { who: alsoHere.join(', ') })}
+      </span>
+    {/if}
+    {#if saveState === 'conflict'}
+      <!-- the notice carries the same action, but it can be dismissed; a refused
+           save must not become unreachable because a toast was closed -->
+      <button class="sm danger" onclick={resolveConflict}>{t('pe.conflictResolve')}</button>
+    {/if}
+    {#if !loading && cfg}
+      <button class="pv" class:active={previewOpen} onclick={() => (previewOpen = !previewOpen)}>
+        {previewOpen ? t('pe.hidePreview') : t('pe.preview')}
+      </button>
+    {/if}
+    <button onclick={onClose}>{t('common.close')}</button>
+  </div>
 </div>
 
 
@@ -1517,7 +1525,7 @@
     {:else if tab === 'graph'}
       <PackGraph {packId} />
     {:else if tab === 'threads'}
-      <PackThreads {packId} tick={threadTick} />
+      <PackThreads {packId} tick={threadTick} forkOf={cfg?.fork_of ?? null} />
     {:else if tab === 'access'}
       <!-- Granting is the owner's act; everyone who can open the pack may read
            who else is in it, which is what makes the list worth having. -->
@@ -1665,8 +1673,18 @@
   .ttl {
     font-size: var(--fs-lg);
   }
-  .spacer {
-    flex: 1;
+  .tabs {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-left: auto;
+    flex: 0 0 auto;
   }
   .alsohere {
     font-size: var(--fs-xs);

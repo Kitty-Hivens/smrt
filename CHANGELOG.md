@@ -177,6 +177,14 @@ version section when a release is tagged.
 
 ### Added
 
+- The discussion surface is gated where it is written, not only where it is
+  read: the levels are now pinned by tests that drive the real router with a
+  real session, so a handler that forgets to gate, or gates at the wrong level,
+  fails the build rather than somebody's pack. Writing has a ceiling -- twenty
+  comments or five threads in ten minutes, counted from the rows themselves, so
+  a restart hands nobody a fresh allowance. The public routes are in the
+  OpenAPI document, where the wire is supposed to be described. And a fork can
+  be offered back from the panel rather than only over HTTP.
 - The panel can hold a discussion. A pack gains a Discussion tab -- reports and
   proposals in one list, because to a reader they are one thing: somebody asking
   the pack's keepers for something, and a proposal hidden in its own tab is a

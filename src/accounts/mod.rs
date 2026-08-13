@@ -12,6 +12,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 const SCHEMA: &str = include_str!("schema.sql");
 const SESSION_TTL: Duration = Duration::from_secs(86_400);
@@ -137,7 +138,7 @@ pub struct PackGrant {
 /// `source_commit`), which is a commit rather than "whatever that fork says
 /// today", so what a reviewer reads cannot move while they read it. An issue
 /// leaves those empty and is simply a thing somebody asked for.
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct Thread {
     #[ts(type = "number")]
@@ -185,7 +186,7 @@ pub struct Thread {
 /// taken down is itself part of the record, and a hole in a discussion reads
 /// worse than a marked gap. The body of a hidden comment never leaves the
 /// mirror -- the reader is told there was one and who took it down.
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct ThreadComment {
     #[ts(type = "number")]
@@ -202,6 +203,14 @@ pub struct ThreadComment {
     pub hidden: bool,
     #[ts(type = "number")]
     pub created_at: i64,
+}
+
+/// One thread and everything said on it.
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
+#[ts(export, export_to = "bindings/")]
+pub struct ThreadView {
+    pub thread: Thread,
+    pub comments: Vec<ThreadComment>,
 }
 
 /// A registered user, for the operator's user-management view.
@@ -646,6 +655,27 @@ impl Accounts {
             params![thread_id, by_uid, body, unix_now()],
         )?;
         Ok(guard.last_insert_rowid())
+    }
+
+    /// How many of these somebody has written since `since`. The limit is
+    /// counted from the rows themselves rather than from a table of counters:
+    /// there is nothing to keep in sync, and a restart does not hand anyone a
+    /// fresh allowance.
+    pub fn recent_by(&self, table: &str, by_uid: i64, since: i64) -> Result<i64> {
+        let sql = match table {
+            "threads" => "SELECT COUNT(*) FROM pack_threads WHERE by_uid = ?1 AND created_at > ?2",
+            "comments" => {
+                "SELECT COUNT(*) FROM thread_comments WHERE by_uid = ?1 AND created_at > ?2"
+            }
+            other => anyhow::bail!("no rate window for {other}"),
+        };
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        Ok(guard.query_row(sql, params![by_uid, since], |r| r.get(0))?)
+    }
+
+    /// The unix second, for a caller composing a rate window.
+    pub fn now(&self) -> i64 {
+        unix_now()
     }
 
     /// A thread's discussion, oldest first. A hidden comment keeps its place and

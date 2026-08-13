@@ -10,7 +10,17 @@
   import { route, href, plainClick } from '../lib/route.svelte';
   import type { Thread } from '../lib/types';
 
-  let { packId, tick = 0 }: { packId: string; tick?: number } = $props();
+  let {
+    packId,
+    tick = 0,
+    forkOf = null,
+  }: {
+    packId: string;
+    tick?: number;
+    /// The pack this one was forked from, if any. Its presence is what makes
+    /// offering the work back possible at all -- there is somewhere to offer it.
+    forkOf?: string | null;
+  } = $props();
 
   let rows = $state<Thread[]>([]);
   let loading = $state(true);
@@ -20,6 +30,7 @@
 
   // The report form, folded away until wanted: the list is what people come for.
   let opening = $state(false);
+  let proposing = $state(false);
   let title = $state('');
   let body = $state('');
 
@@ -60,6 +71,26 @@
     }
   }
 
+  /// Offer this fork's committed state back to the pack it came from. The
+  /// thread lands on that pack, not this one, which is why the page it opens is
+  /// over there.
+  async function propose() {
+    const heading = title.trim();
+    if (!heading || !forkOf) return;
+    working = true;
+    try {
+      const opened = await api.openProposal(forkOf, packId, heading, body.trim());
+      title = '';
+      body = '';
+      proposing = false;
+      route.openThread(forkOf, opened.id);
+    } catch (e) {
+      notifyFail(e);
+    } finally {
+      working = false;
+    }
+  }
+
   function open(e: MouseEvent, row: Thread) {
     if (!plainClick(e)) return;
     e.preventDefault();
@@ -78,6 +109,11 @@
       {showAll ? t('thr.showOpen') : t('thr.showAll')}
     </button>
     <button class="link" onclick={() => (opening = !opening)}>{t('thr.report')}</button>
+    {#if forkOf}
+      <button class="link" onclick={() => (proposing = !proposing)}>
+        {t('thr.propose', { pack: forkOf })}
+      </button>
+    {/if}
   </div>
 
   {#if opening}
@@ -86,6 +122,16 @@
       <textarea rows="3" bind:value={body} placeholder={t('thr.bodyPlaceholder')} disabled={working}
       ></textarea>
       <button onclick={report} disabled={working || !title.trim()}>{t('thr.send')}</button>
+    </div>
+  {/if}
+
+  {#if proposing && forkOf}
+    <div class="form">
+      <p class="muted small">{t('thr.proposeLead', { pack: forkOf })}</p>
+      <input bind:value={title} placeholder={t('thr.proposeTitle')} disabled={working} />
+      <textarea rows="3" bind:value={body} placeholder={t('thr.bodyPlaceholder')} disabled={working}
+      ></textarea>
+      <button onclick={propose} disabled={working || !title.trim()}>{t('thr.send')}</button>
     </div>
   {/if}
 
@@ -193,7 +239,8 @@
     font-size: var(--fs-sm);
     margin-top: 3px;
   }
-  .empty {
+  .empty,
+  .small {
     font-size: var(--fs-sm);
   }
   .link {
