@@ -168,7 +168,20 @@ so it cannot be used to erase somebody from a record they are already in, and
 the gate refuses to block anybody who keeps the pack. Both decisions are audit
 entries.
 
-The reason is for the person blocked. A refused write answers `403` with it in
+A pack's block cannot answer everything. Somebody whose *pack* was the offence
+is not answered by being kept out of one discussion, so the mirror's operators
+have their own stop: `POST /v1/users/{uid}/suspension` (`{reason?}`) bars that
+account from putting anything on the mirror -- authoring or forking a pack,
+uploading a jar, opening a thread, saying anything on one -- and
+`DELETE /v1/users/{uid}/suspension` lifts it. It is enforced in the access gate
+itself (at `edit` and above) rather than at each of the forty writes behind it,
+and it touches reading nowhere: a suspension is not a way to unpublish what
+somebody already made. An operator cannot be suspended; take the rung away
+first if that is really the intent. The account sees it on `/v1/me`, so the
+panel says so in a standing bar rather than by refusing a control that looked
+usable, and both decisions are audit entries.
+
+The reason is for the person blocked or suspended. A refused write answers `403` with it in
 the message, and `GET .../access/mine` carries it as `suspended` so the panel
 can say so instead of offering a reply box that cannot work. Write it as
 something worth reading: it is what they will see. It is stored as one line --

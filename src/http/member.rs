@@ -349,6 +349,7 @@ async fn fork_pack(
     Extension(identity): Extension<Identity>,
     Json(req): Json<ForkReq>,
 ) -> Result<(StatusCode, Json<PackConfig>), ApiError> {
+    super::auth::not_suspended(&state, &identity).await?;
     super::auth::require_terms(&state, identity.uid).await?;
     let published = state
         .storage

@@ -551,6 +551,156 @@ mod tests {
         );
     }
 
+    // Two stops that answer different questions: a pack's keepers decide who
+    // writes in their discussion, the mirror's operators decide who puts
+    // anything on it at all. Neither touches reading.
+    #[tokio::test]
+    async fn a_suspended_account_writes_nowhere_and_still_reads_everywhere() {
+        use axum::http::StatusCode;
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path());
+        let cfg = sample_pack("Create", crate::domain::Visibility::Published);
+        state
+            .storage
+            .save_pack_config("Create", &cfg)
+            .await
+            .unwrap();
+        state
+            .storage
+            .save_pack_summary(&crate::authoring::make_pack_summary(&cfg, "0.1.0"))
+            .await
+            .unwrap();
+        let mine = sample_pack("u/42/Mine", crate::domain::Visibility::Draft);
+        state
+            .storage
+            .save_pack_config("u/42/Mine", &mine)
+            .await
+            .unwrap();
+        let theirs = state.accounts.sign_in_github(42, "theirs", None).unwrap();
+        let operator = state
+            .accounts
+            .sign_in_github(1, "operator", Some(crate::accounts::Role::Admin))
+            .unwrap();
+        state.accounts.accept_terms(42).unwrap();
+        let app = router(state.clone());
+        let body = serde_json::to_string(&mine).unwrap();
+
+        // before: they author their own pack and speak on a published one
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                "/v1/authoring/packs/u%2F42%2FMine/config",
+                Some(&theirs),
+                Some(&body)
+            )
+            .await,
+            StatusCode::CREATED
+        );
+
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/users/42/suspension",
+                Some(&operator),
+                r#"{"reason":"a pack made to insult people"}"#.into()
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+
+        // after: nothing they write lands, on their own pack or anybody's
+        let (status, refusal) = write(
+            &app,
+            "PUT",
+            "/v1/authoring/packs/u%2F42%2FMine/config",
+            Some(&theirs),
+            Some(&body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(
+            refusal.contains("insult"),
+            "the reason reaches them: {refusal}"
+        );
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/packs/Create/issues",
+                Some(&theirs),
+                Some(r#"{"title":"anything"}"#)
+            )
+            .await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/me/forks",
+                Some(&theirs),
+                Some(r#"{"source":"Create","name":"copy"}"#)
+            )
+            .await,
+            StatusCode::FORBIDDEN,
+            "including making something new to say it in"
+        );
+
+        // and everything they could read, they still read
+        assert_eq!(
+            call(
+                &app,
+                "GET",
+                "/v1/authoring/packs/u%2F42%2FMine/config",
+                Some(&theirs),
+                None
+            )
+            .await,
+            StatusCode::OK
+        );
+        let (_, me) = read(&app, "/v1/me", Some(&theirs)).await;
+        assert!(me.contains("insult"), "their own page says why: {me}");
+
+        // an operator is not somebody another operator can silence
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/users/1/suspension",
+                Some(&operator),
+                Some("{}")
+            )
+            .await,
+            StatusCode::BAD_REQUEST
+        );
+
+        // lifted, and they are back
+        assert_eq!(
+            call(
+                &app,
+                "DELETE",
+                "/v1/users/42/suspension",
+                Some(&operator),
+                None
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                "/v1/authoring/packs/u%2F42%2FMine/config",
+                Some(&theirs),
+                Some(&body)
+            )
+            .await,
+            StatusCode::CREATED
+        );
+    }
+
     #[tokio::test]
     async fn a_block_stops_the_next_message_not_the_record() {
         use axum::http::StatusCode;

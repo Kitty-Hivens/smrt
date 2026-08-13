@@ -1,7 +1,9 @@
 <script lang="ts">
   import { api } from '../lib/api';
   import { notifyFail } from '../lib/toasts.svelte';
+  import { dialogs } from '../lib/dialogs.svelte';
   import { t } from '../lib/i18n.svelte';
+  import { nameOf } from '../lib/people';
   import type { UserRow } from '../lib/types';
   import Avatar from './Avatar.svelte';
 
@@ -35,6 +37,39 @@
     }
   }
 
+  /// Stop an account putting anything on the mirror, or let it back. The
+  /// operators' answer to what a pack's own block cannot reach -- somebody whose
+  /// pack was itself the offence.
+  async function suspend(u: UserRow) {
+    const reason = await dialogs.prompt(t('users.suspendAsk', { who: u.login }), {
+      title: t('users.suspend'),
+      placeholder: t('users.suspendReason'),
+    });
+    if (reason == null) return;
+    try {
+      await api.suspendAccount(u.github_uid, reason.trim() || undefined);
+      await load();
+    } catch (e) {
+      notifyFail(e);
+    }
+  }
+
+  async function lift(u: UserRow) {
+    if (!(await dialogs.confirm(t('users.liftAsk', { who: u.login }), { title: t('users.lift') })))
+      return;
+    try {
+      await api.liftSuspension(u.github_uid);
+      await load();
+    } catch (e) {
+      notifyFail(e);
+    }
+  }
+
+  function when(at: number): string {
+    const d = new Date(at * 1000);
+    return Number.isNaN(d.getTime()) ? String(at) : d.toLocaleDateString();
+  }
+
   // last-login timestamps are unix seconds; 0 marks a row that never logged in
   function seen(unix: number): string {
     if (!unix) return t('users.never');
@@ -55,6 +90,20 @@
           <div class="umeta muted mono">
             uid {u.github_uid} &middot; {t('users.lastLogin')} {seen(u.last_login_at)}
           </div>
+          {#if u.suspension}
+            <div class="stopped">
+              {u.suspension.reason
+                ? t('users.suspendedWhy', {
+                    reason: u.suspension.reason,
+                    by: nameOf(u.suspension.by_uid, u.suspension.by_login),
+                    at: when(u.suspension.at),
+                  })
+                : t('users.suspendedBy', {
+                    by: nameOf(u.suspension.by_uid, u.suspension.by_login),
+                    at: when(u.suspension.at),
+                  })}
+            </div>
+          {/if}
         </div>
         <span class="chip role-{u.role}">{u.role}</span>
         {#if u.github_uid !== meUid}
@@ -62,6 +111,11 @@
             {#each ROLES.filter((r) => r !== u.role) as r}
               <button class="link" onclick={() => setRole(u, r)}>{t(`users.make.${r}`)}</button>
             {/each}
+            {#if u.suspension}
+              <button class="link" onclick={() => lift(u)}>{t('users.lift')}</button>
+            {:else if u.role === 'member'}
+              <button class="link danger" onclick={() => suspend(u)}>{t('users.suspend')}</button>
+            {/if}
           </div>
         {/if}
       </div>
@@ -114,6 +168,13 @@
     text-transform: uppercase;
     letter-spacing: 0.06em;
     font-weight: 400;
+  }
+  .stopped {
+    margin-top: 4px;
+    padding-left: 8px;
+    border-left: 2px solid var(--danger);
+    font-size: var(--fs-sm);
+    color: var(--fg-dim);
   }
   .umeta {
     font-size: var(--fs-xs);

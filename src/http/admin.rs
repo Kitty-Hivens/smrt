@@ -1,5 +1,5 @@
 use super::ApiError;
-use crate::accounts::{Identity, PackLevel, UploadRow, UserRow};
+use crate::accounts::{Identity, PackLevel, Role, UploadRow, UserRow};
 use crate::authoring::{
     ResolveReport, ValidateReport, modrinth, pack_graph, reconstruct_config, resolve_pack, validate,
 };
@@ -47,6 +47,10 @@ fn operator_router(state: AppState) -> Router {
         .route("/v1/cache/github", post(ingest_github))
         .route("/v1/users", get(list_users))
         .route("/v1/users/{uid}/role", post(set_user_role))
+        .route(
+            "/v1/users/{uid}/suspension",
+            post(suspend_account).delete(lift_suspension),
+        )
         .route("/v1/uploads", get(list_uploads))
         .route("/v1/uploads/{id}/approve", post(approve_upload))
         .route("/v1/uploads/{id}/reject", post(reject_upload))
@@ -216,6 +220,84 @@ async fn list_users(State(state): State<AppState>) -> Result<Json<Vec<UserRow>>,
 #[derive(serde::Deserialize)]
 struct RoleReq {
     role: String,
+}
+
+#[derive(serde::Deserialize)]
+struct SuspendReq {
+    /// What the person is told when they try to write. Written for them.
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+/// Stop an account from putting anything on the mirror.
+///
+/// The operators' answer, distinct from a pack's own block: a pack's keepers
+/// decide who writes in their discussion, and no block on one pack answers
+/// somebody whose pack was itself the offence.
+///
+/// It bars writing everywhere and touches reading nowhere. An operator cannot
+/// be suspended -- the rung is the mirror's, and one operator silencing another
+/// is a fight the gate should not host; demote them first if that is really the
+/// intent.
+async fn suspend_account(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(uid): Path<i64>,
+    Json(req): Json<SuspendReq>,
+) -> Result<StatusCode, ApiError> {
+    if uid == identity.uid {
+        return Err(ApiError::BadRequest(
+            "suspending yourself would say nothing".into(),
+        ));
+    }
+    let reason = tidy_reason(req.reason.as_deref())?;
+    let acc = state.accounts.clone();
+    let theirs = tokio::task::spawn_blocking(move || acc.identity_of(uid))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("user task: {e}")))??;
+    if theirs.map(|i| i.role >= Role::Admin).unwrap_or(false) {
+        return Err(ApiError::BadRequest(
+            "that account runs the mirror; take the rung away first".into(),
+        ));
+    }
+    let acc = state.accounts.clone();
+    let (by, note) = (identity.uid, reason.clone());
+    tokio::task::spawn_blocking(move || acc.suspend_account(uid, note.as_deref(), by))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("suspension task: {e}")))?
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    audit(
+        &state,
+        &identity,
+        "account.suspend",
+        Some(&uid.to_string()),
+        reason.as_deref(),
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Let an account put things on the mirror again.
+async fn lift_suspension(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(uid): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let acc = state.accounts.clone();
+    let lifted = tokio::task::spawn_blocking(move || acc.lift_suspension(uid))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("suspension task: {e}")))??;
+    if lifted {
+        audit(
+            &state,
+            &identity,
+            "account.unsuspend",
+            Some(&uid.to_string()),
+            None,
+        )
+        .await;
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Set a user's role (member/admin) by GitHub uid.
@@ -2224,10 +2306,13 @@ struct MyLevel {
 
 #[derive(serde::Serialize)]
 struct Suspension {
-    /// The keepers' words, as the person blocked reads them.
+    /// The words that were written, as the person stopped reads them.
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
     at: i64,
+    /// Whether this is the mirror's own answer rather than one pack's, so the
+    /// panel can say "here" or "anywhere" and mean it.
+    everywhere: bool,
 }
 
 /// What the caller may do to this pack, answered by the same gate that enforces
@@ -2250,12 +2335,29 @@ async fn my_level(
             break;
         }
     }
-    let suspended = block_on(&state, &pack_id, identity.uid)
+    // Whichever stop applies, with the account-wide one first: it is the more
+    // serious, and it is true of every pack rather than this one.
+    let acc = state.accounts.clone();
+    let uid = identity.uid;
+    let account = tokio::task::spawn_blocking(move || acc.suspension_of(uid))
         .await
-        .map(|b| Suspension {
-            reason: b.reason,
-            at: b.blocked_at,
-        });
+        .ok()
+        .and_then(Result::ok)
+        .flatten();
+    let suspended = match account {
+        Some(s) => Some(Suspension {
+            reason: s.reason,
+            at: s.at,
+            everywhere: true,
+        }),
+        None => block_on(&state, &pack_id, identity.uid)
+            .await
+            .map(|b| Suspension {
+                reason: b.reason,
+                at: b.blocked_at,
+                everywhere: false,
+            }),
+    };
     Json(MyLevel { level, suspended })
 }
 
@@ -2379,16 +2481,27 @@ async fn unblock_from_pack(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Refuse a write from somebody this pack has blocked, and say why.
+/// Refuse a write from somebody who has been stopped, and say why.
 ///
-/// The refusal carries the reason the keepers wrote: a door that shuts with no
+/// Two answers, and both are needed: the mirror's operators decide who puts
+/// anything on it at all, and a pack's keepers decide who writes in their
+/// discussion. The account-wide one is checked first because it is the more
+/// serious and the less local: being told about one pack's block while
+/// suspended everywhere would be the wrong sentence.
+///
+/// The refusal carries the reason that was written: a door that shuts with no
 /// word is one somebody can only argue with, and the panel has nothing to show
-/// them but a generic failure. A block with no reason still says it is a block.
+/// them but a generic failure.
 ///
-/// A store that cannot be read blocks nobody: a discussion that stops taking
-/// comments because sqlite hiccupped is a worse failure than one spam message.
-async fn not_blocked(state: &AppState, pack_id: &str, uid: i64) -> Result<(), ApiError> {
-    let Some(block) = block_on(state, pack_id, uid).await else {
+/// A store that cannot be read stops nobody: a discussion that refuses comments
+/// because sqlite hiccupped is a worse failure than one spam message.
+async fn not_silenced(
+    state: &AppState,
+    identity: &Identity,
+    pack_id: &str,
+) -> Result<(), ApiError> {
+    super::auth::not_suspended(state, identity).await?;
+    let Some(block) = block_on(state, pack_id, identity.uid).await else {
         return Ok(());
     };
     Err(ApiError::Refused(match block.reason.as_deref() {
@@ -2530,7 +2643,7 @@ async fn open_issue(
     if !is_published(&state, &pack_id).await {
         super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     }
-    not_blocked(&state, &pack_id, identity.uid).await?;
+    not_silenced(&state, &identity, &pack_id).await?;
     within_rate(&state, "threads", identity.uid).await?;
     let title = trimmed(&req.title, "an issue needs a title")?;
     let id = open_thread(
@@ -2560,7 +2673,7 @@ async fn open_proposal(
             "a pack cannot propose to itself; commit instead".into(),
         ));
     }
-    not_blocked(&state, &pack_id, identity.uid).await?;
+    not_silenced(&state, &identity, &pack_id).await?;
     within_rate(&state, "threads", identity.uid).await?;
     let title = trimmed(&req.title, "a proposal needs a title")?;
     let commit = match req.source_commit {
@@ -2684,7 +2797,7 @@ async fn post_comment(
     if !may_read_threads(&state, &identity, &t.pack_id).await {
         return Err(ApiError::Forbidden);
     }
-    not_blocked(&state, &t.pack_id, identity.uid).await?;
+    not_silenced(&state, &identity, &t.pack_id).await?;
     within_rate(&state, "comments", identity.uid).await?;
     let body = trimmed(&req.body, "an empty comment says nothing")?;
     if body.chars().count() > 4000 {

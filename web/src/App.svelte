@@ -18,7 +18,13 @@
   import Toaster from './views/ui/Toaster.svelte';
   import DialogHost from './views/DialogHost.svelte';
 
-  type Me = { uid: number; login: string; role: string; accepted_terms: boolean };
+  type Me = {
+    uid: number;
+    login: string;
+    role: string;
+    accepted_terms: boolean;
+    suspension?: { reason?: string; by_uid: number; by_login?: string; at: number };
+  };
   // undefined = still checking; null = a guest (not signed in); object = identity
   let me = $state<Me | null | undefined>(undefined);
   let showLogin = $state(false);

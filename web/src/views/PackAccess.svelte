@@ -9,6 +9,7 @@
   import { notifyFail, toasts } from '../lib/toasts.svelte';
   import { t } from '../lib/i18n.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
+  import { nameOf as decidedBy } from '../lib/people';
   import type { PackBlock, PackGrant, PackLevel } from '../lib/types';
 
   let {
@@ -105,14 +106,6 @@
     } finally {
       working = false;
     }
-  }
-
-  /// Who decided a row, by name where the mirror knows it. Uid 0 is the
-  /// mirror's own break-glass hand rather than a person, and a bare number in a
-  /// list of who is answerable reads like a bug.
-  function decidedBy(uid: number, login?: string): string {
-    if (login) return login;
-    return uid === 0 ? t('common.operator') : t('acc.unknownUser', { uid });
   }
 
   function when(at: number): string {

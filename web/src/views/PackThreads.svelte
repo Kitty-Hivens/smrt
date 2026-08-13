@@ -39,7 +39,7 @@
   let next = $state<string | null>(null);
   // Why this reader may not write here, when they may not -- asked once when the
   // list opens, so the report button is absent rather than refused.
-  let suspended = $state<{ reason?: string; at: number } | null>(null);
+  let suspended = $state<{ reason?: string; at: number; everywhere: boolean } | null>(null);
   let loading = $state(true);
   let failed = $state(false);
   let showAll = $state(false);
@@ -176,7 +176,11 @@
 
   {#if suspended}
     <p class="muted small suspended">
-      {suspended.reason ? t('thr.suspendedWhy', { reason: suspended.reason }) : t('thr.suspended')}
+      {#if suspended.everywhere}
+        {suspended.reason ? t('thr.stopped', { reason: suspended.reason }) : t('thr.stoppedPlain')}
+      {:else}
+        {suspended.reason ? t('thr.suspendedWhy', { reason: suspended.reason }) : t('thr.suspended')}
+      {/if}
     </p>
   {/if}
 
