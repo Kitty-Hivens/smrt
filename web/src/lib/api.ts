@@ -370,7 +370,7 @@ export const api = {
   // guessed from the pack id -- the panel used to hide merge and moderation
   // from everybody who reached a pack by grant.
   myPackLevel: (id: string) =>
-    getJson<{ level?: PackLevel }>(
+    getJson<{ level?: PackLevel; suspended?: { reason?: string; at: number } }>(
       `/v1/authoring/packs/${encodeURIComponent(id)}/access/mine`,
     ),
   // Who this pack has stopped from writing on it. Hiding a comment answers what

@@ -79,7 +79,9 @@ having -- so the pack's keepers need a way to say "not you" that outlasts the
 message they just took down. A block is stored beside the access list, refuses
 writes (a report, a proposal, a comment) and nothing else, and never touches
 reading: it cannot be used to erase somebody from a record they are already part
-of. It is moderation, so it sits at `edit` rather than `own`, next to hiding a
+of. It says why: the reason the keepers wrote is served to the person it names
+when they try to write, and to the panel before they try, so the refusal is
+something they can answer or accept rather than a door that shuts silently. It is moderation, so it sits at `edit` rather than `own`, next to hiding a
 comment; the gate refuses to block anybody who keeps the pack, so it can never
 become a way to lock the keepers out of their own discussion.
 

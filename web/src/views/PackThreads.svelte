@@ -37,6 +37,9 @@
 
   let rows = $state<Thread[]>([]);
   let next = $state<string | null>(null);
+  // Why this reader may not write here, when they may not -- asked once when the
+  // list opens, so the report button is absent rather than refused.
+  let suspended = $state<{ reason?: string; at: number } | null>(null);
   let loading = $state(true);
   let failed = $state(false);
   let showAll = $state(false);
@@ -53,6 +56,20 @@
     void tick;
     void showAll;
     void load();
+  });
+
+  $effect(() => {
+    const pack = packId;
+    if (!canWrite) {
+      suspended = null;
+      return;
+    }
+    void (async () => {
+      suspended = await api
+        .myPackLevel(pack)
+        .then((r) => r.suspended ?? null)
+        .catch(() => null);
+    })();
   });
 
   async function load() {
@@ -147,7 +164,7 @@
     <button class="link" onclick={() => (showAll = !showAll)}>
       {showAll ? t('thr.showOpen') : t('thr.showAll')}
     </button>
-    {#if canWrite}
+    {#if canWrite && !suspended}
       <button class="link" onclick={() => (opening = !opening)}>{t('thr.report')}</button>
     {/if}
     {#if forkOf}
@@ -157,7 +174,13 @@
     {/if}
   </div>
 
-  {#if opening && canWrite}
+  {#if suspended}
+    <p class="muted small suspended">
+      {suspended.reason ? t('thr.suspendedWhy', { reason: suspended.reason }) : t('thr.suspended')}
+    </p>
+  {/if}
+
+  {#if opening && canWrite && !suspended}
     <div class="form">
       <input bind:value={title} placeholder={t('thr.titlePlaceholder')} disabled={working} />
       <textarea rows="3" bind:value={body} placeholder={t('thr.bodyPlaceholder')} disabled={working}
@@ -286,6 +309,11 @@
   .empty,
   .small {
     font-size: var(--fs-sm);
+  }
+  .suspended {
+    border-left: 2px solid var(--danger);
+    padding-left: 10px;
+    margin: 0 0 10px;
   }
   .more {
     margin-top: 10px;

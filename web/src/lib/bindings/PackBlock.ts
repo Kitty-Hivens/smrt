@@ -3,9 +3,10 @@
 /**
  * Somebody a pack's keepers have stopped from writing on it.
  *
- * The reason is the keepers' note to themselves and is never served to the
- * person it names -- a block is a decision about a pack, not a verdict handed
- * to somebody.
+ * The reason is written for the person it names: a door that shuts with no
+ * word is one they can only argue with, while a refusal that says why is one
+ * they can answer or accept. It is shown to them when they try to write, and
+ * to whoever moderates the pack.
  */
 export type PackBlock = { github_uid: number, 
 /**

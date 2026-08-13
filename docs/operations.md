@@ -168,6 +168,11 @@ so it cannot be used to erase somebody from a record they are already in, and
 the gate refuses to block anybody who keeps the pack. Both decisions are audit
 entries.
 
+The reason is for the person blocked. A refused write answers `403` with it in
+the message, and `GET .../access/mine` carries it as `suspended` so the panel
+can say so instead of offering a reply box that cannot work. Write it as
+something worth reading: it is what they will see.
+
 ### Proposing a change to somebody else's pack
 
 A fork can be offered back. `POST .../packs/{target}/proposals`

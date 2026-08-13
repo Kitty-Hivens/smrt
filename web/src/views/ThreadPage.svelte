@@ -39,6 +39,10 @@
   // gate knows which is which.
   let me = $state<{ uid: number; login: string } | null>(null);
   let level = $state<PackLevel | null>(null);
+  // Why this reader may not write here, when they may not. Asked for rather than
+  // discovered by being refused: a reply box that cannot work is a worse way to
+  // learn it than a line saying so.
+  let suspended = $state<{ reason?: string; at: number } | null>(null);
 
   const thread = $derived(view?.thread ?? null);
   const isProposal = $derived(thread?.kind === 'proposal');
@@ -87,10 +91,11 @@
       // The diff is the reviewer's half of a proposal; an issue has none, and a
       // settled proposal's offer is history rather than a question.
       diff = view.thread.kind === 'proposal' ? await api.threadDiff(id).catch(() => null) : null;
-      level = await api
+      const standing = await api
         .myPackLevel(view.thread.pack_id)
-        .then((r) => r.level ?? null)
-        .catch(() => null);
+        .catch(() => ({ level: undefined, suspended: undefined }));
+      level = standing.level ?? null;
+      suspended = standing.suspended ?? null;
     } catch (e) {
       failed = true;
       notifyFail(e);
@@ -289,7 +294,15 @@
         <button class="link more" onclick={readMore} disabled={working}>{t('thr.more')}</button>
       {/if}
 
-      {#if me}
+      {#if suspended}
+        <!-- Said in the discussion rather than in a toast: it is a standing
+             fact about this pack, not a failed request. -->
+        <p class="muted small say suspended">
+          {suspended.reason
+            ? t('thr.suspendedWhy', { reason: suspended.reason })
+            : t('thr.suspended')}
+        </p>
+      {:else if me}
         <div class="say">
           <textarea
             rows="3"
@@ -424,6 +437,10 @@
     margin: 4px 0 0;
     font-size: var(--fs-sm);
     font-style: italic;
+  }
+  .suspended {
+    border-left: 2px solid var(--danger);
+    padding-left: 10px;
   }
   .more {
     align-self: flex-start;

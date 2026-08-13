@@ -142,8 +142,9 @@ CREATE INDEX IF NOT EXISTS idx_threads_by ON pack_threads(by_uid);
 --
 -- A block bars writing (a report, a proposal, a comment) and nothing else: a
 -- published pack's discussion stays readable, so a block can never quietly
--- erase somebody from a record they are already part of. `reason` is for the
--- person deciding, not for the blocked -- it is never served to them.
+-- erase somebody from a record they are already part of. `reason` is written
+-- for the person it names: a door that shuts with no word is one they can only
+-- argue with, so it is served to them when they try to write.
 CREATE TABLE IF NOT EXISTS pack_blocks (
     pack_id    TEXT NOT NULL,
     github_uid INTEGER NOT NULL,

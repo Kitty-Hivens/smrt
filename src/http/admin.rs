@@ -2215,6 +2215,19 @@ struct MyLevel {
     /// The caller's level here, or absent when they have none.
     #[serde(skip_serializing_if = "Option::is_none")]
     level: Option<PackLevel>,
+    /// Why they may not write, when they may not. A panel that only learns this
+    /// from a refused request offers a reply box that cannot work and then
+    /// explains itself in a toast; this is how it can say so before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suspended: Option<Suspension>,
+}
+
+#[derive(serde::Serialize)]
+struct Suspension {
+    /// The keepers' words, as the person blocked reads them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    at: i64,
 }
 
 /// What the caller may do to this pack, answered by the same gate that enforces
@@ -2237,7 +2250,13 @@ async fn my_level(
             break;
         }
     }
-    Json(MyLevel { level })
+    let suspended = block_on(&state, &pack_id, identity.uid)
+        .await
+        .map(|b| Suspension {
+            reason: b.reason,
+            at: b.blocked_at,
+        });
+    Json(MyLevel { level, suspended })
 }
 
 // ── blocking somebody from a pack's discussion ──────────────────────────────
@@ -2339,21 +2358,32 @@ async fn unblock_from_pack(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Refuse a write from somebody this pack has blocked.
+/// Refuse a write from somebody this pack has blocked, and say why.
+///
+/// The refusal carries the reason the keepers wrote: a door that shuts with no
+/// word is one somebody can only argue with, and the panel has nothing to show
+/// them but a generic failure. A block with no reason still says it is a block.
 ///
 /// A store that cannot be read blocks nobody: a discussion that stops taking
 /// comments because sqlite hiccupped is a worse failure than one spam message.
 async fn not_blocked(state: &AppState, pack_id: &str, uid: i64) -> Result<(), ApiError> {
+    let Some(block) = block_on(state, pack_id, uid).await else {
+        return Ok(());
+    };
+    Err(ApiError::Refused(match block.reason.as_deref() {
+        Some(reason) => format!("writing here is suspended. reason: {reason}"),
+        None => "writing here is suspended".into(),
+    }))
+}
+
+/// This person's block on this pack, if there is one.
+async fn block_on(state: &AppState, pack_id: &str, uid: i64) -> Option<crate::accounts::PackBlock> {
     let acc = state.accounts.clone();
     let pack = pack_id.to_string();
-    let blocked = tokio::task::spawn_blocking(move || acc.is_blocked(&pack, uid))
+    tokio::task::spawn_blocking(move || acc.block_on(&pack, uid))
         .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("block task: {e}")))?
-        .unwrap_or(false);
-    if blocked {
-        return Err(ApiError::Forbidden);
-    }
-    Ok(())
+        .ok()?
+        .ok()?
 }
 
 /// How much somebody may say in a window, before the mirror asks them to slow
