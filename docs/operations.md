@@ -171,7 +171,10 @@ entries.
 The reason is for the person blocked. A refused write answers `403` with it in
 the message, and `GET .../access/mine` carries it as `suspended` so the panel
 can say so instead of offering a reply box that cannot work. Write it as
-something worth reading: it is what they will see.
+something worth reading: it is what they will see. It is stored as one line --
+whitespace collapses -- and bounded at 300 characters, because it rides in every
+refusal that account gets and sits in a row of a list; the long version of an
+argument belongs on the thread.
 
 ### Proposing a change to somebody else's pack
 

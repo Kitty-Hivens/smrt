@@ -2306,12 +2306,7 @@ async fn block_from_pack(
     }
     let acc = state.accounts.clone();
     let (pack, by, uid) = (pack_id.clone(), identity.uid, req.github_uid);
-    let reason = req
-        .reason
-        .as_deref()
-        .map(str::trim)
-        .filter(|r| !r.is_empty())
-        .map(str::to_string);
+    let reason = tidy_reason(req.reason.as_deref())?;
     let note = reason.clone();
     tokio::task::spawn_blocking(move || acc.block_from_pack(&pack, uid, note.as_deref(), by))
         .await
@@ -2330,6 +2325,32 @@ async fn block_from_pack(
     .await;
     state.events.pack(&pack_id, "access");
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// How long a block's reason may be. It is a label, not an essay: it rides in
+/// every refusal that account gets and sits in a row of a list, so a reason that
+/// needs more room than this is a comment on the thread, not a reason.
+const MAX_BLOCK_REASON: usize = 300;
+
+/// The reason as it will be read: one line, trimmed, and bounded.
+///
+/// Whitespace is collapsed rather than preserved because every place it appears
+/// is a single line -- a notice where a reply box was, a row in the block list
+/// -- and a reason with newlines in it would break both while looking fine to
+/// whoever typed it.
+fn tidy_reason(raw: Option<&str>) -> Result<Option<String>, ApiError> {
+    let Some(text) = raw else { return Ok(None) };
+    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one_line.is_empty() {
+        return Ok(None);
+    }
+    if one_line.chars().count() > MAX_BLOCK_REASON {
+        return Err(ApiError::BadRequest(format!(
+            "that reason is longer than {MAX_BLOCK_REASON} characters; the thread is where the \
+             long version goes"
+        )));
+    }
+    Ok(Some(one_line))
 }
 
 /// Let somebody write here again.
@@ -2919,9 +2940,40 @@ struct StaticListing {
 
 #[cfg(test)]
 mod tests {
-    use super::{Precondition, check_precondition, fill_needed, github_asset_url, precondition};
+    use super::{
+        MAX_BLOCK_REASON, Precondition, check_precondition, fill_needed, github_asset_url,
+        precondition, tidy_reason,
+    };
     use crate::domain::{DeclaredMod, LoaderSpec, PackConfig, PackTier, SourceDecl, Visibility};
     use axum::http::{HeaderMap, HeaderValue, header};
+
+    // Whatever a keeper types is what somebody else reads on their own screen,
+    // in a place with room for one line.
+    #[test]
+    fn a_reason_is_one_bounded_line_or_nothing() {
+        assert_eq!(tidy_reason(None).unwrap(), None);
+        assert_eq!(
+            tidy_reason(Some("   ")).unwrap(),
+            None,
+            "blank says nothing"
+        );
+        assert_eq!(
+            tidy_reason(Some("  ПЕТУХ  ")).unwrap().as_deref(),
+            Some("ПЕТУХ")
+        );
+        assert_eq!(
+            tidy_reason(Some("flooding\n\nthree threads\tin a minute"))
+                .unwrap()
+                .as_deref(),
+            Some("flooding three threads in a minute"),
+            "a notice and a table row are both one line"
+        );
+        // counted in characters, not bytes: a Cyrillic reason is not half as
+        // long as a Latin one
+        let long = "я".repeat(MAX_BLOCK_REASON);
+        assert!(tidy_reason(Some(&long)).is_ok());
+        assert!(tidy_reason(Some(&"я".repeat(MAX_BLOCK_REASON + 1))).is_err());
+    }
 
     fn headers(if_match: &str) -> HeaderMap {
         let mut h = HeaderMap::new();
