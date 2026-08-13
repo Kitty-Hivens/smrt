@@ -477,6 +477,7 @@ export const en = {
   'acc.hint':
     'View reads a draft, its history and its reports. Edit writes the config, commits and builds. Own also hands out and takes away access, changes visibility, and deletes the pack.',
 
+  'hist.title': 'History',
   'hist.commit': 'Commit',
   'hist.messagePlaceholder': 'What changed, and why',
   'hist.uncommitted': '{n} change(s) since the last commit',
@@ -696,6 +697,12 @@ export const en = {
   'inbox.title': 'What you were told',
   'inbox.none': 'Nothing yet. Reports you open and packs you keep report here.',
   'inbox.readAll': 'mark all read',
+  'inbox.feedShow': 'read this outside the panel',
+  'inbox.feedLead': 'Your own address, for a feed reader. It is the password -- anybody holding it reads this list. Rotating retires the old one.',
+  'inbox.copy': 'copy',
+  'inbox.copied': 'copied',
+  'inbox.feedRotate': 'new address',
+  'inbox.feedRotateAsk': 'Retire this address and mint another? Any reader using the old one stops receiving.',
   'inbox.said': '{who} said something',
   'inbox.opened': '{who} opened this on {pack}',
   'inbox.settled': '{who} marked it {status}',

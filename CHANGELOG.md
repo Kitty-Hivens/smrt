@@ -209,6 +209,20 @@ version section when a release is tagged.
 
 ### Added
 
+- Notifications can be read outside the panel, without the mirror reaching
+  anybody. `GET /v1/feed.atom?key=<key>` is the account's own list as Atom: one
+  address per account, minted when it is first asked for and retired by rotating
+  it. Nothing leaves this machine to deliver it -- no address of anybody's is
+  stored, no third party is asked, and an account that never wants a feed never
+  has a key to leak. A feed reader has no session and cannot be given one, so
+  the address is the credential; the panel says so where it hands it over.
+- The list of past checkpoints opens as a dock over whatever is being worked on,
+  from any tab of the editor, instead of living inside the Build tab. It is a
+  tool rather than a place: consulted while doing something else, so the editor
+  underneath never reflows and the pack does not have to be left to read what
+  happened to it. Declaring a checkpoint stays beside the build button, because
+  a build is made from a commit and the same sentence serves both acts.
+
 - The mirror's operators can stop an account, which a pack's own block cannot
   reach. A block answers who writes in one discussion; it says nothing about
   somebody whose pack was itself the offence. A suspension bars that account

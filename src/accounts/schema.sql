@@ -173,6 +173,18 @@ CREATE TABLE IF NOT EXISTS pack_blocks (
 );
 CREATE INDEX IF NOT EXISTS idx_pack_blocks_uid ON pack_blocks(github_uid);
 
+-- The address somebody's own notifications can be read at from outside the
+-- panel. A feed reader has no session and cannot be given one, so the key in the
+-- address is what identifies the account -- which makes it a secret in a URL:
+-- one key per account, rotatable, and rotating invalidates whatever was handed
+-- out before. It grants exactly one thing, reading that account's own list, and
+-- is stored apart from the sessions so it can be rotated without touching them.
+CREATE TABLE IF NOT EXISTS feed_keys (
+    github_uid INTEGER PRIMARY KEY,
+    key        TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL
+);
+
 -- Somebody was answered and does not know it. A discussion where a reply
 -- reaches nobody is a discussion people stop reading: the report sits open
 -- because its author never learned it was answered, and the pack's keepers

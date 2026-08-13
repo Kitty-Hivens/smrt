@@ -562,6 +562,75 @@ mod tests {
     // Two stops that answer different questions: a pack's keepers decide who
     // writes in their discussion, the mirror's operators decide who puts
     // anything on it at all. Neither touches reading.
+    // A feed reader has no session, so the address is the credential. What
+    // matters is that it names exactly one account's own list, that an unknown
+    // one says nothing, and that rotating retires the old one.
+    #[tokio::test]
+    async fn a_feed_address_is_one_accounts_own_and_can_be_retired() {
+        use axum::http::StatusCode;
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path());
+        let cfg = sample_pack("Create", crate::domain::Visibility::Published);
+        state
+            .storage
+            .save_pack_config("Create", &cfg)
+            .await
+            .unwrap();
+        state
+            .storage
+            .save_pack_summary(&crate::authoring::make_pack_summary(&cfg, "0.1.0"))
+            .await
+            .unwrap();
+        let reporter = state.accounts.sign_in_github(42, "reporter", None).unwrap();
+        let other = state.accounts.sign_in_github(43, "other", None).unwrap();
+        let app = router(state.clone());
+
+        call(
+            &app,
+            "POST",
+            "/v1/authoring/packs/Create/issues",
+            Some(&reporter),
+            Some(r#"{"title":"a mod crashes"}"#),
+        )
+        .await;
+        call(
+            &app,
+            "POST",
+            "/v1/authoring/threads/1/comments",
+            Some(&other),
+            Some(r#"{"body":"same here"}"#),
+        )
+        .await;
+
+        let (_, minted) = read(&app, "/v1/me/feed-key", Some(&reporter)).await;
+        let key = minted
+            .rsplit("key=")
+            .next()
+            .unwrap()
+            .trim_end_matches("\"}")
+            .to_string();
+        let (status, feed) = read(&app, &format!("/v1/feed.atom?key={key}"), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(feed.contains("<feed"), "{feed}");
+        assert!(feed.contains("a mod crashes"), "their own list: {feed}");
+
+        // nobody else's, and nothing at all for a key that names no account
+        assert_eq!(
+            read(&app, "/v1/feed.atom?key=not-a-key", None).await.0,
+            StatusCode::NOT_FOUND
+        );
+
+        // rotating retires the address that was handed out
+        let (_, rotated) = write(&app, "POST", "/v1/me/feed-key", Some(&reporter), None).await;
+        assert!(!rotated.contains(&key), "a new address: {rotated}");
+        assert_eq!(
+            read(&app, &format!("/v1/feed.atom?key={key}"), None)
+                .await
+                .0,
+            StatusCode::NOT_FOUND
+        );
+    }
+
     #[tokio::test]
     async fn a_suspended_account_writes_nowhere_and_still_reads_everywhere() {
         use axum::http::StatusCode;

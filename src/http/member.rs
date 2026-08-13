@@ -29,6 +29,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/me/accept-terms", post(accept_terms))
         .route("/v1/me/notifications", get(my_notifications))
         .route("/v1/me/notifications/read", post(read_notifications))
+        .route("/v1/me/feed-key", get(my_feed_key).post(rotate_my_feed_key))
         .route("/v1/events", get(mirror_events))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BODY))
         .layer(from_fn_with_state(
@@ -168,6 +169,51 @@ async fn my_notifications(
         resp.headers_mut().insert(axum::http::header::LINK, value);
     }
     Ok(resp)
+}
+
+#[derive(serde::Serialize)]
+struct FeedKey {
+    /// The whole address, not just the key: what somebody pastes into a reader.
+    url: String,
+}
+
+/// Where this account's notifications can be read from outside the panel.
+///
+/// Minted on first ask rather than at sign-up: an account that never wants a
+/// feed never has a key to leak.
+async fn my_feed_key(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+) -> Result<Json<FeedKey>, ApiError> {
+    feed_key(&state, identity.uid, false).await
+}
+
+/// Retire the address and mint another, for a key that got out.
+async fn rotate_my_feed_key(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+) -> Result<Json<FeedKey>, ApiError> {
+    feed_key(&state, identity.uid, true).await
+}
+
+async fn feed_key(state: &AppState, uid: i64, rotate: bool) -> Result<Json<FeedKey>, ApiError> {
+    let acc = state.accounts.clone();
+    let key = tokio::task::spawn_blocking(move || {
+        if rotate {
+            acc.rotate_feed_key(uid)
+        } else {
+            acc.feed_key(uid)
+        }
+    })
+    .await
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("feed key task: {e}")))?
+    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    Ok(Json(FeedKey {
+        url: format!(
+            "{}/v1/feed.atom?key={key}",
+            state.config.mirror_base.trim_end_matches('/')
+        ),
+    }))
 }
 
 #[derive(Deserialize)]

@@ -813,6 +813,10 @@ export const api = {
     getWithLink<{ unread: number; rows: NotificationRow[] }>(url),
   markNotificationsRead: (id?: number) =>
     send('POST', '/v1/me/notifications/read', { id: id ?? null }),
+  // Where this account's notifications can be read from outside the panel. The
+  // address is the credential -- minted on first ask, retired by rotating.
+  feedKey: () => getJson<{ url: string }>('/v1/me/feed-key'),
+  rotateFeedKey: () => postJson<{ url: string }>('/v1/me/feed-key', {}),
   // The admin token no longer authenticates a human. A valid one comes back 410
   // so the panel can say it's deprecated; anything else is a plain rejection.
   async login(token: string): Promise<'deprecated' | 'rejected'> {
