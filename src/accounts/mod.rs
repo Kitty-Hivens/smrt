@@ -286,6 +286,30 @@ pub struct UserRow {
     pub created_at: i64,
     #[ts(type = "number")]
     pub last_login_at: i64,
+    /// Present while the account is stopped from putting anything on the mirror.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub suspension: Option<Suspension>,
+}
+
+/// An account stopped by the mirror's operators, and why.
+///
+/// The reason is written for the person it names: they read it when they try to
+/// write and on their own page, which is what makes it something they can
+/// answer rather than a door that shuts silently.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct Suspension {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reason: Option<String>,
+    #[ts(type = "number")]
+    pub by_uid: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub by_login: Option<String>,
+    #[ts(type = "number")]
+    pub at: i64,
 }
 
 /// A member jar upload in the moderation queue.
@@ -736,6 +760,58 @@ impl Accounts {
         Ok(())
     }
 
+    /// Stop an account from putting anything on the mirror, or re-stamp an
+    /// existing suspension with a fresh reason and decider. Refuses the reserved
+    /// break-glass uid. Blocking; wrap in `spawn_blocking`.
+    pub fn suspend_account(&self, github_uid: i64, reason: Option<&str>, by: i64) -> Result<()> {
+        if github_uid == BREAK_GLASS_UID {
+            anyhow::bail!("uid 0 is reserved");
+        }
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard.execute(
+            "INSERT INTO account_suspensions (github_uid, reason, by_uid, at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(github_uid) DO UPDATE SET
+                 reason = excluded.reason,
+                 by_uid = excluded.by_uid,
+                 at = excluded.at",
+            params![github_uid, reason, by, unix_now()],
+        )?;
+        Ok(())
+    }
+
+    /// Let an account back. `false` when it was not suspended.
+    pub fn lift_suspension(&self, github_uid: i64) -> Result<bool> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let gone = guard.execute(
+            "DELETE FROM account_suspensions WHERE github_uid = ?1",
+            params![github_uid],
+        )?;
+        Ok(gone > 0)
+    }
+
+    /// This account's suspension, with the reason it names, or `None`.
+    pub fn suspension_of(&self, github_uid: i64) -> Result<Option<Suspension>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard
+            .query_row(
+                "SELECT s.reason, s.by_uid, u.login, s.at
+                 FROM account_suspensions s LEFT JOIN users u ON u.github_uid = s.by_uid
+                 WHERE s.github_uid = ?1",
+                params![github_uid],
+                |r| {
+                    Ok(Suspension {
+                        reason: r.get(0)?,
+                        by_uid: r.get(1)?,
+                        by_login: r.get(2)?,
+                        at: r.get(3)?,
+                    })
+                },
+            )
+            .optional()
+            .context("read account suspension")
+    }
+
     /// The mirror's operators, for the packs whose keepers are exactly that: an
     /// official pack has no namespace owner, so admin is who answers for it.
     pub fn operator_uids(&self) -> Result<Vec<i64>> {
@@ -1125,18 +1201,32 @@ impl Accounts {
     pub fn list_users(&self) -> Result<Vec<UserRow>> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
         let mut stmt = guard.prepare(
-            "SELECT github_uid, login, role, created_at, last_login_at
-             FROM users WHERE github_uid != 0
-             ORDER BY last_login_at DESC",
+            "SELECT u.github_uid, u.login, u.role, u.created_at, u.last_login_at,
+                    s.reason, s.by_uid, b.login, s.at
+             FROM users u
+             LEFT JOIN account_suspensions s ON s.github_uid = u.github_uid
+             LEFT JOIN users b ON b.github_uid = s.by_uid
+             WHERE u.github_uid != 0
+             ORDER BY u.last_login_at DESC",
         )?;
         let rows = stmt
             .query_map([], |r| {
+                let at: Option<i64> = r.get(8)?;
                 Ok(UserRow {
                     github_uid: r.get(0)?,
                     login: r.get(1)?,
                     role: r.get(2)?,
                     created_at: r.get(3)?,
                     last_login_at: r.get(4)?,
+                    suspension: match at {
+                        Some(at) => Some(Suspension {
+                            reason: r.get(5)?,
+                            by_uid: r.get(6)?,
+                            by_login: r.get(7)?,
+                            at,
+                        }),
+                        None => None,
+                    },
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

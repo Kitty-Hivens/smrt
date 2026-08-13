@@ -211,17 +211,20 @@ async fn me(State(state): State<AppState>, req: Request) -> Response {
     };
     let acc = state.accounts.clone();
     let uid = id.uid;
-    let accepted_terms = tokio::task::spawn_blocking(move || acc.terms_accepted(uid))
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or(false);
+    let (accepted_terms, suspension) =
+        tokio::task::spawn_blocking(move || (acc.terms_accepted(uid), acc.suspension_of(uid)))
+            .await
+            .unwrap_or_else(|_| (Ok(false), Ok(None)));
     Json(json!({
         "authenticated": true,
         "uid": id.uid,
         "login": id.login,
         "role": id.role.as_str(),
-        "accepted_terms": accepted_terms,
+        "accepted_terms": accepted_terms.unwrap_or(false),
+        // Said here rather than only when a write is refused: it is a standing
+        // fact about the account, and a panel that learns it by being refused
+        // offers controls that cannot work.
+        "suspension": suspension.ok().flatten(),
     }))
     .into_response()
 }
@@ -335,6 +338,13 @@ pub(crate) async fn authorize(
     pack_id: &str,
     need: PackLevel,
 ) -> Result<(), ApiError> {
+    // A suspended account may still read everything it could read before --
+    // being stopped is not a way to unpublish what somebody already made -- but
+    // it puts nothing new on the mirror. Checked here rather than at each of the
+    // forty writes behind this gate, which is the point of having one gate.
+    if need >= PackLevel::Edit {
+        not_suspended(state, identity).await?;
+    }
     if let Some(level) = inherent_level(identity, pack_id) {
         return (level >= need).then_some(()).ok_or(ApiError::Forbidden);
     }
@@ -414,6 +424,30 @@ pub(crate) async fn filter_may(
             None => granted.get(id).is_some_and(|level| *level >= need),
         })
         .collect()
+}
+
+/// Refuse a write from an account the operators have stopped, and say why.
+///
+/// Operators are never suspended (the gate that sets one refuses them), so this
+/// costs a lookup only for the people it can actually apply to.
+pub(crate) async fn not_suspended(state: &AppState, identity: &Identity) -> Result<(), ApiError> {
+    if identity.role >= Role::Admin {
+        return Ok(());
+    }
+    let acc = state.accounts.clone();
+    let uid = identity.uid;
+    let found = tokio::task::spawn_blocking(move || acc.suspension_of(uid))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten();
+    let Some(suspension) = found else {
+        return Ok(());
+    };
+    Err(ApiError::Refused(match suspension.reason.as_deref() {
+        Some(reason) => format!("this account is suspended. reason: {reason}"),
+        None => "this account is suspended".into(),
+    }))
 }
 
 /// Gate member content creation on rules-of-use acceptance: `Forbidden` until the

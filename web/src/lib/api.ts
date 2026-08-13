@@ -370,7 +370,7 @@ export const api = {
   // guessed from the pack id -- the panel used to hide merge and moderation
   // from everybody who reached a pack by grant.
   myPackLevel: (id: string) =>
-    getJson<{ level?: PackLevel; suspended?: { reason?: string; at: number } }>(
+    getJson<{ level?: PackLevel; suspended?: { reason?: string; at: number; everywhere: boolean } }>(
       `/v1/authoring/packs/${encodeURIComponent(id)}/access/mine`,
     ),
   // Who this pack has stopped from writing on it. Hiding a comment answers what
@@ -749,6 +749,11 @@ export const api = {
   auditPage: (url: string) => getPage<AuditRow>(url),
   setUserRole: (uid: number, role: string) =>
     send('POST', `/v1/users/${uid}/role`, { role }),
+  // The operators' stop, distinct from a pack's own block: it bars writing
+  // everywhere and touches reading nowhere.
+  suspendAccount: (uid: number, reason?: string) =>
+    send('POST', `/v1/users/${uid}/suspension`, { reason: reason ?? null }),
+  liftSuspension: (uid: number) => send('DELETE', `/v1/users/${uid}/suspension`),
   setVisibility: (id: string, visibility: Visibility) =>
     send('PUT', `/v1/authoring/packs/${encodeURIComponent(id)}/visibility`, { visibility }),
   deletePack: (id: string) => send('DELETE', `/v1/authoring/packs/${encodeURIComponent(id)}`),
@@ -785,6 +790,7 @@ export const api = {
     login: string;
     role: string;
     accepted_terms: boolean;
+    suspension?: { reason?: string; by_uid: number; by_login?: string; at: number };
   } | null> {
     const r = await fetch('/v1/me', { credentials: 'include' });
     return r.ok ? r.json() : null;

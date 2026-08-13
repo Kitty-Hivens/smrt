@@ -209,6 +209,17 @@ version section when a release is tagged.
 
 ### Added
 
+- The mirror's operators can stop an account, which a pack's own block cannot
+  reach. A block answers who writes in one discussion; it says nothing about
+  somebody whose pack was itself the offence. A suspension bars that account
+  from putting anything on the mirror -- authoring or forking a pack, uploading
+  a jar, opening a thread, saying anything on one -- and touches reading
+  nowhere, because it is not a way to unpublish what somebody already made. It
+  is enforced in the access gate itself rather than at each of the forty writes
+  behind it, it carries the reason the operator wrote, and the account is told
+  in a standing bar instead of by controls that look usable and then refuse.
+  Operators cannot be suspended: take the rung away first.
+
 - Being answered reaches the person it is for. A discussion where a reply
   reaches nobody is one people stop reading: a report sat open because its
   author never learned it had been answered, and a pack's keepers learned about

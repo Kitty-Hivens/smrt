@@ -134,6 +134,24 @@ CREATE TABLE IF NOT EXISTS pack_threads (
 CREATE INDEX IF NOT EXISTS idx_threads_pack ON pack_threads(pack_id, status);
 CREATE INDEX IF NOT EXISTS idx_threads_by ON pack_threads(by_uid);
 
+-- An account the mirror's operators have stopped, as distinct from a pack's own
+-- block below. The two answer different questions and both are needed: a pack's
+-- keepers decide who writes in their discussion, and the operators decide who
+-- puts content on the mirror at all -- somebody whose pack was the offence
+-- cannot be answered by blocking them from one discussion.
+--
+-- It bars writing everywhere: authoring or forking a pack, uploading a jar,
+-- opening a thread, saying anything on one. Reading is untouched, as with a
+-- pack block: a suspension is not a way to unpublish what somebody already
+-- said. The reason is written for the person it names -- they are shown it when
+-- they try to write and on their own page.
+CREATE TABLE IF NOT EXISTS account_suspensions (
+    github_uid INTEGER PRIMARY KEY,
+    reason     TEXT,
+    by_uid     INTEGER NOT NULL,
+    at         INTEGER NOT NULL
+);
+
 -- Who a pack's keepers have asked to stop. Hiding a comment answers what was
 -- already said; this answers the next one, which is the difference between
 -- cleaning up after somebody and not hosting them. It sits beside `pack_access`

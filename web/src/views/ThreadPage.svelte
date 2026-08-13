@@ -9,6 +9,7 @@
   import { t } from '../lib/i18n.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
   import { route } from '../lib/route.svelte';
+  import { nameOf as who } from '../lib/people';
   import { tally } from '../lib/changes';
   import ChangeList from './ChangeList.svelte';
   import type { CommitDiff, PackLevel, ThreadView } from '../lib/types';
@@ -42,7 +43,7 @@
   // Why this reader may not write here, when they may not. Asked for rather than
   // discovered by being refused: a reply box that cannot work is a worse way to
   // learn it than a line saying so.
-  let suspended = $state<{ reason?: string; at: number } | null>(null);
+  let suspended = $state<{ reason?: string; at: number; everywhere: boolean } | null>(null);
 
   const thread = $derived(view?.thread ?? null);
   const isProposal = $derived(thread?.kind === 'proposal');
@@ -190,13 +191,6 @@
     });
   }
 
-  /// Whose words these are. Uid 0 is the mirror's own break-glass hand rather
-  /// than a person, and "uid 0" on screen reads like a bug.
-  function who(uid: number, login?: string | null): string {
-    if (login) return login;
-    return uid === 0 ? t('common.operator') : t('acc.unknownUser', { uid });
-  }
-
   function when(at: number): string {
     const d = new Date(at * 1000);
     return Number.isNaN(d.getTime()) ? String(at) : d.toLocaleString();
@@ -298,9 +292,15 @@
         <!-- Said in the discussion rather than in a toast: it is a standing
              fact about this pack, not a failed request. -->
         <p class="muted small say suspended">
-          {suspended.reason
-            ? t('thr.suspendedWhy', { reason: suspended.reason })
-            : t('thr.suspended')}
+          {#if suspended.everywhere}
+            {suspended.reason
+              ? t('thr.stopped', { reason: suspended.reason })
+              : t('thr.stoppedPlain')}
+          {:else}
+            {suspended.reason
+              ? t('thr.suspendedWhy', { reason: suspended.reason })
+              : t('thr.suspended')}
+          {/if}
         </p>
       {:else if me}
         <div class="say">

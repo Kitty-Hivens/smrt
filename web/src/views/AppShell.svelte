@@ -10,7 +10,12 @@
   import Avatar from './Avatar.svelte';
   import NavIcon from './ui/NavIcon.svelte';
 
-  type Me = { uid: number; login: string; role: string };
+  type Me = {
+    uid: number;
+    login: string;
+    role: string;
+    suspension?: { reason?: string; at: number };
+  };
   let {
     me,
     onSignIn,
@@ -139,6 +144,15 @@
   <div class="scrim" class:show={drawerOpen} onclick={closeDrawer} role="presentation"></div>
 
   <div class="main">
+    {#if me?.suspension}
+      <!-- A standing fact about the account, so it stands: a toast would be
+           gone by the time they tried to write something. -->
+      <div class="stopped" role="status">
+        {me.suspension.reason
+          ? t('shell.suspendedWhy', { reason: me.suspension.reason })
+          : t('shell.suspended')}
+      </div>
+    {/if}
     <header class="topbar">
       <!-- work in flight, shown once for the whole app rather than as a spinner
            per view: the mirror spends most of its time waiting on somewhere else -->
@@ -235,6 +249,13 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     box-shadow: none;
+  }
+  .stopped {
+    padding: 10px var(--space-4);
+    background: var(--danger-soft);
+    color: var(--danger);
+    border-bottom: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+    font-size: var(--fs-sm);
   }
   /* how many are waiting, at the end of the row it is read on */
   .badge {
