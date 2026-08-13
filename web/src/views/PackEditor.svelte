@@ -13,12 +13,13 @@
   import { changedPaths, createTouches } from '../lib/touched.svelte';
   import type { LoaderVersions, MinecraftVersions, SpoofReport } from '../lib/types';
   import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
-  import { isDebug, isOperator } from '../lib/roles';
+  import { isDebug } from '../lib/roles';
   import type {
     DeclaredAsset,
     JobStatus,
     PackConfig,
     PackEvent,
+    PackLevel,
     ResolveReport,
     SourceDecl,
     ValidateReport,
@@ -26,6 +27,8 @@
   import BuildConsole from './BuildConsole.svelte';
   import CommitPage from './CommitPage.svelte';
   import PackAccess from './PackAccess.svelte';
+  import PackThreads from './PackThreads.svelte';
+  import ThreadPage from './ThreadPage.svelte';
   import BrandingEditor from './BrandingEditor.svelte';
   import PackGraph from './PackGraph.svelte';
   import JobLog from './JobLog.svelte';
@@ -137,7 +140,7 @@
     }
   }
 
-  type Tab = 'config' | 'branding' | 'graph' | 'build' | 'access';
+  type Tab = 'config' | 'branding' | 'graph' | 'build' | 'threads' | 'access';
   let tab = $state<Tab>('config');
   let previewOpen = $state(false);
   let previewToken = $state(0);
@@ -194,21 +197,21 @@
   // commit -- but this is where the pack's event stream is read, so the fact
   // that it moved is passed down rather than subscribed to twice.
   let historyTick = $state(0);
-  // Whether this viewer may hand out access: the two rules the mirror's gate
-  // knows without a lookup (ADR 0006) -- an admin, or the owner of the
-  // namespace this pack sits in. A granted `own` also qualifies, and the server
-  // is the one that decides; this only shows or hides the controls.
-  let canOwn = $state(false);
+  // What this viewer may do here, asked of the gate that enforces it (ADR
+  // 0006). It used to be guessed from the pack id and the caller's role, which
+  // got the admin and the namespace owner right and hid merging, moderation and
+  // the access list from everybody who reached the pack by grant -- the one case
+  // grants exist for.
+  let level = $state<PackLevel | null>(null);
+  const canOwn = $derived(level === 'own');
+  const canEdit = $derived(level === 'own' || level === 'edit');
   $effect(() => {
     const pack = packId;
     void (async () => {
-      try {
-        const m = await api.me();
-        const mine = pack.startsWith(`u/${m?.uid}/`);
-        canOwn = isOperator(m?.role) || mine;
-      } catch {
-        canOwn = false;
-      }
+      level = await api
+        .myPackLevel(pack)
+        .then((r) => r.level ?? null)
+        .catch(() => null);
     })();
   });
 
@@ -217,6 +220,8 @@
   // The build in flight. Held here because the console is one surface among
   // several in this editor: opening a commit over it must not lose a running
   // build, re-enable the button, and let a second one start.
+  // Bumped when a discussion moves, so the list behind it re-reads.
+  let threadTick = $state(0);
   let buildJobId = $state<string | null>(null);
   let buildBusy = $state(false);
   // Who else has this pack open, from the stream. Names, not a count: "bo is
@@ -1098,6 +1103,7 @@
     { value: 'branding', label: t('pe.tab.branding') },
     { value: 'graph', label: t('pe.tab.graph') },
     { value: 'build', label: t('pe.tab.build') },
+    { value: 'threads', label: t('pe.tab.threads') },
     { value: 'access', label: t('pe.tab.access') },
   ]);
 </script>
@@ -1122,49 +1128,57 @@
     </div>
   {/if}
   <h2 class="ttl mono">{packId}<span class="faint">/{t('pe.edit')}</span></h2>
-  <TabStrip value={tab} tabs={tabItems} ariaLabel={t('pe.edit')} onChange={(v) => (tab = v as Tab)} />
-  <div class="spacer"></div>
-  {#if !loading && cfg && tab === 'config' && revertVersions.length}
-    <span class="revertsel">
-      <Select
-        compact
-        full
-        bind:value={revertPick}
-        options={revertOptions}
-        placeholder={t('pe.revertPick')}
-        title={t('pe.revertTo')}
-        ariaLabel={t('pe.revertTo')}
-        onChange={(v) => {
-          if (v) revertTo(v);
-          revertPick = '';
-        }}
-      />
-    </span>
-  {/if}
-  {#if !loading && cfg && tab === 'config'}
-    <span class="savestate" class:err={unsaved} title={saveErr}>
-      {#if saveState === 'saving'}{t('pe.saving')}
-      {:else if saveState === 'saved'}{t('pe.saved')}
-      {:else if saveState === 'conflict'}{t('pe.conflictShort')}
-      {:else if saveState === 'error'}{t('pe.saveError')}{/if}
-    </span>
-  {/if}
-  {#if alsoHere.length}
-    <span class="alsohere" title={t('pe.alsoHereHint')}>
-      {t('pe.alsoHere', { who: alsoHere.join(', ') })}
-    </span>
-  {/if}
-  {#if saveState === 'conflict'}
-    <!-- the notice carries the same action, but it can be dismissed; a refused
-         save must not become unreachable because a toast was closed -->
-    <button class="sm danger" onclick={resolveConflict}>{t('pe.conflictResolve')}</button>
-  {/if}
-  {#if !loading && cfg}
-    <button class="pv" class:active={previewOpen} onclick={() => (previewOpen = !previewOpen)}>
-      {previewOpen ? t('pe.hidePreview') : t('pe.preview')}
-    </button>
-  {/if}
-  <button onclick={onClose}>{t('common.close')}</button>
+  <!-- The tabs scroll inside their own strip rather than pushing the actions
+       onto a second row: six of them plus a revert picker outgrow a narrow
+       window, and Preview and Close are what the header is for. -->
+  <div class="tabs">
+    <TabStrip value={tab} tabs={tabItems} ariaLabel={t('pe.edit')} onChange={(v) => (tab = v as Tab)} />
+  </div>
+  <!-- One group, pinned right: a wrapping header must move the actions
+       together, not strand Close on a row of its own. -->
+  <div class="actions">
+    {#if !loading && cfg && tab === 'config' && revertVersions.length}
+      <span class="revertsel">
+        <Select
+          compact
+          full
+          bind:value={revertPick}
+          options={revertOptions}
+          placeholder={t('pe.revertPick')}
+          title={t('pe.revertTo')}
+          ariaLabel={t('pe.revertTo')}
+          onChange={(v) => {
+            if (v) revertTo(v);
+            revertPick = '';
+          }}
+        />
+      </span>
+    {/if}
+    {#if !loading && cfg && tab === 'config'}
+      <span class="savestate" class:err={unsaved} title={saveErr}>
+        {#if saveState === 'saving'}{t('pe.saving')}
+        {:else if saveState === 'saved'}{t('pe.saved')}
+        {:else if saveState === 'conflict'}{t('pe.conflictShort')}
+        {:else if saveState === 'error'}{t('pe.saveError')}{/if}
+      </span>
+    {/if}
+    {#if alsoHere.length}
+      <span class="alsohere" title={t('pe.alsoHereHint')}>
+        {t('pe.alsoHere', { who: alsoHere.join(', ') })}
+      </span>
+    {/if}
+    {#if saveState === 'conflict'}
+      <!-- the notice carries the same action, but it can be dismissed; a refused
+           save must not become unreachable because a toast was closed -->
+      <button class="sm danger" onclick={resolveConflict}>{t('pe.conflictResolve')}</button>
+    {/if}
+    {#if !loading && cfg}
+      <button class="pv" class:active={previewOpen} onclick={() => (previewOpen = !previewOpen)}>
+        {previewOpen ? t('pe.hidePreview') : t('pe.preview')}
+      </button>
+    {/if}
+    <button onclick={onClose}>{t('common.close')}</button>
+  </div>
 </div>
 
 
@@ -1173,6 +1187,9 @@
   <div class="editcol">
     {#if loading}
       <div class="muted mono">{t('common.loading')}</div>
+    {:else if route.thread !== null}
+      <!-- A discussion is a place of its own, over the pack it belongs to. -->
+      <ThreadPage threadId={route.thread} onChanged={() => (threadTick += 1)} />
     {:else if route.commit}
       <!-- A checkpoint is a place of its own (ADR 0005): it has an address, and
            the editor it was opened from is still underneath when it closes. -->
@@ -1503,10 +1520,12 @@
       {/if}
     {:else if tab === 'graph'}
       <PackGraph {packId} />
+    {:else if tab === 'threads'}
+      <PackThreads {packId} tick={threadTick} forkOf={cfg?.fork_of ?? null} />
     {:else if tab === 'access'}
       <!-- Granting is the owner's act; everyone who can open the pack may read
            who else is in it, which is what makes the list worth having. -->
-      <PackAccess {packId} canGrant={canOwn} />
+      <PackAccess {packId} canGrant={canOwn} canModerate={canEdit} />
     {:else if tab === 'build'}
       <BuildConsole
         {packId}
@@ -1650,8 +1669,18 @@
   .ttl {
     font-size: var(--fs-lg);
   }
-  .spacer {
-    flex: 1;
+  .tabs {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-left: auto;
+    flex: 0 0 auto;
   }
   .alsohere {
     font-size: var(--fs-xs);

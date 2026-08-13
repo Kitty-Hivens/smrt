@@ -124,6 +124,7 @@ pub fn router(state: AppState) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::accounts::PackLevel;
     use crate::config::Config;
     use std::str::FromStr;
 
@@ -160,6 +161,530 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(&body[..], b"u/42/MyPack");
+    }
+
+    // ── the gates, as HTTP sees them (ADR 0006) ─────────────────────────────
+    //
+    // The levels are compared in one place, which is exactly why one place
+    // getting it wrong would be silent everywhere. These drive the real router
+    // with a real session, so a handler that forgets to gate, or gates at the
+    // wrong level, fails here rather than in somebody's pack.
+
+    fn test_state(dir: &std::path::Path) -> AppState {
+        let config = Config {
+            bind_addr: std::net::SocketAddr::from_str("127.0.0.1:0").unwrap(),
+            storage_dir: dir.to_path_buf(),
+            admin_token: None,
+            cookie_secure: false,
+            mirror_base: "http://localhost".into(),
+            github_client_id: None,
+            github_client_secret: None,
+            admin_github_uids: Vec::new(),
+            debug_token: None,
+            debug_github_uids: Vec::new(),
+        };
+        AppState::new(config).unwrap()
+    }
+
+    fn sample_pack(
+        pack_id: &str,
+        visibility: crate::domain::Visibility,
+    ) -> crate::domain::PackConfig {
+        crate::domain::PackConfig {
+            pack_id: pack_id.into(),
+            display_name: pack_id.into(),
+            tagline: String::new(),
+            minecraft_version: "1.21.1".into(),
+            loader: crate::domain::LoaderSpec {
+                name: "neoforge".into(),
+                version: "21.1.248".into(),
+            },
+            java_major: 21,
+            version: Some("0.1".into()),
+            tags: Vec::new(),
+            featured: false,
+            mods: Vec::new(),
+            assets: Vec::new(),
+            auth: None,
+            pack_meta: crate::domain::PackMeta::default(),
+            owner: 1,
+            tier: crate::domain::PackTier::Official,
+            visibility,
+            fork_of: None,
+        }
+    }
+
+    /// The same request as [`call`], with what came back -- for the handlers
+    /// whose answer is the point rather than their status.
+    async fn read(
+        app: &axum::Router,
+        uri: &str,
+        session: Option<&str>,
+    ) -> (axum::http::StatusCode, String) {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let mut req = Request::builder().method("GET").uri(uri);
+        if let Some(sid) = session {
+            req = req.header(axum::http::header::COOKIE, format!("smrt_session={sid}"));
+        }
+        let resp = app
+            .clone()
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    async fn call(
+        app: &axum::Router,
+        method: &str,
+        uri: &str,
+        session: Option<&str>,
+        body: Option<&str>,
+    ) -> axum::http::StatusCode {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let mut req = Request::builder().method(method).uri(uri);
+        if let Some(sid) = session {
+            req = req.header(axum::http::header::COOKIE, format!("smrt_session={sid}"));
+        }
+        let req = match body {
+            Some(json) => req
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json.to_string()))
+                .unwrap(),
+            None => req.body(Body::empty()).unwrap(),
+        };
+        app.clone().oneshot(req).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn a_level_admits_exactly_what_it_names() {
+        use axum::http::StatusCode;
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path());
+        state
+            .storage
+            .save_pack_config(
+                "Create",
+                &sample_pack("Create", crate::domain::Visibility::Draft),
+            )
+            .await
+            .unwrap();
+        let sid = state.accounts.sign_in_github(42, "helper", None).unwrap();
+        let app = router(state.clone());
+        let cfg = serde_json::to_string(&sample_pack("Create", crate::domain::Visibility::Draft))
+            .unwrap();
+
+        // nothing granted: a member cannot even read somebody else's pack
+        assert_eq!(
+            call(
+                &app,
+                "GET",
+                "/v1/authoring/packs/Create/config",
+                Some(&sid),
+                None
+            )
+            .await,
+            StatusCode::FORBIDDEN
+        );
+
+        // view reads and does not write
+        state
+            .accounts
+            .grant_pack_access("Create", 42, PackLevel::View, 1)
+            .unwrap();
+        assert_eq!(
+            call(
+                &app,
+                "GET",
+                "/v1/authoring/packs/Create/config",
+                Some(&sid),
+                None
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                "/v1/authoring/packs/Create/config",
+                Some(&sid),
+                Some(&cfg)
+            )
+            .await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/packs/Create/commits",
+                Some(&sid),
+                Some(r#"{"message":"x"}"#)
+            )
+            .await,
+            StatusCode::FORBIDDEN
+        );
+
+        // edit writes but does not hand out access or delete
+        state
+            .accounts
+            .grant_pack_access("Create", 42, PackLevel::Edit, 1)
+            .unwrap();
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                "/v1/authoring/packs/Create/config",
+                Some(&sid),
+                Some(&cfg)
+            )
+            .await,
+            StatusCode::CREATED
+        );
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/packs/Create/access",
+                Some(&sid),
+                Some(r#"{"github_uid":77,"level":"view"}"#)
+            )
+            .await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            call(
+                &app,
+                "DELETE",
+                "/v1/authoring/packs/Create",
+                Some(&sid),
+                None
+            )
+            .await,
+            StatusCode::FORBIDDEN
+        );
+
+        // own does both
+        state
+            .accounts
+            .grant_pack_access("Create", 42, PackLevel::Own, 1)
+            .unwrap();
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/packs/Create/access",
+                Some(&sid),
+                Some(r#"{"github_uid":77,"level":"view"}"#)
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+
+        // and the panel is told the same answer the gate just gave, rather than
+        // guessing it from the pack id: a granted keeper is a keeper.
+        assert_eq!(
+            read(&app, "/v1/authoring/packs/Create/access/mine", Some(&sid)).await,
+            (StatusCode::OK, r#"{"level":"own"}"#.to_string())
+        );
+        let stranger = state.accounts.sign_in_github(99, "stranger", None).unwrap();
+        assert_eq!(
+            read(
+                &app,
+                "/v1/authoring/packs/Create/access/mine",
+                Some(&stranger)
+            )
+            .await,
+            (StatusCode::OK, "{}".to_string()),
+            "no level is an answer, not an error"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_block_stops_the_next_message_not_the_record() {
+        use axum::http::StatusCode;
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path());
+        let cfg = sample_pack("Create", crate::domain::Visibility::Published);
+        state
+            .storage
+            .save_pack_config("Create", &cfg)
+            .await
+            .unwrap();
+        state
+            .storage
+            .save_pack_summary(&crate::authoring::make_pack_summary(&cfg, "0.1.0"))
+            .await
+            .unwrap();
+        let loud = state.accounts.sign_in_github(42, "loud", None).unwrap();
+        let keeper = state.accounts.sign_in_github(43, "keeper", None).unwrap();
+        state
+            .accounts
+            .grant_pack_access("Create", 43, PackLevel::Edit, 1)
+            .unwrap();
+        let app = router(state.clone());
+
+        call(
+            &app,
+            "POST",
+            "/v1/authoring/packs/Create/issues",
+            Some(&loud),
+            Some(r#"{"title":"first"}"#),
+        )
+        .await;
+
+        // moderation, not ownership: the same rung that hides a comment
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/packs/Create/blocks",
+                Some(&loud),
+                Some(r#"{"github_uid":43}"#)
+            )
+            .await,
+            StatusCode::FORBIDDEN,
+            "a speaker does not get to block the pack's keepers"
+        );
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/packs/Create/blocks",
+                Some(&keeper),
+                Some(r#"{"github_uid":42,"reason":"flooding"}"#)
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+
+        // what was blocked is the writing
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/threads/1/comments",
+                Some(&loud),
+                Some(r#"{"body":"again"}"#)
+            )
+            .await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/packs/Create/issues",
+                Some(&loud),
+                Some(r#"{"title":"second"}"#)
+            )
+            .await,
+            StatusCode::FORBIDDEN
+        );
+        // and what stays is the record: a block is not a way to unsay something
+        assert_eq!(read(&app, "/v1/threads/1", None).await.0, StatusCode::OK);
+
+        // the keepers cannot be blocked out of their own pack
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/packs/Create/blocks",
+                Some(&keeper),
+                Some(r#"{"github_uid":43}"#)
+            )
+            .await,
+            StatusCode::BAD_REQUEST
+        );
+
+        // lifting it puts the person back where they were
+        assert_eq!(
+            call(
+                &app,
+                "DELETE",
+                "/v1/authoring/packs/Create/blocks/42",
+                Some(&keeper),
+                None
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/threads/1/comments",
+                Some(&loud),
+                Some(r#"{"body":"again"}"#)
+            )
+            .await,
+            StatusCode::CREATED
+        );
+    }
+
+    #[tokio::test]
+    async fn a_discussion_is_as_public_as_its_pack() {
+        use axum::http::StatusCode;
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path());
+        for (id, vis) in [
+            ("Create", crate::domain::Visibility::Published),
+            ("Secret", crate::domain::Visibility::Draft),
+        ] {
+            let cfg = sample_pack(id, vis);
+            state.storage.save_pack_config(id, &cfg).await.unwrap();
+            state
+                .storage
+                .save_pack_summary(&crate::authoring::make_pack_summary(&cfg, "0.1.0"))
+                .await
+                .unwrap();
+        }
+        let sid = state.accounts.sign_in_github(42, "helper", None).unwrap();
+        let app = router(state.clone());
+
+        // anyone signed in may report on a published pack they were never let into
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/packs/Create/issues",
+                Some(&sid),
+                Some(r#"{"title":"a mod crashes"}"#)
+            )
+            .await,
+            StatusCode::CREATED
+        );
+        // and not on one they cannot see
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/packs/Secret/issues",
+                Some(&sid),
+                Some(r#"{"title":"nosy"}"#)
+            )
+            .await,
+            StatusCode::FORBIDDEN
+        );
+
+        // the published pack's discussion reads with no session at all; the
+        // draft's is as invisible as the draft
+        assert_eq!(
+            call(&app, "GET", "/v1/packs/Create/threads", None, None).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            call(&app, "GET", "/v1/threads/1", None, None).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            call(&app, "GET", "/v1/packs/Secret/threads", None, None).await,
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[tokio::test]
+    async fn moderating_and_deciding_belong_to_the_pack_not_the_speaker() {
+        use axum::http::StatusCode;
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path());
+        let cfg = sample_pack("Create", crate::domain::Visibility::Published);
+        state
+            .storage
+            .save_pack_config("Create", &cfg)
+            .await
+            .unwrap();
+        state
+            .storage
+            .save_pack_summary(&crate::authoring::make_pack_summary(&cfg, "0.1.0"))
+            .await
+            .unwrap();
+        let sid = state.accounts.sign_in_github(42, "helper", None).unwrap();
+        let other = state.accounts.sign_in_github(43, "stranger", None).unwrap();
+        let app = router(state.clone());
+
+        call(
+            &app,
+            "POST",
+            "/v1/authoring/packs/Create/issues",
+            Some(&sid),
+            Some(r#"{"title":"a mod crashes"}"#),
+        )
+        .await;
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/threads/1/comments",
+                Some(&other),
+                Some(r#"{"body":"mine too"}"#)
+            )
+            .await,
+            StatusCode::CREATED,
+            "anyone who can read a discussion can join it"
+        );
+
+        // a speaker cannot moderate the discussion they are in
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                "/v1/authoring/comments/1/hidden",
+                Some(&other),
+                Some(r#"{"hidden":true}"#)
+            )
+            .await,
+            StatusCode::FORBIDDEN
+        );
+        // but whoever keeps the pack can
+        state
+            .accounts
+            .grant_pack_access("Create", 43, PackLevel::Edit, 1)
+            .unwrap();
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                "/v1/authoring/comments/1/hidden",
+                Some(&other),
+                Some(r#"{"hidden":true}"#)
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+
+        // the reporter may close their own thread; a settled one does not settle twice
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/threads/1/close",
+                Some(&sid),
+                None
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/threads/1/close",
+                Some(&sid),
+                None
+            )
+            .await,
+            StatusCode::CONFLICT
+        );
     }
 
     // A wildcard segment is `{*name}`; `{{` and `}}` are how axum 0.8 escapes a

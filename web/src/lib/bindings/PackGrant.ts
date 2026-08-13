@@ -9,4 +9,9 @@ export type PackGrant = { github_uid: number,
  * The login as it was last seen signing in; absent for a uid granted access
  * before its owner ever signed in here.
  */
-login?: string, level: PackLevel, granted_by: number, granted_at: number, };
+login?: string, level: PackLevel, granted_by: number, 
+/**
+ * Who decided it, by name where the mirror knows it. A bare uid in a list
+ * of who is answerable for an access tells the reader nothing.
+ */
+granted_by_login?: string, granted_at: number, };

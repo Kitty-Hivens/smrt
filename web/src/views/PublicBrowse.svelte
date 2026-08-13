@@ -8,6 +8,7 @@
   import { terms } from '../lib/terms.svelte';
   import { renderMarkdown } from '../lib/markdown';
   import ModIcon from './ModIcon.svelte';
+  import PackThreads from './PackThreads.svelte';
   import TabStrip from './ui/TabStrip.svelte';
   import type { CommunityPack, PackManifest, PackSummary } from '../lib/types';
 
@@ -156,6 +157,17 @@
                 <!-- renderMarkdown sanitizes; safe to inject -->
                 <div class="desc">{@html renderMarkdown(p.description_md)}</div>
               {/if}
+              <!-- What is being asked of this pack, where the pack is. A
+                   decision nobody can find is indistinguishable from one nobody
+                   made, so the discussion is part of the pack's public face
+                   rather than something only its keepers ever see. -->
+              <details class="talk">
+                <summary>{t('browse.discussion')}</summary>
+                <PackThreads packId={p.pack_id} standalone canWrite={me != null} />
+                {#if !me}
+                  <p class="muted signin">{t('browse.signInToReport')}</p>
+                {/if}
+              </details>
               <div class="modhead mono faint">{t('browse.modsN', { n: manifest.mods.length })}</div>
               <div class="mods">
                 {#each manifest.mods as m (m.sha1)}
@@ -301,6 +313,26 @@
     font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: 0.08em;
+  }
+  /* Folded away by default: the mod list is what a reader came for, and an
+     empty discussion should not push it down the page. */
+  .talk {
+    border: 1px solid var(--seam);
+    border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3);
+    max-width: 720px;
+  }
+  .talk summary {
+    cursor: pointer;
+    font-size: var(--fs-sm);
+    color: var(--fg-dim);
+  }
+  .talk[open] summary {
+    margin-bottom: var(--space-2);
+  }
+  .signin {
+    font-size: var(--fs-sm);
+    margin: 0;
   }
   .mods {
     display: grid;

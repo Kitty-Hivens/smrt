@@ -1,6 +1,7 @@
 use super::ApiError;
+use super::admin::CommitDiff;
 use super::page::{PageQuery, next_link};
-use crate::accounts::PackLevel;
+use crate::accounts::{PackLevel, Thread, ThreadView};
 use crate::authoring::jar_icon;
 use crate::domain::*;
 use crate::registry::model::{FileDetail, ModDetail};
@@ -33,6 +34,9 @@ pub fn router(state: AppState) -> Router {
             get(get_manifest_version),
         )
         .route("/v1/packs/{pack_id}/diff", get(get_pack_diff))
+        .route("/v1/packs/{pack_id}/threads", get(public_threads))
+        .route("/v1/threads/{id}", get(public_thread))
+        .route("/v1/threads/{id}/diff", get(public_thread_diff))
         .route(
             "/v1/packs/{pack_id}/static/{*rel_path}",
             get(get_pack_static),
@@ -486,6 +490,125 @@ async fn gate_pack_read(
 ) -> Result<(), ApiError> {
     let summary = state.storage.load_pack_summary(pack_id).await?;
     gate_summary(state, headers, pack_id, &summary).await
+}
+
+// ── discussions, in the open ────────────────────────────────────────────────
+
+/// What is being said about a published pack: reports and proposals, with their
+/// outcomes. Readable without a session, because a decision nobody can see is
+/// indistinguishable from one nobody made -- an unpublished pack's discussion
+/// stays with whoever can see the pack.
+#[utoipa::path(
+    get,
+    path = "/v1/packs/{pack_id}/threads",
+    tag = "public",
+    params(
+        ("pack_id" = String, Path, description = "Pack id"),
+        ("kind" = Option<String>, Query, description = "`issue` | `proposal`; absent lists both"),
+        ("all" = Option<bool>, Query, description = "Include settled threads")
+    ),
+    responses(
+        (status = 200, description = "Reports and proposals on a published pack", body = [Thread]),
+        (status = 404, description = "No such pack, or its draft is not yours to read")
+    )
+)]
+pub(crate) async fn public_threads(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(pack_id): Path<String>,
+    Query(p): Query<PublicThreadParams>,
+) -> Result<Json<Vec<crate::accounts::Thread>>, ApiError> {
+    gate_pack_read(&state, &headers, &pack_id).await?;
+    let acc = state.accounts.clone();
+    let (pack, kind) = (pack_id.clone(), p.kind.clone());
+    let rows = tokio::task::spawn_blocking(move || acc.threads_for(&pack, kind.as_deref(), !p.all))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
+    Ok(Json(rows))
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct PublicThreadParams {
+    kind: Option<String>,
+    #[serde(default)]
+    all: bool,
+}
+
+/// One discussion in full. The pack it belongs to decides who may read it, so a
+/// draft's thread stays as private as the draft.
+#[utoipa::path(
+    get,
+    path = "/v1/threads/{id}",
+    tag = "public",
+    params(("id" = i64, Path, description = "Thread id")),
+    responses(
+        (status = 200, description = "One discussion in full", body = ThreadView),
+        (status = 404, description = "No such thread, or its pack is not yours to read")
+    )
+)]
+pub(crate) async fn public_thread(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Result<Json<crate::accounts::ThreadView>, ApiError> {
+    let acc = state.accounts.clone();
+    let thread = tokio::task::spawn_blocking(move || acc.thread(id))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??
+        .ok_or(ApiError::NotFound)?;
+    gate_pack_read(&state, &headers, &thread.pack_id).await?;
+    let acc = state.accounts.clone();
+    let comments = tokio::task::spawn_blocking(move || acc.comments_on(id))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
+    Ok(Json(crate::accounts::ThreadView { thread, comments }))
+}
+
+/// What a proposal would change, read against the target as it stands now --
+/// not against the fork's parent. The review question is "what happens to this
+/// pack if the offer is taken", and that answer moves as the pack moves.
+///
+/// As readable as the thread it belongs to, which is what makes a decision
+/// checkable: "they turned this down" means nothing to a reader who cannot see
+/// what was turned down. Offering a commit to a pack publishes that commit's
+/// content to the pack's readers -- the offer is the act of publication, so a
+/// fork that is not ready to be read is not ready to be proposed.
+#[utoipa::path(
+    get,
+    path = "/v1/threads/{id}/diff",
+    tag = "public",
+    params(("id" = i64, Path, description = "Thread id of a proposal")),
+    responses(
+        (status = 200, description = "What taking the offer would change", body = CommitDiff),
+        (status = 400, description = "That thread is a report and offers no state"),
+        (status = 404, description = "No such thread, or its pack is not yours to read")
+    )
+)]
+pub(crate) async fn public_thread_diff(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Result<Json<CommitDiff>, ApiError> {
+    let acc = state.accounts.clone();
+    let thread = tokio::task::spawn_blocking(move || acc.thread(id))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??
+        .ok_or(ApiError::NotFound)?;
+    gate_pack_read(&state, &headers, &thread.pack_id).await?;
+    let (Some(source_pack), Some(source_commit)) = (&thread.source_pack, &thread.source_commit)
+    else {
+        return Err(ApiError::BadRequest("this thread offers no state".into()));
+    };
+    let offered = state
+        .storage
+        .load_commit_config(source_pack, source_commit)
+        .await?;
+    let current = state.storage.load_pack_config(&thread.pack_id).await?;
+    Ok(Json(CommitDiff {
+        from: Some(thread.pack_id.clone()),
+        to: source_commit.clone(),
+        changes: crate::authoring::diff_configs(&current, &offered),
+    }))
 }
 
 // ── /v1/servers ────────────────────────────────────────────────────────────

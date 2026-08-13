@@ -360,11 +360,11 @@
     list-style: none;
     margin: 14px 0 0;
     padding: 0;
-    border-top: 1px solid var(--line);
+    border-top: 1px solid var(--seam);
   }
   .log li {
     padding: 8px 0;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid var(--seam);
   }
   .line {
     display: flex;

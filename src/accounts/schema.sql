@@ -101,3 +101,70 @@ CREATE TABLE IF NOT EXISTS pack_access (
     PRIMARY KEY (pack_id, github_uid)
 );
 CREATE INDEX IF NOT EXISTS idx_pack_access_uid ON pack_access(github_uid);
+
+-- Threads: everything said about a pack that is not the pack itself -- a report
+-- ("mod X crashes on entry"), or a fork offered back. One table because they
+-- differ in what opens them and how they settle, and in nothing else: both are
+-- somebody asking a pack's keepers for something, both carry a discussion, both
+-- end in a decision that is worth reading afterwards. Two tables would mean two
+-- of everything below, starting with comments.
+--
+-- A proposal is a thread whose `source_pack`/`source_commit` name the state it
+-- offers; an issue leaves them null. `status` is the thread's own vocabulary:
+-- an issue is open or closed, a proposal is open, merged, declined or withdrawn.
+-- Settled threads keep their rows -- "we said no in March" is what somebody
+-- looks for in April.
+CREATE TABLE IF NOT EXISTS pack_threads (
+    id            INTEGER PRIMARY KEY,
+    pack_id       TEXT NOT NULL,
+    kind          TEXT NOT NULL CHECK (kind IN ('issue', 'proposal')),
+    title         TEXT NOT NULL,
+    body          TEXT NOT NULL DEFAULT '',
+    by_uid        INTEGER NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'open'
+                  CHECK (status IN ('open', 'closed', 'merged', 'declined', 'withdrawn')),
+    -- proposals only
+    source_pack   TEXT,
+    source_commit TEXT,
+    merged_commit TEXT,
+    created_at    INTEGER NOT NULL,
+    decided_at    INTEGER,
+    decided_by    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_threads_pack ON pack_threads(pack_id, status);
+CREATE INDEX IF NOT EXISTS idx_threads_by ON pack_threads(by_uid);
+
+-- Who a pack's keepers have asked to stop. Hiding a comment answers what was
+-- already said; this answers the next one, which is the difference between
+-- cleaning up after somebody and not hosting them. It sits beside `pack_access`
+-- because it is the same question from the other side -- that list says who may
+-- reach a pack, this one who may no longer write on it.
+--
+-- A block bars writing (a report, a proposal, a comment) and nothing else: a
+-- published pack's discussion stays readable, so a block can never quietly
+-- erase somebody from a record they are already part of. `reason` is for the
+-- person deciding, not for the blocked -- it is never served to them.
+CREATE TABLE IF NOT EXISTS pack_blocks (
+    pack_id    TEXT NOT NULL,
+    github_uid INTEGER NOT NULL,
+    reason     TEXT,
+    blocked_by INTEGER NOT NULL,
+    blocked_at INTEGER NOT NULL,
+    PRIMARY KEY (pack_id, github_uid)
+);
+CREATE INDEX IF NOT EXISTS idx_pack_blocks_uid ON pack_blocks(github_uid);
+
+-- What people said on a thread. Hidden rather than deleted when moderated: the
+-- fact that something was said and taken down is itself part of the record, and
+-- a hole in a numbered discussion is worse than a marked gap. `hidden_by` is the
+-- moderator, so the trail names who decided.
+CREATE TABLE IF NOT EXISTS thread_comments (
+    id         INTEGER PRIMARY KEY,
+    thread_id  INTEGER NOT NULL REFERENCES pack_threads(id) ON DELETE CASCADE,
+    by_uid     INTEGER NOT NULL,
+    body       TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    hidden_at  INTEGER,
+    hidden_by  INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_comments_thread ON thread_comments(thread_id, created_at);

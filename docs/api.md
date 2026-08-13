@@ -210,6 +210,21 @@ launcher's home screen. `/v1/community` lists published community packs (with
 an owner byline) -- browseable, but never part of the official catalog at
 `/v1/packs`.
 
+## What is being asked of a pack
+
+`GET /v1/packs/{id}/threads` lists what people have said about a pack: reports
+(`kind: "issue"`) and offers from forks (`kind: "proposal"`), open ones by
+default, `?all=true` for the settled, `?kind=` to narrow.
+`GET /v1/threads/{id}` is one of them in full, with its comments;
+`GET /v1/threads/{id}/diff` is what taking a proposal would do to the pack as it
+stands now, in the same change rows the panel draws.
+
+All three are anonymous reads for a published or unlisted pack, and answer `404`
+for a draft that is not yours -- a decision nobody can see is indistinguishable
+from one nobody made. A moderated comment keeps its place in the numbering and
+loses its body: `hidden: true` with no `body`. Writing (opening a thread,
+commenting, deciding) is a session surface and lives under `/v1/authoring/`.
+
 ## Authenticated surfaces
 
 Not needed by a launcher, listed for completeness: GitHub OAuth session
