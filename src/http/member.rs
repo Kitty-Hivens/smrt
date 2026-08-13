@@ -138,19 +138,36 @@ async fn my_notifications(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
     Query(p): Query<NotificationParams>,
-) -> Result<Json<NotificationListing>, ApiError> {
+    Query(page): Query<super::page::PageQuery>,
+    uri: axum::http::Uri,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
     let acc = state.accounts.clone();
     let uid = identity.uid;
-    let limit = p.limit.map(|n| n.clamp(1, 200));
+    let after = page
+        .cursor()
+        .and_then(|parts| parts.first()?.parse::<i64>().ok());
+    // `limit` here is the paging one; the plain cap stays for a caller that
+    // wants a bounded answer and no cursor to follow.
+    let probe = page.probe().or(p.limit.map(|n| n.clamp(1, 200)));
     let listing = tokio::task::spawn_blocking(move || {
         Ok::<_, anyhow::Error>(NotificationListing {
             unread: acc.unread_count(uid)?,
-            rows: acc.notifications_for(uid, p.unread, limit)?,
+            rows: acc.notifications_for(uid, p.unread, after, probe)?,
         })
     })
     .await
     .map_err(|e| ApiError::Internal(anyhow::anyhow!("notification task: {e}")))??;
-    Ok(Json(listing))
+    let (rows, next) = page.split(listing.rows, |n| vec![n.id.to_string()]);
+    let mut resp = Json(NotificationListing {
+        unread: listing.unread,
+        rows,
+    })
+    .into_response();
+    if let Some(value) = super::page::next_link(&uri, next.as_deref()) {
+        resp.headers_mut().insert(axum::http::header::LINK, value);
+    }
+    Ok(resp)
 }
 
 #[derive(Deserialize)]

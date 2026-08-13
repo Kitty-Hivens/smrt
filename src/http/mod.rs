@@ -524,6 +524,14 @@ mod tests {
             "including whoever spoke in it"
         );
 
+        // a list that only grows is read a page at a time, newest first
+        let (_, first) = read(&app, "/v1/me/notifications?limit=1", Some(&reporter)).await;
+        assert_eq!(first.matches("\"id\":").count(), 1, "one row: {first}");
+        assert!(
+            first.contains("\"unread\":2"),
+            "the count is the whole list: {first}"
+        );
+
         // reading is the caller's own list, and marking read is scoped to it
         let (status, body) = read(&app, "/v1/me/notifications?unread=true", Some(&reporter)).await;
         assert_eq!(status, StatusCode::OK);

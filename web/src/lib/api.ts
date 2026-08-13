@@ -803,12 +803,14 @@ export const api = {
   // list want different numbers and it would be a lie to derive one from the
   // other.
   notifications: (unreadOnly = false, limit?: number) =>
-    getJson<{ unread: number; rows: NotificationRow[] }>(
+    getWithLink<{ unread: number; rows: NotificationRow[] }>(
       `/v1/me/notifications?${new URLSearchParams({
         ...(unreadOnly ? { unread: 'true' } : {}),
         ...(limit ? { limit: String(limit) } : {}),
       })}`,
     ),
+  notificationsPage: (url: string) =>
+    getWithLink<{ unread: number; rows: NotificationRow[] }>(url),
   markNotificationsRead: (id?: number) =>
     send('POST', '/v1/me/notifications/read', { id: id ?? null }),
   // The admin token no longer authenticates a human. A valid one comes back 410
