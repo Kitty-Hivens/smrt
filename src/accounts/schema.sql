@@ -82,3 +82,22 @@ CREATE TABLE IF NOT EXISTS terms_acceptance (
     github_uid  INTEGER PRIMARY KEY,
     accepted_at INTEGER NOT NULL
 );
+
+-- Per-pack access (ADR 0006). The mirror's roles answer what somebody may do to
+-- the mirror; this answers what they may do to one pack, so letting a person
+-- help with a single pack no longer means handing them the whole mirror.
+--
+-- Two answers are deliberately not rows here: the owner of a community
+-- namespace (`u/<uid>/<pack>`) and an admin. Both are rules the gate knows
+-- before it reads anything, so a grant is only ever the third answer. Access
+-- lives here rather than in the pack's config because the config is authored by
+-- clients and merged live -- a permission the restrained can rewrite is not one.
+CREATE TABLE IF NOT EXISTS pack_access (
+    pack_id    TEXT NOT NULL,
+    github_uid INTEGER NOT NULL,
+    level      TEXT NOT NULL CHECK (level IN ('view', 'edit', 'own')),
+    granted_by INTEGER NOT NULL,
+    granted_at INTEGER NOT NULL,
+    PRIMARY KEY (pack_id, github_uid)
+);
+CREATE INDEX IF NOT EXISTS idx_pack_access_uid ON pack_access(github_uid);

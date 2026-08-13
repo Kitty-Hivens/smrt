@@ -13,7 +13,7 @@
   import { changedPaths, createTouches } from '../lib/touched.svelte';
   import type { LoaderVersions, MinecraftVersions, SpoofReport } from '../lib/types';
   import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
-  import { isDebug } from '../lib/roles';
+  import { isDebug, isOperator } from '../lib/roles';
   import type {
     DeclaredAsset,
     JobStatus,
@@ -25,6 +25,7 @@
   } from '../lib/types';
   import BuildConsole from './BuildConsole.svelte';
   import CommitPage from './CommitPage.svelte';
+  import PackAccess from './PackAccess.svelte';
   import BrandingEditor from './BrandingEditor.svelte';
   import PackGraph from './PackGraph.svelte';
   import JobLog from './JobLog.svelte';
@@ -136,7 +137,7 @@
     }
   }
 
-  type Tab = 'config' | 'branding' | 'graph' | 'build';
+  type Tab = 'config' | 'branding' | 'graph' | 'build' | 'access';
   let tab = $state<Tab>('config');
   let previewOpen = $state(false);
   let previewToken = $state(0);
@@ -193,6 +194,24 @@
   // commit -- but this is where the pack's event stream is read, so the fact
   // that it moved is passed down rather than subscribed to twice.
   let historyTick = $state(0);
+  // Whether this viewer may hand out access: the two rules the mirror's gate
+  // knows without a lookup (ADR 0006) -- an admin, or the owner of the
+  // namespace this pack sits in. A granted `own` also qualifies, and the server
+  // is the one that decides; this only shows or hides the controls.
+  let canOwn = $state(false);
+  $effect(() => {
+    const pack = packId;
+    void (async () => {
+      try {
+        const m = await api.me();
+        const mine = pack.startsWith(`u/${m?.uid}/`);
+        canOwn = isOperator(m?.role) || mine;
+      } catch {
+        canOwn = false;
+      }
+    })();
+  });
+
   // A build a commit page asked for; handed to the console, which owns building.
   let buildFrom = $state<string | null>(null);
   // The build in flight. Held here because the console is one surface among
@@ -1079,6 +1098,7 @@
     { value: 'branding', label: t('pe.tab.branding') },
     { value: 'graph', label: t('pe.tab.graph') },
     { value: 'build', label: t('pe.tab.build') },
+    { value: 'access', label: t('pe.tab.access') },
   ]);
 </script>
 
@@ -1483,6 +1503,10 @@
       {/if}
     {:else if tab === 'graph'}
       <PackGraph {packId} />
+    {:else if tab === 'access'}
+      <!-- Granting is the owner's act; everyone who can open the pack may read
+           who else is in it, which is what makes the list worth having. -->
+      <PackAccess {packId} canGrant={canOwn} />
     {:else if tab === 'build'}
       <BuildConsole
         {packId}

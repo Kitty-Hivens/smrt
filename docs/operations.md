@@ -84,6 +84,25 @@ CLI equivalents: `smrt-pack bootstrap | validate | depfill | build
 reconstruct-config`. The CLI writes the config directly and builds the working
 state, so a script commits nothing and is refused nothing.
 
+### Who may reach a pack
+
+Access is a grant on one pack, not a rung on the mirror (ADR 0006). Three
+levels: `view` reads a draft, its history and its reports; `edit` writes the
+config, commits and builds; `own` also hands out and takes away access, changes
+visibility, and deletes.
+
+Two answers are never rows in the list and never need one: the owner of a
+community namespace (`u/<uid>/<pack>`) owns their pack because the id says so,
+and an admin owns every pack because that is what the rung means. A grant is
+only ever the third answer -- somebody who is neither, which is what letting one
+person help with one pack means without handing them the mirror.
+
+`GET .../access` lists the grants, `POST .../access` (`{github_uid, level}`)
+grants or moves one, `DELETE .../access/{uid}` takes it away; the last two need
+`own`. Grants are keyed by GitHub uid rather than login, because a login is
+its owner's to change. Every grant and revocation lands in the audit log, and
+a deleted pack forgets its list so a re-minted id inherits nobody.
+
 ### History
 
 A commit is a snapshot, an author, a message and a parent, content-addressed

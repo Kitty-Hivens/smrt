@@ -7,7 +7,7 @@
 use anyhow::{Context, Result};
 use rand::RngCore;
 use rusqlite::{Connection, OptionalExtension, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -72,6 +72,62 @@ impl Identity {
     pub fn owns_or_admin(&self, owner_uid: i64) -> bool {
         self.uid == owner_uid || self.role >= Role::Admin
     }
+}
+
+/// What somebody may do to one pack (ADR 0006). Declaration order is the rank
+/// (`View < Edit < Own`), so a gate asks `level >= PackLevel::Edit` the way the
+/// mirror-wide gate asks `role >= Role::Admin`.
+///
+/// The owner of a community namespace and an admin are never stored as a level:
+/// they are what the gate knows before it reads. A stored level is only ever the
+/// third answer -- somebody who is neither.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "bindings/")]
+pub enum PackLevel {
+    /// Read a draft, its history and its reports.
+    View,
+    /// Write the config, commit, build.
+    Edit,
+    /// Also grant and revoke access, change visibility, delete.
+    Own,
+}
+
+impl PackLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PackLevel::View => "view",
+            PackLevel::Edit => "edit",
+            PackLevel::Own => "own",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<PackLevel> {
+        match s {
+            "view" => Some(PackLevel::View),
+            "edit" => Some(PackLevel::Edit),
+            "own" => Some(PackLevel::Own),
+            _ => None,
+        }
+    }
+}
+
+/// One person's access to one pack, as the access list shows it.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct PackGrant {
+    #[ts(type = "number")]
+    pub github_uid: i64,
+    /// The login as it was last seen signing in; absent for a uid granted access
+    /// before its owner ever signed in here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub login: Option<String>,
+    pub level: PackLevel,
+    #[ts(type = "number")]
+    pub granted_by: i64,
+    #[ts(type = "number")]
+    pub granted_at: i64,
 }
 
 /// A registered user, for the operator's user-management view.
@@ -254,6 +310,128 @@ impl Accounts {
             }
             None => Ok(None),
         }
+    }
+
+    /// What `github_uid` was granted on `pack_id`, or `None` when nothing was.
+    ///
+    /// Answers the stored third case only: the caller's gate decides ownership
+    /// and the admin rung before asking. Blocking; wrap in `spawn_blocking`.
+    pub fn pack_access_level(&self, pack_id: &str, github_uid: i64) -> Result<Option<PackLevel>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let level: Option<String> = guard
+            .query_row(
+                "SELECT level FROM pack_access WHERE pack_id = ?1 AND github_uid = ?2",
+                params![pack_id, github_uid],
+                |r| r.get(0),
+            )
+            .optional()
+            .context("read pack access")?;
+        Ok(level.as_deref().and_then(PackLevel::parse))
+    }
+
+    /// Grant (or move) somebody's access to a pack. Re-granting overwrites the
+    /// level and re-stamps who decided it and when, so the list always says who
+    /// is answerable for the access as it stands rather than as it began.
+    ///
+    /// Refuses the reserved uid 0, which is the synthetic break-glass identity
+    /// and never a person. Blocking; wrap in `spawn_blocking`.
+    pub fn grant_pack_access(
+        &self,
+        pack_id: &str,
+        github_uid: i64,
+        level: PackLevel,
+        granted_by: i64,
+    ) -> Result<()> {
+        if github_uid == BREAK_GLASS_UID {
+            anyhow::bail!("uid 0 is reserved");
+        }
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard.execute(
+            "INSERT INTO pack_access (pack_id, github_uid, level, granted_by, granted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(pack_id, github_uid) DO UPDATE SET
+                 level = excluded.level,
+                 granted_by = excluded.granted_by,
+                 granted_at = excluded.granted_at",
+            params![pack_id, github_uid, level.as_str(), granted_by, unix_now()],
+        )?;
+        Ok(())
+    }
+
+    /// Take somebody's access away. `false` when they had none, so a caller can
+    /// tell a revocation from a no-op. Blocking; wrap in `spawn_blocking`.
+    pub fn revoke_pack_access(&self, pack_id: &str, github_uid: i64) -> Result<bool> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let gone = guard.execute(
+            "DELETE FROM pack_access WHERE pack_id = ?1 AND github_uid = ?2",
+            params![pack_id, github_uid],
+        )?;
+        Ok(gone > 0)
+    }
+
+    /// Everyone granted access to a pack, highest level first. The login is
+    /// joined from `users` and is absent for a uid that has never signed in --
+    /// access can be granted ahead of a first login, and the list says so rather
+    /// than inventing a name. Blocking; wrap in `spawn_blocking`.
+    pub fn list_pack_access(&self, pack_id: &str) -> Result<Vec<PackGrant>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let mut stmt = guard.prepare(
+            "SELECT a.github_uid, u.login, a.level, a.granted_by, a.granted_at
+             FROM pack_access a LEFT JOIN users u ON u.github_uid = a.github_uid
+             WHERE a.pack_id = ?1
+             ORDER BY CASE a.level WHEN 'own' THEN 0 WHEN 'edit' THEN 1 ELSE 2 END,
+                      a.granted_at",
+        )?;
+        let rows = stmt
+            .query_map(params![pack_id], |r| {
+                Ok(PackGrant {
+                    github_uid: r.get(0)?,
+                    login: r.get(1)?,
+                    level: r
+                        .get::<_, String>(2)
+                        .ok()
+                        .as_deref()
+                        .and_then(PackLevel::parse)
+                        .unwrap_or(PackLevel::View),
+                    granted_by: r.get(3)?,
+                    granted_at: r.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Every pack somebody was granted access to, for their own listing.
+    /// Blocking; wrap in `spawn_blocking`.
+    pub fn packs_granted_to(&self, github_uid: i64) -> Result<Vec<(String, PackLevel)>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let mut stmt = guard.prepare(
+            "SELECT pack_id, level FROM pack_access WHERE github_uid = ?1 ORDER BY pack_id",
+        )?;
+        let rows = stmt
+            .query_map(params![github_uid], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)
+                        .ok()
+                        .as_deref()
+                        .and_then(PackLevel::parse)
+                        .unwrap_or(PackLevel::View),
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Forget a deleted pack's access list, so a pack id minted again later does
+    /// not inherit who could reach the one before it.
+    pub fn forget_pack_access(&self, pack_id: &str) -> Result<()> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard.execute(
+            "DELETE FROM pack_access WHERE pack_id = ?1",
+            params![pack_id],
+        )?;
+        Ok(())
     }
 
     /// Drop a session (logout). Blocking; wrap in `spawn_blocking`.
@@ -580,6 +758,78 @@ pub fn random_token() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn access_is_granted_moved_and_taken_away() {
+        let a = Accounts::open_in_memory().unwrap();
+        assert_eq!(a.pack_access_level("Create", 42).unwrap(), None);
+
+        a.grant_pack_access("Create", 42, PackLevel::View, 1)
+            .unwrap();
+        assert_eq!(
+            a.pack_access_level("Create", 42).unwrap(),
+            Some(PackLevel::View)
+        );
+
+        // re-granting moves the level rather than adding a second row, and
+        // re-stamps who is answerable for the access as it stands
+        a.grant_pack_access("Create", 42, PackLevel::Edit, 7)
+            .unwrap();
+        assert_eq!(
+            a.pack_access_level("Create", 42).unwrap(),
+            Some(PackLevel::Edit)
+        );
+        let list = a.list_pack_access("Create").unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].granted_by, 7);
+
+        assert!(a.revoke_pack_access("Create", 42).unwrap());
+        assert!(
+            !a.revoke_pack_access("Create", 42).unwrap(),
+            "second revoke is a no-op"
+        );
+        assert_eq!(a.pack_access_level("Create", 42).unwrap(), None);
+    }
+
+    #[test]
+    fn access_is_scoped_to_one_pack_and_names_who_it_can() {
+        let a = Accounts::open_in_memory().unwrap();
+        a.sign_in_github(42, "octocat", None).unwrap();
+        a.grant_pack_access("Create", 42, PackLevel::Edit, 1)
+            .unwrap();
+        a.grant_pack_access("Create", 99, PackLevel::Own, 1)
+            .unwrap();
+
+        // a grant on one pack says nothing about another
+        assert_eq!(a.pack_access_level("Industrial", 42).unwrap(), None);
+        assert_eq!(
+            a.packs_granted_to(42).unwrap(),
+            vec![("Create".to_string(), PackLevel::Edit)]
+        );
+
+        // highest level first; a uid that never signed in has no login to show
+        let list = a.list_pack_access("Create").unwrap();
+        assert_eq!(list[0].github_uid, 99);
+        assert_eq!(list[0].login, None);
+        assert_eq!(list[1].login.as_deref(), Some("octocat"));
+    }
+
+    #[test]
+    fn a_deleted_pack_does_not_bequeath_its_access_list() {
+        // ids are re-mintable: a new pack under an old name must not inherit
+        // whoever could reach the one before it
+        let a = Accounts::open_in_memory().unwrap();
+        a.grant_pack_access("Create", 42, PackLevel::Edit, 1)
+            .unwrap();
+        a.forget_pack_access("Create").unwrap();
+        assert_eq!(a.pack_access_level("Create", 42).unwrap(), None);
+    }
+
+    #[test]
+    fn the_reserved_uid_is_not_a_person_to_grant_to() {
+        let a = Accounts::open_in_memory().unwrap();
+        assert!(a.grant_pack_access("Create", 0, PackLevel::Own, 1).is_err());
+    }
 
     #[test]
     fn github_sign_in_persists_user_and_resolves_session() {

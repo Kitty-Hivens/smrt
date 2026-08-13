@@ -1,5 +1,6 @@
 use super::ApiError;
 use super::page::{PageQuery, next_link};
+use crate::accounts::PackLevel;
 use crate::authoring::jar_icon;
 use crate::domain::*;
 use crate::registry::model::{FileDetail, ModDetail};
@@ -473,7 +474,7 @@ async fn gate_summary(
         return Ok(());
     }
     match super::auth::optional_identity(state, headers).await {
-        Some(id) if super::auth::may_author(&id, pack_id) => Ok(()),
+        Some(id) if super::auth::may(state, &id, pack_id, PackLevel::View).await => Ok(()),
         _ => Err(ApiError::NotFound),
     }
 }

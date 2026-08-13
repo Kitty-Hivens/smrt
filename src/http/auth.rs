@@ -15,7 +15,7 @@
 //! cookie is Lax so it survives GitHub's cross-site redirect back.
 
 use super::ApiError;
-use crate::accounts::{Identity, Role, random_token};
+use crate::accounts::{Identity, PackLevel, Role, random_token};
 use crate::state::AppState;
 use axum::extract::{Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -306,13 +306,66 @@ pub(crate) fn pack_namespace_uid(pack_id: &str) -> Option<i64> {
         .and_then(|(uid, _)| uid.parse::<i64>().ok())
 }
 
-/// May this caller author the pack at `pack_id`? A community pack is authored by
-/// its namespace owner or any admin; an official (flat) pack is admin-only.
-pub(crate) fn may_author(identity: &Identity, pack_id: &str) -> bool {
-    match pack_namespace_uid(pack_id) {
-        Some(uid) => identity.owns_or_admin(uid),
-        None => identity.role >= Role::Admin,
+/// What this caller may do to `pack_id`, without asking the store.
+///
+/// Two answers need no lookup and never will: the owner of a community
+/// namespace owns their pack because the id says so, and an admin owns every
+/// pack because that is what the rung means. `None` means the answer is a grant
+/// -- which is a read, so only [`authorize`] can finish the sentence.
+fn inherent_level(identity: &Identity, pack_id: &str) -> Option<PackLevel> {
+    if identity.role >= Role::Admin {
+        return Some(PackLevel::Own);
     }
+    match pack_namespace_uid(pack_id) {
+        Some(uid) if identity.uid == uid => Some(PackLevel::Own),
+        _ => None,
+    }
+}
+
+/// May this caller do `need` to `pack_id`? `Forbidden` when not (ADR 0006).
+///
+/// One gate for every authored read and write, so the three levels are compared
+/// in one place rather than re-derived per handler. Ownership and the admin rung
+/// answer without touching the database; everything else is the pack's own
+/// access list, which is what lets one person be let into one pack without being
+/// handed the mirror.
+pub(crate) async fn authorize(
+    state: &AppState,
+    identity: &Identity,
+    pack_id: &str,
+    need: PackLevel,
+) -> Result<(), ApiError> {
+    if let Some(level) = inherent_level(identity, pack_id) {
+        return (level >= need).then_some(()).ok_or(ApiError::Forbidden);
+    }
+    let granted = granted_level(state, identity.uid, pack_id).await;
+    match granted {
+        Some(level) if level >= need => Ok(()),
+        _ => Err(ApiError::Forbidden),
+    }
+}
+
+/// The level `pack_id` grants `uid`, or `None`. A store that cannot be read
+/// grants nothing: an access check that fails open is not a check.
+async fn granted_level(state: &AppState, uid: i64, pack_id: &str) -> Option<PackLevel> {
+    let acc = state.accounts.clone();
+    let pack = pack_id.to_string();
+    tokio::task::spawn_blocking(move || acc.pack_access_level(&pack, uid))
+        .await
+        .ok()?
+        .ok()?
+}
+
+/// Whether this caller may do `need`, as a question rather than a refusal --
+/// for the handlers that answer differently instead of erroring (a public read
+/// that hides a draft, a listing that filters).
+pub(crate) async fn may(
+    state: &AppState,
+    identity: &Identity,
+    pack_id: &str,
+    need: PackLevel,
+) -> bool {
+    authorize(state, identity, pack_id, need).await.is_ok()
 }
 
 /// Gate member content creation on rules-of-use acceptance: `Forbidden` until the
@@ -456,7 +509,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn may_author_gates_by_namespace() {
+    fn ownership_and_the_admin_rung_need_no_lookup() {
         let member = Identity {
             uid: 7,
             login: "m".into(),
@@ -473,20 +526,30 @@ mod tests {
             role: Role::Admin,
         };
 
-        // a member authors only their own community namespace
-        assert!(may_author(&member, "u/7/MyPack"));
-        assert!(!may_author(&member, "u/9/TheirPack"));
-        assert!(!may_author(&other, "u/7/MyPack"));
-        // and never an official (flat) pack
-        assert!(!may_author(&member, "Industrial"));
-        // admin authors anything
-        assert!(may_author(&admin, "u/7/MyPack"));
-        assert!(may_author(&admin, "Industrial"));
+        // a member owns their own community namespace and nothing else; an
+        // answer of `None` is not a refusal, it is "ask the access list"
+        assert_eq!(inherent_level(&member, "u/7/MyPack"), Some(PackLevel::Own));
+        assert_eq!(inherent_level(&member, "u/9/TheirPack"), None);
+        assert_eq!(inherent_level(&other, "u/7/MyPack"), None);
+        // an official pack is nobody's by namespace
+        assert_eq!(inherent_level(&member, "Industrial"), None);
+        // admin owns everything, official or not
+        assert_eq!(inherent_level(&admin, "u/7/MyPack"), Some(PackLevel::Own));
+        assert_eq!(inherent_level(&admin, "Industrial"), Some(PackLevel::Own));
 
         // namespace parsing: only a numeric uid segment is a community namespace
         assert_eq!(pack_namespace_uid("u/7/MyPack"), Some(7));
         assert_eq!(pack_namespace_uid("Industrial"), None);
         assert_eq!(pack_namespace_uid("u/abc/x"), None);
+    }
+
+    #[test]
+    fn levels_rank_low_to_high() {
+        // the whole gate is one comparison, so the order is the contract
+        assert!(PackLevel::Own > PackLevel::Edit);
+        assert!(PackLevel::Edit > PackLevel::View);
+        assert_eq!(PackLevel::parse("edit"), Some(PackLevel::Edit));
+        assert_eq!(PackLevel::parse("root"), None);
     }
 
     #[test]
