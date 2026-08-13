@@ -2186,9 +2186,16 @@ async fn revoke_access(
     super::auth::authorize(&state, &identity, &pack_id, PackLevel::Own).await?;
     let acc = state.accounts.clone();
     let pack = pack_id.clone();
-    let removed = tokio::task::spawn_blocking(move || acc.revoke_pack_access(&pack, uid))
-        .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("access task: {e}")))??;
+    let removed = tokio::task::spawn_blocking(move || {
+        let removed = acc.revoke_pack_access(&pack, uid)?;
+        // What they were told about this pack goes with the access: a
+        // notification reads the thread's title live, so a list left behind
+        // would keep showing a discussion they may no longer read.
+        acc.forget_notifications_about(&pack, uid)?;
+        Ok::<_, anyhow::Error>(removed)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("access task: {e}")))??;
     if removed {
         audit(
             &state,
@@ -2382,6 +2389,64 @@ async fn within_rate(state: &AppState, kind: &'static str, uid: i64) -> Result<(
 
 // ── threads: what is said about a pack (ADR 0006) ───────────────────────────
 
+// ── telling people ──────────────────────────────────────────────────────────
+
+/// Who is answerable for a pack, for telling them something happened on it.
+///
+/// The same people the gate would let act on it (ADR 0006): whoever the
+/// namespace belongs to, or -- for an official pack, which has no namespace
+/// owner -- the mirror's operators, plus anybody granted enough to act. Not the
+/// `owner` field on the summary: that is a byline, and being told about a
+/// discussion you cannot close would be worse than not being told.
+async fn keepers_of(state: &AppState, pack_id: &str) -> Vec<i64> {
+    let acc = state.accounts.clone();
+    let pack = pack_id.to_string();
+    let namespace = super::auth::pack_namespace_uid(pack_id);
+    tokio::task::spawn_blocking(move || {
+        let mut out = Vec::new();
+        match namespace {
+            Some(uid) => out.push(uid),
+            None => out.extend(acc.operator_uids().unwrap_or_default()),
+        }
+        if let Ok(grants) = acc.list_pack_access(&pack) {
+            out.extend(
+                grants
+                    .iter()
+                    .filter(|g| g.level >= PackLevel::Edit)
+                    .map(|g| g.github_uid),
+            );
+        }
+        out
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Everybody already in a discussion: whoever opened it and whoever has spoken.
+async fn voices_in(state: &AppState, thread: &crate::accounts::Thread) -> Vec<i64> {
+    let acc = state.accounts.clone();
+    let id = thread.id;
+    let mut out = vec![thread.by_uid];
+    if let Ok(Ok(speakers)) = tokio::task::spawn_blocking(move || acc.speakers_on(id)).await {
+        out.extend(speakers);
+    }
+    out
+}
+
+/// Tell people that a thread moved.
+///
+/// Never fatal: the comment was said and the proposal was decided whatever
+/// happens here, and refusing the act because nobody could be told would be the
+/// wrong way round.
+async fn tell(state: &AppState, uids: Vec<i64>, kind: &'static str, thread_id: i64, actor: i64) {
+    let acc = state.accounts.clone();
+    if let Err(e) =
+        tokio::task::spawn_blocking(move || acc.notify(&uids, kind, thread_id, actor)).await
+    {
+        tracing::warn!(error = %e, "could not write notifications");
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct OpenIssueReq {
     title: String,
@@ -2514,6 +2579,14 @@ async fn open_thread(
         Some(&format!("#{id} {title}")),
     )
     .await;
+    tell(
+        state,
+        keepers_of(state, pack_id).await,
+        "opened",
+        id,
+        identity.uid,
+    )
+    .await;
     state.events.pack(pack_id, "thread");
     Ok(id)
 }
@@ -2571,14 +2644,14 @@ async fn post_comment(
     let cid = tokio::task::spawn_blocking(move || acc.comment(id, by, &text))
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("comment task: {e}")))??;
+    let mut audience = voices_in(&state, &t).await;
+    audience.extend(keepers_of(&state, &t.pack_id).await);
+    tell(&state, audience, "comment", id, identity.uid).await;
     state.events.pack(&t.pack_id, "thread");
     let acc = state.accounts.clone();
-    let all = tokio::task::spawn_blocking(move || acc.comments_on(id))
+    let mine = tokio::task::spawn_blocking(move || acc.comment_by_id(cid))
         .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("comment task: {e}")))??;
-    let mine = all
-        .into_iter()
-        .find(|c| c.id == cid)
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("comment task: {e}")))??
         .ok_or(ApiError::NotFound)?;
     Ok((StatusCode::CREATED, Json(mine)))
 }
@@ -2702,6 +2775,14 @@ async fn merge_proposal(
         Some(&format!("#{id} as {}", commit.id)),
     )
     .await;
+    tell(
+        &state,
+        voices_in(&state, &t).await,
+        "settled",
+        id,
+        identity.uid,
+    )
+    .await;
     state.events.pack(&t.pack_id, "thread");
     Ok(Json(load_thread(&state, id).await?))
 }
@@ -2738,6 +2819,14 @@ async fn close_thread(
         Some(&format!("#{id}")),
     )
     .await;
+    tell(
+        &state,
+        voices_in(&state, &t).await,
+        "settled",
+        id,
+        identity.uid,
+    )
+    .await;
     state.events.pack(&t.pack_id, "thread");
     Ok(Json(load_thread(&state, id).await?))
 }
@@ -2762,6 +2851,14 @@ async fn reopen_thread(
             "only a closed issue reopens; a proposal is offered again as a new one".into(),
         ));
     }
+    tell(
+        &state,
+        voices_in(&state, &t).await,
+        "settled",
+        id,
+        identity.uid,
+    )
+    .await;
     state.events.pack(&t.pack_id, "thread");
     Ok(Json(load_thread(&state, id).await?))
 }

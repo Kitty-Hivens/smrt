@@ -22,7 +22,12 @@
     onChanged?: () => void;
   } = $props();
 
+  // A discussion arrives a page at a time; the thread rides with every page, so
+  // what is appended here is the comments and nothing else.
+  const PAGE = 100;
+
   let view = $state<ThreadView | null>(null);
+  let older = $state<string | null>(null);
   let diff = $state<CommitDiff | null>(null);
   let loading = $state(true);
   let failed = $state(false);
@@ -75,7 +80,9 @@
   async function load(id: number) {
     loading = true;
     try {
-      view = await api.thread(id);
+      const page = await api.thread(id, PAGE);
+      view = page.value;
+      older = page.next;
       failed = false;
       // The diff is the reviewer's half of a proposal; an issue has none, and a
       // settled proposal's offer is history rather than a question.
@@ -105,13 +112,41 @@
     }
   }
 
+  /// The next page of what was said. Followed by address rather than by
+  /// counting: a comment arriving while somebody reads must not shift the page
+  /// under them.
+  async function readMore() {
+    if (!older || working) return;
+    working = true;
+    try {
+      const page = await api.threadPage(older);
+      if (view) view = { ...view, comments: [...view.comments, ...page.value.comments] };
+      older = page.next;
+    } catch (e) {
+      notifyFail(e);
+    } finally {
+      working = false;
+    }
+  }
+
+  /// Saying something appends it rather than re-reading the discussion: the
+  /// mirror answers with the row as a reader will see it, and a reload would
+  /// throw away every page after the first -- including, on a long thread, the
+  /// page the new comment is on.
   async function say() {
     const body = reply.trim();
     if (!body) return;
-    await act(async () => {
-      await api.comment(threadId, body);
+    working = true;
+    try {
+      const added = await api.comment(threadId, body);
       reply = '';
-    });
+      if (view) view = { ...view, comments: [...view.comments, added] };
+      onChanged?.();
+    } catch (e) {
+      notifyFail(e);
+    } finally {
+      working = false;
+    }
   }
 
   async function merge() {
@@ -250,6 +285,10 @@
         </article>
       {/each}
 
+      {#if older}
+        <button class="link more" onclick={readMore} disabled={working}>{t('thr.more')}</button>
+      {/if}
+
       {#if me}
         <div class="say">
           <textarea
@@ -385,6 +424,10 @@
     margin: 4px 0 0;
     font-size: var(--fs-sm);
     font-style: italic;
+  }
+  .more {
+    align-self: flex-start;
+    font-size: var(--fs-sm);
   }
   .say {
     display: flex;

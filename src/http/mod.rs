@@ -409,6 +409,118 @@ mod tests {
         );
     }
 
+    // Being answered is the half of a discussion that makes people come back to
+    // it. What matters here is who is told and who is not: the person who acted
+    // is never told about their own act, and the pack's keepers hear about a
+    // report without having to open the tab to find it.
+    #[tokio::test]
+    async fn an_answer_reaches_the_people_it_is_for_and_nobody_else() {
+        use axum::http::StatusCode;
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path());
+        let cfg = sample_pack("Create", crate::domain::Visibility::Published);
+        state
+            .storage
+            .save_pack_config("Create", &cfg)
+            .await
+            .unwrap();
+        state
+            .storage
+            .save_pack_summary(&crate::authoring::make_pack_summary(&cfg, "0.1.0"))
+            .await
+            .unwrap();
+        // an official pack, so its keepers are the mirror's operators
+        let keeper = state
+            .accounts
+            .sign_in_github(1, "keeper", Some(crate::accounts::Role::Admin))
+            .unwrap();
+        let reporter = state.accounts.sign_in_github(42, "reporter", None).unwrap();
+        let other = state.accounts.sign_in_github(43, "other", None).unwrap();
+        let app = router(state.clone());
+
+        call(
+            &app,
+            "POST",
+            "/v1/authoring/packs/Create/issues",
+            Some(&reporter),
+            Some(r#"{"title":"a mod crashes"}"#),
+        )
+        .await;
+        assert_eq!(
+            state.accounts.unread_count(1).unwrap(),
+            1,
+            "whoever keeps the pack hears that a report was opened"
+        );
+        assert_eq!(
+            state.accounts.unread_count(42).unwrap(),
+            0,
+            "and the reporter is not told about their own report"
+        );
+
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/threads/1/comments",
+                Some(&other),
+                Some(r#"{"body":"same here"}"#)
+            )
+            .await,
+            StatusCode::CREATED
+        );
+        assert_eq!(
+            state.accounts.unread_count(42).unwrap(),
+            1,
+            "the reporter is told they were answered"
+        );
+        assert_eq!(state.accounts.unread_count(43).unwrap(), 0);
+
+        // the keeper closes it: the people in the discussion hear the decision
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/threads/1/close",
+                Some(&keeper),
+                None
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert_eq!(state.accounts.unread_count(42).unwrap(), 2);
+        assert_eq!(
+            state.accounts.unread_count(43).unwrap(),
+            1,
+            "including whoever spoke in it"
+        );
+
+        // reading is the caller's own list, and marking read is scoped to it
+        let (status, body) = read(&app, "/v1/me/notifications?unread=true", Some(&reporter)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("\"unread\":2"), "{body}");
+        assert!(
+            body.contains("a mod crashes"),
+            "the thread's own words: {body}"
+        );
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/me/notifications/read",
+                Some(&reporter),
+                Some("{}")
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(state.accounts.unread_count(42).unwrap(), 0);
+        assert_eq!(
+            state.accounts.unread_count(43).unwrap(),
+            1,
+            "somebody else's list is not the caller's to mark"
+        );
+    }
+
     #[tokio::test]
     async fn a_block_stops_the_next_message_not_the_record() {
         use axum::http::StatusCode;

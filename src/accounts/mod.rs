@@ -163,6 +163,34 @@ pub struct PackBlock {
     pub blocked_at: i64,
 }
 
+/// One thing that happened to somebody's discussion, as their own list shows it.
+///
+/// It carries the thread's own words rather than a copy made when the event
+/// happened: a title edited afterwards must not leave a stale line in somebody's
+/// list saying something the thread no longer says.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct Notification {
+    #[ts(type = "number")]
+    pub id: i64,
+    /// `comment` | `opened` | `settled`.
+    pub kind: String,
+    #[ts(type = "number")]
+    pub thread_id: i64,
+    pub pack_id: String,
+    pub title: String,
+    /// The thread's standing now, which is what the reader is about to open.
+    pub status: String,
+    #[ts(type = "number")]
+    pub actor_uid: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub actor_login: Option<String>,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    pub read: bool,
+}
+
 /// Something said about a pack: a report, or a fork offered back.
 ///
 /// One shape for both because they differ only in what opens them and how they
@@ -659,6 +687,151 @@ impl Accounts {
         Ok(())
     }
 
+    // ── being told ──────────────────────────────────────────────────────────
+
+    /// Tell each of `uids` that something happened on a thread. The actor is
+    /// never told about their own act, and a uid of 0 is the mirror's own hand
+    /// rather than a person with a list to read. Blocking; wrap in
+    /// `spawn_blocking`.
+    pub fn notify(&self, uids: &[i64], kind: &str, thread_id: i64, actor_uid: i64) -> Result<()> {
+        if !matches!(kind, "comment" | "opened" | "settled") {
+            anyhow::bail!("unknown notification kind {kind:?}");
+        }
+        let mut told: Vec<i64> = uids
+            .iter()
+            .copied()
+            .filter(|u| *u != actor_uid && *u != BREAK_GLASS_UID)
+            .collect();
+        told.sort_unstable();
+        told.dedup();
+        if told.is_empty() {
+            return Ok(());
+        }
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let now = unix_now();
+        let mut stmt = guard.prepare(
+            "INSERT INTO notifications (uid, kind, thread_id, actor_uid, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for uid in told {
+            stmt.execute(params![uid, kind, thread_id, actor_uid, now])?;
+        }
+        Ok(())
+    }
+
+    /// The mirror's operators, for the packs whose keepers are exactly that: an
+    /// official pack has no namespace owner, so admin is who answers for it.
+    pub fn operator_uids(&self) -> Result<Vec<i64>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let mut stmt =
+            guard.prepare("SELECT github_uid FROM users WHERE role IN ('admin', 'debug')")?;
+        let rows = stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Everyone who has said something on a thread, for telling them it moved.
+    pub fn speakers_on(&self, thread_id: i64) -> Result<Vec<i64>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let mut stmt =
+            guard.prepare("SELECT DISTINCT by_uid FROM thread_comments WHERE thread_id = ?1")?;
+        let rows = stmt
+            .query_map(params![thread_id], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Forget what somebody was told about one pack. Called when their access to
+    /// it is taken away: a notification carries the thread's title, read live, so
+    /// a list left behind would keep showing a private discussion to somebody who
+    /// may no longer read it.
+    pub fn forget_notifications_about(&self, pack_id: &str, uid: i64) -> Result<()> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard.execute(
+            "DELETE FROM notifications WHERE uid = ?2 AND thread_id IN
+                 (SELECT id FROM pack_threads WHERE pack_id = ?1)",
+            params![pack_id, uid],
+        )?;
+        Ok(())
+    }
+
+    /// Somebody's list, newest first. `unread_only` is what a badge counts and
+    /// what a reader usually wants; `limit` bounds a list that only grows.
+    pub fn notifications_for(
+        &self,
+        uid: i64,
+        unread_only: bool,
+        limit: Option<usize>,
+    ) -> Result<Vec<Notification>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let sql = format!(
+            "SELECT n.id, n.kind, n.thread_id, t.pack_id, t.title, t.status,
+                    n.actor_uid, u.login, n.created_at, n.read_at
+             FROM notifications n
+             JOIN pack_threads t ON t.id = n.thread_id
+             LEFT JOIN users u ON u.github_uid = n.actor_uid
+             WHERE n.uid = ?1{} ORDER BY n.id DESC{}",
+            if unread_only {
+                " AND n.read_at IS NULL"
+            } else {
+                ""
+            },
+            match limit {
+                Some(n) => format!(" LIMIT {n}"),
+                None => String::new(),
+            }
+        );
+        let mut stmt = guard.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params![uid], |r| {
+                let read_at: Option<i64> = r.get(9)?;
+                Ok(Notification {
+                    id: r.get(0)?,
+                    kind: r.get(1)?,
+                    thread_id: r.get(2)?,
+                    pack_id: r.get(3)?,
+                    title: r.get(4)?,
+                    status: r.get(5)?,
+                    actor_uid: r.get(6)?,
+                    actor_login: r.get(7)?,
+                    created_at: r.get(8)?,
+                    read: read_at.is_some(),
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// How many somebody has not read yet.
+    pub fn unread_count(&self, uid: i64) -> Result<i64> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        Ok(guard.query_row(
+            "SELECT COUNT(*) FROM notifications WHERE uid = ?1 AND read_at IS NULL",
+            params![uid],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Mark one of somebody's notifications read, or all of them. Scoped to the
+    /// owner: an id is not a capability, so marking somebody else's read is not
+    /// something an id can do.
+    pub fn mark_read(&self, uid: i64, id: Option<i64>) -> Result<()> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        match id {
+            Some(id) => guard.execute(
+                "UPDATE notifications SET read_at = ?3
+                 WHERE uid = ?1 AND id = ?2 AND read_at IS NULL",
+                params![uid, id, unix_now()],
+            )?,
+            None => guard.execute(
+                "UPDATE notifications SET read_at = ?2 WHERE uid = ?1 AND read_at IS NULL",
+                params![uid, unix_now()],
+            )?,
+        };
+        Ok(())
+    }
+
     /// Open a thread on a pack and return its id. `source` is `None` for an
     /// issue and the offered `(pack, commit)` for a proposal. Blocking; wrap in
     /// `spawn_blocking`.
@@ -705,38 +878,56 @@ impl Accounts {
     }
 
     /// Threads on a pack, newest first. `kind` narrows to issues or proposals;
-    /// `open_only` is what a reader wants by default. Blocking.
+    /// `open_only` is what a reader wants by default. `after` is the
+    /// `(created_at, id)` of the last row of the previous page and `limit` how
+    /// many to read; both absent answers the whole list, as it did before it
+    /// could be paged. Blocking.
+    ///
+    /// The order breaks ties by id rather than leaving two threads opened in the
+    /// same second to the database's discretion: a cursor into an order that is
+    /// not total can skip a row or serve it twice.
     pub fn threads_for(
         &self,
         pack_id: &str,
         kind: Option<&str>,
         open_only: bool,
+        after: Option<(i64, i64)>,
+        limit: Option<usize>,
     ) -> Result<Vec<Thread>> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(pack_id.to_string())];
+        let mut where_more = String::new();
+        if let Some(k) = kind {
+            args.push(Box::new(k.to_string()));
+            where_more.push_str(&format!(" AND t.kind = ?{}", args.len()));
+        }
+        if open_only {
+            where_more.push_str(" AND t.status = 'open'");
+        }
+        if let Some((at, id)) = after {
+            args.push(Box::new(at));
+            args.push(Box::new(id));
+            where_more.push_str(&format!(
+                " AND (t.created_at < ?{} OR (t.created_at = ?{} AND t.id < ?{}))",
+                args.len() - 1,
+                args.len() - 1,
+                args.len()
+            ));
+        }
         let sql = format!(
             "SELECT {THREAD_COLS} FROM pack_threads t \
              LEFT JOIN users u ON u.github_uid = t.by_uid \
-             WHERE t.pack_id = ?1 {} {} ORDER BY t.created_at DESC",
-            if kind.is_some() {
-                "AND t.kind = ?2"
-            } else {
-                ""
-            },
-            if open_only {
-                "AND t.status = 'open'"
-            } else {
-                ""
-            },
+             WHERE t.pack_id = ?1{where_more} ORDER BY t.created_at DESC, t.id DESC{}",
+            match limit {
+                Some(n) => format!(" LIMIT {n}"),
+                None => String::new(),
+            }
         );
         let mut stmt = guard.prepare(&sql)?;
-        let rows: Vec<Thread> = match kind {
-            Some(k) => stmt
-                .query_map(params![pack_id, k], thread_from_row)?
-                .collect::<rusqlite::Result<Vec<_>>>()?,
-            None => stmt
-                .query_map(params![pack_id], thread_from_row)?
-                .collect::<rusqlite::Result<Vec<_>>>()?,
-        };
+        let bound: Vec<&dyn rusqlite::ToSql> = args.iter().map(|a| a.as_ref()).collect();
+        let rows = stmt
+            .query_map(bound.as_slice(), thread_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -822,31 +1013,46 @@ impl Accounts {
 
     /// A thread's discussion, oldest first. A hidden comment keeps its place and
     /// loses its body: the mirror never serves what a moderator took down.
-    pub fn comments_on(&self, thread_id: i64) -> Result<Vec<ThreadComment>> {
+    ///
+    /// `after` is the last comment id of the previous page -- the id is the order
+    /// here, since a comment is only ever appended -- and `limit` how many to
+    /// read. Both absent answers the whole discussion.
+    pub fn comments_on(
+        &self,
+        thread_id: i64,
+        after: Option<i64>,
+        limit: Option<usize>,
+    ) -> Result<Vec<ThreadComment>> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
-        let mut stmt = guard.prepare(
+        let mut stmt = guard.prepare(&format!(
             "SELECT c.id, c.by_uid, u.login, c.body, c.hidden_at, c.created_at
              FROM thread_comments c LEFT JOIN users u ON u.github_uid = c.by_uid
-             WHERE c.thread_id = ?1 ORDER BY c.created_at, c.id",
-        )?;
+             WHERE c.thread_id = ?1 AND c.id > ?2 ORDER BY c.id{}",
+            match limit {
+                Some(n) => format!(" LIMIT {n}"),
+                None => String::new(),
+            }
+        ))?;
         let rows = stmt
-            .query_map(params![thread_id], |r| {
-                let hidden: Option<i64> = r.get(4)?;
-                Ok(ThreadComment {
-                    id: r.get(0)?,
-                    by_uid: r.get(1)?,
-                    by_login: r.get(2)?,
-                    body: if hidden.is_some() {
-                        None
-                    } else {
-                        Some(r.get(3)?)
-                    },
-                    hidden: hidden.is_some(),
-                    created_at: r.get(5)?,
-                })
-            })?
+            .query_map(params![thread_id, after.unwrap_or(0)], comment_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    /// One comment, as a reader would see it -- for the write that has just
+    /// added it and wants to answer with the row rather than with the id.
+    pub fn comment_by_id(&self, id: i64) -> Result<Option<ThreadComment>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard
+            .query_row(
+                "SELECT c.id, c.by_uid, u.login, c.body, c.hidden_at, c.created_at
+                 FROM thread_comments c LEFT JOIN users u ON u.github_uid = c.by_uid
+                 WHERE c.id = ?1",
+                params![id],
+                comment_from_row,
+            )
+            .optional()
+            .context("read comment")
     }
 
     /// Take a comment down, or put it back. Hiding keeps the row so the gap in
@@ -1115,6 +1321,22 @@ const THREAD_COLS: &str = "t.id, t.pack_id, t.kind, t.title, t.body, t.by_uid, u
      t.status, t.source_pack, t.source_commit, t.merged_commit, t.created_at, t.decided_at, \
      t.decided_by, (SELECT COUNT(*) FROM thread_comments c WHERE c.thread_id = t.id)";
 
+fn comment_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadComment> {
+    let hidden: Option<i64> = r.get(4)?;
+    Ok(ThreadComment {
+        id: r.get(0)?,
+        by_uid: r.get(1)?,
+        by_login: r.get(2)?,
+        body: if hidden.is_some() {
+            None
+        } else {
+            Some(r.get(3)?)
+        },
+        hidden: hidden.is_some(),
+        created_at: r.get(5)?,
+    })
+}
+
 fn thread_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
     Ok(Thread {
         id: r.get(0)?,
@@ -1303,7 +1525,7 @@ mod tests {
         assert_eq!(a.thread(t).unwrap().unwrap().comments, 2);
         assert!(a.set_comment_hidden(c2, true, 1).unwrap());
 
-        let rows = a.comments_on(t).unwrap();
+        let rows = a.comments_on(t, None, None).unwrap();
         assert_eq!(rows.len(), 2, "a hidden comment keeps its place");
         assert_eq!(rows[0].id, c1);
         assert_eq!(rows[0].body.as_deref(), Some("a fair point"));
@@ -1316,7 +1538,7 @@ mod tests {
         // and it can be put back
         assert!(a.set_comment_hidden(c2, false, 1).unwrap());
         assert_eq!(
-            a.comments_on(t).unwrap()[1].body.as_deref(),
+            a.comments_on(t, None, None).unwrap()[1].body.as_deref(),
             Some("an unfair one")
         );
     }
@@ -1336,8 +1558,79 @@ mod tests {
         a.open_thread("u/42/fork", "issue", "y", "", 1, None)
             .unwrap();
         a.forget_pack_threads("u/42/fork").unwrap();
-        assert!(a.threads_for("Create", None, false).unwrap().is_empty());
-        assert!(a.threads_for("u/42/fork", None, false).unwrap().is_empty());
+        assert!(
+            a.threads_for("Create", None, false, None, None)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            a.threads_for("u/42/fork", None, false, None, None)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    // A page is "everything after this row", and the row it names is the sort
+    // key -- which for a list of threads is a pair, because two threads opened
+    // in the same second are otherwise in no defined order and a cursor into an
+    // undefined order skips rows or repeats them.
+    #[test]
+    fn a_long_discussion_is_read_a_page_at_a_time() {
+        let a = Accounts::open_in_memory().unwrap();
+        let t = a.open_thread("Create", "issue", "x", "", 42, None).unwrap();
+        let ids: Vec<i64> = (0..5)
+            .map(|i| a.comment(t, 42, &format!("{i}")).unwrap())
+            .collect();
+
+        let first = a.comments_on(t, None, Some(2)).unwrap();
+        assert_eq!(first.iter().map(|c| c.id).collect::<Vec<_>>(), ids[..2]);
+        let second = a.comments_on(t, Some(first[1].id), Some(2)).unwrap();
+        assert_eq!(second.iter().map(|c| c.id).collect::<Vec<_>>(), ids[2..4]);
+        let last = a.comments_on(t, Some(second[1].id), Some(2)).unwrap();
+        assert_eq!(last.iter().map(|c| c.id).collect::<Vec<_>>(), ids[4..]);
+        assert!(a.comments_on(t, Some(ids[4]), Some(2)).unwrap().is_empty());
+        // and asking for no page is still the whole discussion
+        assert_eq!(a.comments_on(t, None, None).unwrap().len(), 5);
+    }
+
+    #[test]
+    fn a_pack_with_many_threads_pages_by_when_they_were_opened() {
+        let a = Accounts::open_in_memory().unwrap();
+        // all opened within the same second, which is the case the pair exists
+        // for: without the id in the cursor the second page could repeat one
+        let ids: Vec<i64> = (0..4)
+            .map(|i| {
+                a.open_thread("Create", "issue", &format!("t{i}"), "", 42, None)
+                    .unwrap()
+            })
+            .collect();
+
+        let page = a.threads_for("Create", None, false, None, Some(2)).unwrap();
+        assert_eq!(
+            page.iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![ids[3], ids[2]],
+            "newest first"
+        );
+        let last = &page[1];
+        let rest = a
+            .threads_for(
+                "Create",
+                None,
+                false,
+                Some((last.created_at, last.id)),
+                Some(2),
+            )
+            .unwrap();
+        assert_eq!(
+            rest.iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![ids[1], ids[0]]
+        );
+        assert_eq!(
+            a.threads_for("Create", None, false, None, None)
+                .unwrap()
+                .len(),
+            4
+        );
     }
 
     #[test]

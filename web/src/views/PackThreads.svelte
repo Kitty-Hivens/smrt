@@ -31,7 +31,12 @@
     canWrite?: boolean;
   } = $props();
 
+  // A page at a time: a pack that has been talked about for a year should not
+  // cost a reader the whole year to see what is open this week.
+  const PAGE = 50;
+
   let rows = $state<Thread[]>([]);
+  let next = $state<string | null>(null);
   let loading = $state(true);
   let failed = $state(false);
   let showAll = $state(false);
@@ -53,13 +58,32 @@
   async function load() {
     loading = true;
     try {
-      rows = await api.threads(packId, undefined, showAll);
+      const page = await api.threads(packId, undefined, showAll, PAGE);
+      rows = page.rows;
+      next = page.next;
       failed = false;
     } catch (e) {
       failed = true;
       notifyFail(e);
     } finally {
       loading = false;
+    }
+  }
+
+  /// Follow the address the last page named, rather than counting rows we have
+  /// already seen -- one opened while somebody reads must not shift the page
+  /// under them.
+  async function more() {
+    if (!next || working) return;
+    working = true;
+    try {
+      const page = await api.threadsPage(next);
+      rows = [...rows, ...page.rows];
+      next = page.next;
+    } catch (e) {
+      notifyFail(e);
+    } finally {
+      working = false;
     }
   }
 
@@ -178,6 +202,9 @@
         </li>
       {/each}
     </ol>
+    {#if next}
+      <button class="link more" onclick={more} disabled={working}>{t('thr.more')}</button>
+    {/if}
   {/if}
 </div>
 
@@ -258,6 +285,10 @@
   }
   .empty,
   .small {
+    font-size: var(--fs-sm);
+  }
+  .more {
+    margin-top: 10px;
     font-size: var(--fs-sm);
   }
 </style>

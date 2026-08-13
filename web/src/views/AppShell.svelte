@@ -4,6 +4,8 @@
   import type { Health } from '../lib/types';
   import { href, plainClick, route, visibleSections, type Section } from '../lib/route.svelte';
   import { activity } from '../lib/motion.svelte';
+  import { inbox } from '../lib/inbox.svelte';
+  import { mirror } from '../lib/mirror.svelte';
   import { t } from '../lib/i18n.svelte';
   import Avatar from './Avatar.svelte';
   import NavIcon from './ui/NavIcon.svelte';
@@ -31,6 +33,15 @@
   function onWindowKeydown(e: KeyboardEvent) {
     if (drawerOpen && e.key === 'Escape') drawerOpen = false;
   }
+
+  // What is waiting to be read, beside the place it is read. Refreshed on the
+  // same event a discussion moving already sends, so nothing here polls; a guest
+  // has no inbox and asks for none.
+  $effect(() => {
+    void mirror.packs;
+    if (me) void inbox.refresh();
+    else inbox.clear();
+  });
 
   let health = $state<Health | null>(null);
 
@@ -88,6 +99,9 @@
           >
             <NavIcon name={s} />
             <span class="label">{t(navKey[s])}</span>
+            {#if s === 'profile' && inbox.unread}
+              <span class="badge" title={t('inbox.title')}>{inbox.unread}</span>
+            {/if}
           </a>
         </li>
       {/each}
@@ -221,6 +235,17 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     box-shadow: none;
+  }
+  /* how many are waiting, at the end of the row it is read on */
+  .badge {
+    margin-left: auto;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    letter-spacing: 0;
+    color: var(--on-solid);
+    background: var(--solid);
+    border-radius: 999px;
+    padding: 1px 7px;
   }
   /* the glyph is the anchor while scanning, so it stays at full strength while
      the label carries the dim/active contrast */
