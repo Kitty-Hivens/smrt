@@ -219,6 +219,11 @@ default, `?all=true` for the settled, `?kind=` to narrow.
 `GET /v1/threads/{id}/diff` is what taking a proposal would do to the pack as it
 stands now, in the same change rows the panel draws.
 
+The list and the discussion take `?limit=` and name the next page in a `Link`
+header, the same keyset paging as `/v1/cache/inventory` and the audit log; the
+thread rides with every page of its comments, so a paging client never holds
+half an answer. Without `limit` both answer whole.
+
 All three are anonymous reads for a published or unlisted pack, and answer `404`
 for a draft that is not yours -- a decision nobody can see is indistinguishable
 from one nobody made. A moderated comment keeps its place in the numbering and

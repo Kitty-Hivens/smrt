@@ -209,6 +209,26 @@ version section when a release is tagged.
 
 ### Added
 
+- Being answered reaches the person it is for. A discussion where a reply
+  reaches nobody is one people stop reading: a report sat open because its
+  author never learned it had been answered, and a pack's keepers learned about
+  a report by happening to open the tab. A comment now tells everybody already
+  in the discussion and the people who keep the pack, opening a thread tells the
+  keepers, and a decision tells everybody who was in it -- nobody is ever told
+  about their own act. The account's own page carries the list and the rail
+  carries the count. What is stored is the event, not a copy of the thread: the
+  title and the standing are read live, so an edited title leaves no stale line
+  behind, and taking somebody's access to a pack away forgets what they were
+  told about it.
+- A long discussion is read a page at a time, and so is a pack's list of them.
+  Both answered whole however much had accumulated. They now take `?limit=` and
+  name the next page in a `Link` header -- keyset, like every other listing here,
+  so a comment arriving while somebody reads cannot shift the page under them --
+  and without `limit` they answer whole, as before. The panel asks for a page and
+  offers to show more; saying something appends it rather than re-reading the
+  discussion, which on a long thread used to mean losing every page but the
+  first.
+
 - A pack's keepers can stop somebody writing on it. Anyone signed in may report
   something on a published pack -- which is what makes a report worth having --
   so the only thing standing between a pack and a flood was a rate window and

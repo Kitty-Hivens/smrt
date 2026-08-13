@@ -27,6 +27,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/me/uploads", get(my_uploads))
         .route("/v1/me/forks", post(fork_pack))
         .route("/v1/me/accept-terms", post(accept_terms))
+        .route("/v1/me/notifications", get(my_notifications))
+        .route("/v1/me/notifications/read", post(read_notifications))
         .route("/v1/events", get(mirror_events))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BODY))
         .layer(from_fn_with_state(
@@ -105,6 +107,72 @@ async fn my_authoring(
     Ok(Json(
         super::auth::filter_may(&state, &identity, all, PackLevel::View).await,
     ))
+}
+
+// ── being told ──────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct NotificationParams {
+    /// `?unread=true` is what a reader usually wants; absent reads everything.
+    #[serde(default)]
+    unread: bool,
+    /// A list that only grows is read a bounded slice at a time.
+    limit: Option<usize>,
+}
+
+#[derive(serde::Serialize)]
+struct NotificationListing {
+    /// How many are unread in total, which is not the same as how many unread
+    /// rows are in this answer -- the badge counts the first, the list shows the
+    /// second.
+    unread: i64,
+    rows: Vec<crate::accounts::Notification>,
+}
+
+/// What happened on the discussions this caller is part of: their reports
+/// answered, their proposals decided, and threads opened on packs they keep.
+///
+/// Their own acts are not in it: being told what you just did is noise, and the
+/// list exists to say what you have not seen.
+async fn my_notifications(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Query(p): Query<NotificationParams>,
+) -> Result<Json<NotificationListing>, ApiError> {
+    let acc = state.accounts.clone();
+    let uid = identity.uid;
+    let limit = p.limit.map(|n| n.clamp(1, 200));
+    let listing = tokio::task::spawn_blocking(move || {
+        Ok::<_, anyhow::Error>(NotificationListing {
+            unread: acc.unread_count(uid)?,
+            rows: acc.notifications_for(uid, p.unread, limit)?,
+        })
+    })
+    .await
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("notification task: {e}")))??;
+    Ok(Json(listing))
+}
+
+#[derive(Deserialize)]
+struct ReadReq {
+    /// One of them; absent marks everything read.
+    #[serde(default)]
+    id: Option<i64>,
+}
+
+/// Mark one as read, or all of them. Scoped to the caller: an id is not a
+/// capability, so this can only ever mark the caller's own.
+async fn read_notifications(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Json(req): Json<ReadReq>,
+) -> Result<StatusCode, ApiError> {
+    let acc = state.accounts.clone();
+    let uid = identity.uid;
+    tokio::task::spawn_blocking(move || acc.mark_read(uid, req.id))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("notification task: {e}")))??;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]

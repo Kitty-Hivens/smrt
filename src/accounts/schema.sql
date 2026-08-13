@@ -154,6 +154,29 @@ CREATE TABLE IF NOT EXISTS pack_blocks (
 );
 CREATE INDEX IF NOT EXISTS idx_pack_blocks_uid ON pack_blocks(github_uid);
 
+-- Somebody was answered and does not know it. A discussion where a reply
+-- reaches nobody is a discussion people stop reading: the report sits open
+-- because its author never learned it was answered, and the pack's keepers
+-- learn about a report when they happen to open the tab.
+--
+-- One row per event rather than a per-thread counter, so "who answered what,
+-- when" survives being read: the row is marked read, not deleted. The thread is
+-- the only thing referenced -- what to show is read from it, so a title edited
+-- afterwards does not leave a stale copy here -- and a deleted pack takes its
+-- threads and, with them, these.
+CREATE TABLE IF NOT EXISTS notifications (
+    id         INTEGER PRIMARY KEY,
+    uid        INTEGER NOT NULL,
+    -- 'comment' (somebody said something), 'opened' (a thread on a pack you
+    -- keep), 'settled' (yours was closed, declined, merged or reopened)
+    kind       TEXT NOT NULL CHECK (kind IN ('comment', 'opened', 'settled')),
+    thread_id  INTEGER NOT NULL REFERENCES pack_threads(id) ON DELETE CASCADE,
+    actor_uid  INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    read_at    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_uid ON notifications(uid, read_at, id);
+
 -- What people said on a thread. Hidden rather than deleted when moderated: the
 -- fact that something was said and taken down is itself part of the record, and
 -- a hole in a numbered discussion is worse than a marked gap. `hidden_by` is the

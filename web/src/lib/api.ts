@@ -36,6 +36,7 @@ import type {
   PackEvent,
   ModrinthVersion,
   ModSummary,
+  Notification as NotificationRow,
   PackConfig,
   PackListing,
   PackManifest,
@@ -125,6 +126,23 @@ async function getPage<T>(path: string): Promise<Page<T>> {
     });
     if (!r.ok) throw await toError(r);
     return { rows: (await r.json()) as T[], next: nextPageUrl(r.headers.get('Link')) };
+  } finally {
+    activity.end();
+  }
+}
+
+// One object that arrives a page at a time -- a discussion, where the thread
+// rides with every page of its comments so a reader who follows the `Link`
+// never holds half an answer.
+async function getWithLink<T>(path: string): Promise<{ value: T; next: string | null }> {
+  activity.begin();
+  try {
+    const r = await fetch(path, {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+    });
+    if (!r.ok) throw await toError(r);
+    return { value: (await r.json()) as T, next: nextPageUrl(r.headers.get('Link')) };
   } finally {
     activity.end();
   }
@@ -311,14 +329,18 @@ export const api = {
   // Reading is as public as the pack, so a signed-out reader uses the same
   // shapes through the public routes; the authoring ones are what a member
   // needs to write.
-  threads: (id: string, kind?: 'issue' | 'proposal', all = false) =>
-    getJson<Thread[]>(
+  threads: (id: string, kind?: 'issue' | 'proposal', all = false, limit?: number) =>
+    getPage<Thread>(
       `/v1/packs/${encodeURIComponent(id)}/threads?${new URLSearchParams({
         ...(kind ? { kind } : {}),
         ...(all ? { all: 'true' } : {}),
+        ...(limit ? { limit: String(limit) } : {}),
       })}`,
     ),
-  thread: (threadId: number) => getJson<ThreadView>(`/v1/threads/${threadId}`),
+  threadsPage: (url: string) => getPage<Thread>(url),
+  thread: (threadId: number, limit?: number) =>
+    getWithLink<ThreadView>(`/v1/threads/${threadId}${limit ? `?limit=${limit}` : ''}`),
+  threadPage: (url: string) => getWithLink<ThreadView>(url),
   threadDiff: (threadId: number) => getJson<CommitDiff>(`/v1/threads/${threadId}/diff`),
   openIssue: (id: string, title: string, body: string) =>
     postJson<Thread>(`/v1/authoring/packs/${encodeURIComponent(id)}/issues`, { title, body }),
@@ -768,6 +790,21 @@ export const api = {
     return r.ok ? r.json() : null;
   },
   acceptTerms: () => send('POST', '/v1/me/accept-terms'),
+
+  // ── what the mirror has to tell you ──
+  //
+  // The count is the whole inbox, the rows are a slice of it: a badge and a
+  // list want different numbers and it would be a lie to derive one from the
+  // other.
+  notifications: (unreadOnly = false, limit?: number) =>
+    getJson<{ unread: number; rows: NotificationRow[] }>(
+      `/v1/me/notifications?${new URLSearchParams({
+        ...(unreadOnly ? { unread: 'true' } : {}),
+        ...(limit ? { limit: String(limit) } : {}),
+      })}`,
+    ),
+  markNotificationsRead: (id?: number) =>
+    send('POST', '/v1/me/notifications/read', { id: id ?? null }),
   // The admin token no longer authenticates a human. A valid one comes back 410
   // so the panel can say it's deprecated; anything else is a plain rejection.
   async login(token: string): Promise<'deprecated' | 'rejected'> {

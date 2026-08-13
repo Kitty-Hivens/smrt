@@ -505,7 +505,9 @@ async fn gate_pack_read(
     params(
         ("pack_id" = String, Path, description = "Pack id"),
         ("kind" = Option<String>, Query, description = "`issue` | `proposal`; absent lists both"),
-        ("all" = Option<bool>, Query, description = "Include settled threads")
+        ("all" = Option<bool>, Query, description = "Include settled threads"),
+        ("limit" = Option<usize>, Query, description = "Page size; absent answers the whole list"),
+        ("after" = Option<String>, Query, description = "Cursor from the previous page's `Link`")
     ),
     responses(
         (status = 200, description = "Reports and proposals on a published pack", body = [Thread]),
@@ -517,14 +519,27 @@ pub(crate) async fn public_threads(
     headers: HeaderMap,
     Path(pack_id): Path<String>,
     Query(p): Query<PublicThreadParams>,
-) -> Result<Json<Vec<crate::accounts::Thread>>, ApiError> {
+    Query(page): Query<PageQuery>,
+    uri: Uri,
+) -> Result<Response, ApiError> {
     gate_pack_read(&state, &headers, &pack_id).await?;
     let acc = state.accounts.clone();
     let (pack, kind) = (pack_id.clone(), p.kind.clone());
-    let rows = tokio::task::spawn_blocking(move || acc.threads_for(&pack, kind.as_deref(), !p.all))
-        .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
-    Ok(Json(rows))
+    // The cursor is the last row's sort key, which for this listing is the pair
+    // the order is by; a cursor that does not decode reads as the start.
+    let after = page.cursor().and_then(|parts| match parts.as_slice() {
+        [at, id] => Some((at.parse().ok()?, id.parse().ok()?)),
+        _ => None,
+    });
+    let probe = page.probe();
+    let rows = tokio::task::spawn_blocking(move || {
+        acc.threads_for(&pack, kind.as_deref(), !p.all, after, probe)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
+    Ok(page.answer(rows, &uri, |t| {
+        vec![t.created_at.to_string(), t.id.to_string()]
+    }))
 }
 
 #[derive(serde::Deserialize)]
@@ -540,7 +555,11 @@ pub(crate) struct PublicThreadParams {
     get,
     path = "/v1/threads/{id}",
     tag = "public",
-    params(("id" = i64, Path, description = "Thread id")),
+    params(
+        ("id" = i64, Path, description = "Thread id"),
+        ("limit" = Option<usize>, Query, description = "Comments per page; absent answers all of them"),
+        ("after" = Option<String>, Query, description = "Cursor from the previous page's `Link`")
+    ),
     responses(
         (status = 200, description = "One discussion in full", body = ThreadView),
         (status = 404, description = "No such thread, or its pack is not yours to read")
@@ -550,7 +569,9 @@ pub(crate) async fn public_thread(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<i64>,
-) -> Result<Json<crate::accounts::ThreadView>, ApiError> {
+    Query(page): Query<PageQuery>,
+    uri: Uri,
+) -> Result<Response, ApiError> {
     let acc = state.accounts.clone();
     let thread = tokio::task::spawn_blocking(move || acc.thread(id))
         .await
@@ -558,10 +579,22 @@ pub(crate) async fn public_thread(
         .ok_or(ApiError::NotFound)?;
     gate_pack_read(&state, &headers, &thread.pack_id).await?;
     let acc = state.accounts.clone();
-    let comments = tokio::task::spawn_blocking(move || acc.comments_on(id))
+    // What is paged here is the discussion, not the thread: a long argument
+    // arrives a page at a time and the thread it is about rides with every page,
+    // so a reader who follows the `Link` never holds half an answer.
+    let after = page
+        .cursor()
+        .and_then(|parts| parts.first()?.parse::<i64>().ok());
+    let probe = page.probe();
+    let comments = tokio::task::spawn_blocking(move || acc.comments_on(id, after, probe))
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
-    Ok(Json(crate::accounts::ThreadView { thread, comments }))
+    let (comments, next) = page.split(comments, |c| vec![c.id.to_string()]);
+    let mut resp = Json(crate::accounts::ThreadView { thread, comments }).into_response();
+    if let Some(value) = next_link(&uri, next.as_deref()) {
+        resp.headers_mut().insert(header::LINK, value);
+    }
+    Ok(resp)
 }
 
 /// What a proposal would change, read against the target as it stands now --

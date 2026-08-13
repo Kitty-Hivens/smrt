@@ -134,6 +134,28 @@ while keeping the gap visible with who took it down. Closed issues reopen;
 proposals do not, because their offer was a commit and offering again is a new
 proposal.
 
+Being answered reaches people. A comment tells everybody already in the
+discussion -- whoever opened it and whoever has spoken -- plus the pack's
+keepers; opening a thread tells the keepers; a decision (closed, declined,
+merged, withdrawn, reopened) tells everybody who was in it. Keepers here are the
+same people the gate would let act: whoever the namespace belongs to, or the
+mirror's operators for an official pack, plus anybody granted `edit` or `own`.
+Nobody is ever told about their own act. `GET /v1/me/notifications` reads the
+caller's own list (`?unread=true`, `?limit=`) and answers `{unread, rows}` --
+the count is the whole list, the rows are a slice of it -- and
+`POST /v1/me/notifications/read` (`{id?}`) marks one or all read. A notification
+carries no copy of the thread: the title and status are read from it live, so an
+edited title never leaves a stale line behind, and taking somebody's access to a
+pack away forgets what they were told about it.
+
+Long discussions are read a page at a time. `GET /v1/packs/{id}/threads` and
+`GET /v1/threads/{id}` take `?limit=` and answer with a `Link` naming the next
+page, keyset-style like the rest of the mirror's listings: for the list the
+cursor is `(created_at, id)`, for a discussion it is the last comment's id.
+Without `limit` both answer whole, as they did before they could be paged. The
+thread itself rides with every page of its comments, so following the `Link`
+never leaves a reader holding half an answer.
+
 Writing has a ceiling and a stop. The ceiling is a rate window counted from the
 rows themselves -- twenty comments or five threads per ten minutes per account,
 set where a person never notices it and a script does, and a restart hands
