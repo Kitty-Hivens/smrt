@@ -230,7 +230,9 @@ version section when a release is tagged.
   carries the count. What is stored is the event, not a copy of the thread: the
   title and the standing are read live, so an edited title leaves no stale line
   behind, and taking somebody's access to a pack away forgets what they were
-  told about it.
+  told about it. The list pages like every other listing here; the unread count
+  stays the count of the whole list, because a badge and a page are different
+  numbers.
 - A long discussion is read a page at a time, and so is a pack's list of them.
   Both answered whole however much had accumulated. They now take `?limit=` and
   name the next page in a `Link` header -- keyset, like every other listing here,

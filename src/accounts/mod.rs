@@ -850,11 +850,14 @@ impl Accounts {
     }
 
     /// Somebody's list, newest first. `unread_only` is what a badge counts and
-    /// what a reader usually wants; `limit` bounds a list that only grows.
+    /// what a reader usually wants; `after` is the last id of the previous page
+    /// -- the id is the order here, a notification being only ever appended --
+    /// and `limit` bounds a list that only grows.
     pub fn notifications_for(
         &self,
         uid: i64,
         unread_only: bool,
+        after: Option<i64>,
         limit: Option<usize>,
     ) -> Result<Vec<Notification>> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
@@ -864,9 +867,15 @@ impl Accounts {
              FROM notifications n
              JOIN pack_threads t ON t.id = n.thread_id
              LEFT JOIN users u ON u.github_uid = n.actor_uid
-             WHERE n.uid = ?1{} ORDER BY n.id DESC{}",
+             WHERE n.uid = ?1{}{} ORDER BY n.id DESC{}",
             if unread_only {
                 " AND n.read_at IS NULL"
+            } else {
+                ""
+            },
+            // newest first, so a page continues below the last id served
+            if after.is_some() {
+                " AND n.id < ?2"
             } else {
                 ""
             },
@@ -876,8 +885,13 @@ impl Accounts {
             }
         );
         let mut stmt = guard.prepare(&sql)?;
+        let bound: Vec<Box<dyn rusqlite::ToSql>> = match after {
+            Some(id) => vec![Box::new(uid), Box::new(id)],
+            None => vec![Box::new(uid)],
+        };
+        let refs: Vec<&dyn rusqlite::ToSql> = bound.iter().map(|b| b.as_ref()).collect();
         let rows = stmt
-            .query_map(params![uid], |r| {
+            .query_map(refs.as_slice(), |r| {
                 let read_at: Option<i64> = r.get(9)?;
                 Ok(Notification {
                     id: r.get(0)?,

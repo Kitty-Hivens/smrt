@@ -143,7 +143,11 @@ mirror's operators for an official pack, plus anybody granted `edit` or `own`.
 Nobody is ever told about their own act. `GET /v1/me/notifications` reads the
 caller's own list (`?unread=true`, `?limit=`) and answers `{unread, rows}` --
 the count is the whole list, the rows are a slice of it -- and
-`POST /v1/me/notifications/read` (`{id?}`) marks one or all read. A notification
+`POST /v1/me/notifications/read` (`{id?}`) marks one or all read. It pages like
+the rest: `?limit=` and a `Link` to the next, the cursor being the last id
+served. The `unread` count is the whole list rather than the page, because a
+badge and a page are different numbers and deriving one from the other would be
+a lie on any list longer than a page. A notification
 carries no copy of the thread: the title and status are read from it live, so an
 edited title never leaves a stale line behind, and taking somebody's access to a
 pack away forgets what they were told about it.

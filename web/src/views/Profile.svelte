@@ -85,6 +85,11 @@
           </li>
         {/each}
       </ul>
+      {#if inbox.hasMore}
+        <button class="link more" onclick={() => inbox.more().catch(notifyFail)} disabled={working}>
+          {t('thr.more')}
+        </button>
+      {/if}
     {/if}
   </section>
 </div>
@@ -179,6 +184,10 @@
     margin-left: auto;
     font-family: var(--mono);
     font-size: var(--fs-xs);
+  }
+  .inbox .more {
+    margin-top: var(--space-2);
+    font-size: var(--fs-sm);
   }
   .inbox .empty {
     font-size: var(--fs-sm);
