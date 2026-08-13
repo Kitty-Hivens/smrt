@@ -145,7 +145,14 @@ caller's own list (`?unread=true`, `?limit=`) and answers `{unread, rows}` --
 the count is the whole list, the rows are a slice of it -- and
 `POST /v1/me/notifications/read` (`{id?}`) marks one or all read. It pages like
 the rest: `?limit=` and a `Link` to the next, the cursor being the last id
-served. The `unread` count is the whole list rather than the page, because a
+served. Outside the panel, `GET /v1/feed.atom?key=<key>` is the same list as Atom: one
+address per account, minted on first ask at `GET /v1/me/feed-key` and retired by
+`POST` to the same path. A feed reader has no session and cannot be given one,
+so the address is the credential -- treat it as a password, and rotate it if it
+gets out. Nothing leaves this machine to deliver it: no address of anybody's is
+stored, and no third party is asked.
+
+The `unread` count is the whole list rather than the page, because a
 badge and a page are different numbers and deriving one from the other would be
 a lie on any list longer than a page. A notification
 carries no copy of the thread: the title and status are read from it live, so an
@@ -222,7 +229,11 @@ so two reviewers pressing at once cannot both decide it.
 ### History
 
 A commit is a snapshot, an author, a message and a parent, content-addressed
-and append-only (#122). What it is worth doing with:
+and append-only (#122). In the panel it is two surfaces on purpose: declaring a
+checkpoint sits beside the build button, because a build is made from a commit
+and the same sentence serves both acts, while the list of past checkpoints opens
+as a dock over whatever tab is up -- it is consulted while working rather than
+worked in. What it is worth doing with:
 
 - **Read one**: `GET .../commits/{id}` (metadata, plus the versions built from
   it) and `GET .../commits/{id}/diff` -- what the commit recorded, against its

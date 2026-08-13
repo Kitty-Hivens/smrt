@@ -1,30 +1,25 @@
 <script lang="ts">
-  // A pack's history, where a build is decided (#122).
+  // Declaring a checkpoint: what has changed since the last one, and the
+  // sentence that names this one.
   //
-  // This sits with the build rather than in a view of its own on purpose: a
-  // build is made from a commit, so "what am I about to ship" and "what have I
-  // checkpointed" are one question. Splitting them would let someone answer the
-  // second in a place where the first is not on screen. A commit itself is a
-  // place with an address of its own, which is where the whole of one is read.
+  // It sits with the build rather than in a view of its own on purpose: a build
+  // is made from a commit, so "what am I about to ship" and "what am I
+  // checkpointing" are one question, and the same sentence serves both acts.
+  // The list of past checkpoints is a different question -- one consulted while
+  // working -- and lives in a dock of its own (PackLog). A commit itself is a
+  // place with an address, which is where the whole of one is read.
   import { api } from '../lib/api';
   import { notifyFail, toasts } from '../lib/toasts.svelte';
   import { t } from '../lib/i18n.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
-  import { route, href, plainClick } from '../lib/route.svelte';
-  import { suggest, tally } from '../lib/changes';
+  import { suggest } from '../lib/changes';
   import ChangeList from './ChangeList.svelte';
-  import type { Commit, CommitLogEntry, CommitStatus, ConfigChange } from '../lib/types';
+  import type { CommitStatus, ConfigChange } from '../lib/types';
 
   let {
     packId,
     status,
-    log,
     onChanged,
-    onBuildCommit,
-    hasMore = false,
-    failed = false,
-    loadingMore = false,
-    onMore = () => {},
     busy = false,
     working = $bindable(false),
     message = $bindable(''),
@@ -32,21 +27,12 @@
   }: {
     packId: string;
     status: CommitStatus | null;
-    log: CommitLogEntry[];
     // The history moved; the parent re-reads it and everyone else learns over
     // the pack's event stream.
     onChanged: () => void;
-    onBuildCommit: (commitId: string) => void;
-    /// Whether the history goes further back than what is on screen.
-    hasMore?: boolean;
-    /// Whether the read failed, which is not the same as a pack with no history.
-    failed?: boolean;
-    /// Whether a further page is on its way.
-    loadingMore?: boolean;
-    onMore?: () => void;
     busy?: boolean;
-    /// Committing or restoring here. Bound out so the console's build button --
-    /// which commits too -- is not live at the same time.
+    /// Committing here. Bound out so the console's build button -- which commits
+    /// too -- is not live at the same time.
     working?: boolean;
     // Owned by the build console, because the same sentence serves both acts:
     // committing on its own, and committing as the first half of a build.
@@ -101,38 +87,6 @@
     return t(`chg.suggest.${s.kind}`, { what: s.what.join(', ') });
   });
 
-  async function restore(entry: CommitLogEntry) {
-    working = true;
-    try {
-      // What a restore would do, before it does it: the commit read against the
-      // working state. Pressing "restore" used to be a single click with no
-      // statement of consequences anywhere on the way.
-      let summary = '';
-      try {
-        const diff = await api.commitDiff(packId, entry.id, 'live');
-        const c = tally(diff.changes);
-        summary = diff.changes.length
-          ? t('hist.restoreEffect', { add: c.add, remove: c.remove, change: c.change })
-          : t('hist.restoreNoop');
-      } catch {
-        // an unreadable diff must not block the act; the question still names
-        // the commit it is about to put back
-        summary = t('hist.restoreUnknown');
-      }
-      const ok = await dialogs.confirm(
-        `${t('hist.restoreAsk', { id: short(entry.id), message: entry.message })}\n\n${summary}`,
-        { title: t('hist.restore'), danger: true },
-      );
-      if (!ok) return;
-      await api.restoreCommit(packId, entry.id);
-      toasts.push({ kind: 'ok', text: t('hist.restored', { id: short(entry.id) }) });
-      onChanged();
-    } catch (e) {
-      notifyFail(e);
-    } finally {
-      working = false;
-    }
-  }
 
   // version_id -> its version_number, filled in behind the rows. A pin on
   // screen has to read like a version, and only Modrinth knows what
@@ -168,27 +122,10 @@
 
   const short = (id: string) => id.slice(0, 8);
 
-  async function copyId(id: string) {
-    try {
-      await navigator.clipboard.writeText(id);
-      toasts.push({ kind: 'ok', text: t('hist.idCopied') });
-    } catch {
-      // a browser that refuses the clipboard still shows the id in the title
-    }
-  }
 
   // The timestamp as a person reads it. The stored value is RFC 3339 UTC; what
   // is useful on screen is when it was, locally.
-  function when(at: string): string {
-    const d = new Date(at);
-    return Number.isNaN(d.getTime()) ? at : d.toLocaleString();
-  }
 
-  function openCommit(e: MouseEvent, c: Commit) {
-    if (!plainClick(e)) return;
-    e.preventDefault();
-    route.openCommit(packId, c.id);
-  }
 </script>
 
 <div class="hist">
@@ -241,54 +178,6 @@
   </div>
   <p class="muted hint">{t('hist.hint')}</p>
 
-  {#if log.length}
-    <ol class="log">
-      {#each log as c (c.id)}
-        <li>
-          <div class="line">
-            <a
-              class="msg"
-              href={href.commit(packId, c.id)}
-              onclick={(e) => openCommit(e, c)}
-              title={t('hist.openCommit')}
-            >
-              {c.message.split('\n')[0]}
-            </a>
-            <button class="id mono" title={c.id} onclick={() => copyId(c.id)}>
-              {short(c.id)}
-            </button>
-          </div>
-          <div class="meta muted">
-            <span>{c.author}</span>
-            <span>{when(c.at)}</span>
-            {#if c.contributors.length > 1}
-              <span>{t('hist.with', { who: c.contributors.slice(1).join(', ') })}</span>
-            {/if}
-            {#if c.builds.length}
-              <span class="built" title={t('hist.builtFrom')}>{c.builds.join(', ')}</span>
-            {:else}
-              <span class="unbuilt">{t('hist.neverBuilt')}</span>
-            {/if}
-            <button class="link" onclick={() => onBuildCommit(c.id)} disabled={busy || working}>
-              {t('hist.buildThis')}
-            </button>
-            <button class="link" onclick={() => restore(c)} disabled={busy || working}>
-              {t('hist.restore')}
-            </button>
-          </div>
-        </li>
-      {/each}
-    </ol>
-    {#if hasMore}
-      <button class="more" onclick={onMore} disabled={busy || working || loadingMore}>
-        {loadingMore ? t('common.loading') : t('hist.more')}
-      </button>
-    {/if}
-  {:else if failed}
-    <!-- an unread history and a pack that never declared one look identical
-         from an empty list, and only one of them is worth acting on -->
-    <p class="muted empty">{t('hist.logUnread')}</p>
-  {/if}
 </div>
 
 <style>
@@ -338,74 +227,6 @@
   .hint {
     font-size: var(--fs-sm);
     margin: 8px 0 0;
-  }
-  .empty {
-    font-size: var(--fs-sm);
-    margin: 14px 0 0;
-  }
-  .more {
-    background: none;
-    border: 0;
-    padding: 8px 0 0;
-    font: inherit;
-    font-size: var(--fs-sm);
-    color: var(--accent, var(--fg));
-    cursor: pointer;
-  }
-  .more:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-  .log {
-    list-style: none;
-    margin: 14px 0 0;
-    padding: 0;
-    border-top: 1px solid var(--seam);
-  }
-  .log li {
-    padding: 8px 0;
-    border-bottom: 1px solid var(--seam);
-  }
-  .line {
-    display: flex;
-    gap: 10px;
-    align-items: baseline;
-    justify-content: space-between;
-  }
-  .msg {
-    overflow-wrap: anywhere;
-    color: inherit;
-    text-decoration: none;
-  }
-  .msg:hover {
-    text-decoration: underline;
-  }
-  .id {
-    background: none;
-    border: 0;
-    padding: 0;
-    font: inherit;
-    color: var(--fg-dim);
-    font-size: var(--fs-sm);
-    cursor: pointer;
-    flex: 0 0 auto;
-  }
-  .id:hover {
-    color: var(--fg);
-  }
-  .meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    font-size: var(--fs-sm);
-    margin-top: 3px;
-  }
-  .built {
-    color: var(--ok, var(--fg-dim));
-    font-variant-numeric: tabular-nums;
-  }
-  .unbuilt {
-    opacity: 0.7;
   }
   .link {
     background: none;

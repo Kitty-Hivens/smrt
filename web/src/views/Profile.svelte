@@ -3,6 +3,8 @@
   import { inbox } from '../lib/inbox.svelte';
   import { mirror } from '../lib/mirror.svelte';
   import { notifyFail } from '../lib/toasts.svelte';
+  import { dialogs } from '../lib/dialogs.svelte';
+  import { api } from '../lib/api';
   import { href, plainClick, route } from '../lib/route.svelte';
   import Avatar from './Avatar.svelte';
   import type { Notification } from '../lib/types';
@@ -14,6 +16,10 @@
   let { me }: { me: Me } = $props();
 
   let working = $state(false);
+  // The feed address, shown only when asked for: it is a secret in a URL, and
+  // minting one for somebody who never wanted it is one more thing to leak.
+  let feed = $state<string | null>(null);
+  let copied = $state(false);
 
   $effect(() => {
     // a discussion moving is a pack change, so this re-reads on the same event
@@ -47,6 +53,41 @@
     if (row.kind === 'comment') return t('inbox.said', { who });
     if (row.kind === 'opened') return t('inbox.opened', { who, pack: row.pack_id });
     return t('inbox.settled', { who, status: t(`thr.status.${row.status}` as 'thr.status.open') });
+  }
+
+  async function showFeed() {
+    working = true;
+    try {
+      feed = (await api.feedKey()).url;
+    } catch (e) {
+      notifyFail(e);
+    } finally {
+      working = false;
+    }
+  }
+
+  async function rotateFeed() {
+    if (!(await dialogs.confirm(t('inbox.feedRotateAsk'), { title: t('inbox.feedRotate'), danger: true })))
+      return;
+    working = true;
+    try {
+      feed = (await api.rotateFeedKey()).url;
+      copied = false;
+    } catch (e) {
+      notifyFail(e);
+    } finally {
+      working = false;
+    }
+  }
+
+  async function copyFeed() {
+    if (!feed) return;
+    try {
+      await navigator.clipboard.writeText(feed);
+      copied = true;
+    } catch {
+      // a browser that refuses the clipboard still shows the address to select
+    }
   }
 
   function when(at: number): string {
@@ -91,6 +132,21 @@
         </button>
       {/if}
     {/if}
+
+    <div class="feed">
+      {#if feed}
+        <p class="muted small">{t('inbox.feedLead')}</p>
+        <div class="feedrow">
+          <input class="mono" readonly value={feed} onfocus={(e) => e.currentTarget.select()} />
+          <button class="link" onclick={copyFeed}>{copied ? t('inbox.copied') : t('inbox.copy')}</button>
+          <button class="link danger" onclick={rotateFeed} disabled={working}>
+            {t('inbox.feedRotate')}
+          </button>
+        </div>
+      {:else}
+        <button class="link" onclick={showFeed} disabled={working}>{t('inbox.feedShow')}</button>
+      {/if}
+    </div>
   </section>
 </div>
 
@@ -187,6 +243,25 @@
   }
   .inbox .more {
     margin-top: var(--space-2);
+    font-size: var(--fs-sm);
+  }
+  .feed {
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--seam);
+  }
+  .feed .small {
+    margin: 0 0 6px;
+  }
+  .feedrow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+  .feedrow input {
+    flex: 1;
+    min-width: 240px;
     font-size: var(--fs-sm);
   }
   .inbox .empty {

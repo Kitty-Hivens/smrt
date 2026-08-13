@@ -15,6 +15,7 @@
   import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
   import { isDebug } from '../lib/roles';
   import type {
+    CommitLogEntry,
     DeclaredAsset,
     JobStatus,
     PackConfig,
@@ -26,6 +27,7 @@
   } from '../lib/types';
   import BuildConsole from './BuildConsole.svelte';
   import CommitPage from './CommitPage.svelte';
+  import PackLog from './PackLog.svelte';
   import PackAccess from './PackAccess.svelte';
   import PackThreads from './PackThreads.svelte';
   import ThreadPage from './ThreadPage.svelte';
@@ -213,6 +215,63 @@
         .then((r) => r.level ?? null)
         .catch(() => null);
     })();
+  });
+
+  // What has been checkpointed, held here rather than in the build console: it
+  // is consulted while working on something else, so it opens as a dock over
+  // whatever tab is up (ADR 0005) and the console it used to live in is not
+  // mounted on most of them.
+  let log = $state<CommitLogEntry[]>([]);
+  let logNext = $state<string | null>(null);
+  let logFailed = $state(false);
+  let logBusy = $state(false);
+  let logOpen = $state(false);
+  // Which read of the log is the current one. A page fetched against an older
+  // cursor must not be appended to a list that has since been replaced -- the
+  // paging is keyset, so the row the stale cursor started after is no longer
+  // where the new list ends, and the join would leave a gap in the history.
+  let logGeneration = 0;
+
+  async function readLog() {
+    const generation = ++logGeneration;
+    try {
+      const page = await api.commits(packId);
+      if (generation !== logGeneration) return;
+      log = page.rows;
+      logNext = page.next;
+      logFailed = false;
+    } catch {
+      // an unread history and a pack that never declared one look identical
+      // from an empty list, and only one of them is worth acting on
+      logFailed = true;
+    }
+  }
+
+  /// The next page, appended. Reading further back is a step somebody takes,
+  /// not something the editor does on its own on a pack with hundreds.
+  async function moreLog() {
+    if (!logNext || logBusy) return;
+    const generation = logGeneration;
+    logBusy = true;
+    try {
+      const page = await api.commitsPage(logNext);
+      // a refresh that landed meanwhile owns the list now
+      if (generation !== logGeneration) return;
+      const seen = new Set(log.map((c) => c.id));
+      log = [...log, ...page.rows.filter((c) => !seen.has(c.id))];
+      logNext = page.next;
+    } catch (e) {
+      notifyFail(e);
+    } finally {
+      logBusy = false;
+    }
+  }
+
+  $effect(() => {
+    // re-read when the pack changes, and whenever anyone in it commits
+    void packId;
+    void historyTick;
+    void readLog();
   });
 
   // A build a commit page asked for; handed to the console, which owns building.
@@ -1173,6 +1232,9 @@
       <button class="sm danger" onclick={resolveConflict}>{t('pe.conflictResolve')}</button>
     {/if}
     {#if !loading && cfg}
+      <button class="pv" class:active={logOpen} onclick={() => (logOpen = !logOpen)}>
+        {t('hist.title')}
+      </button>
       <button class="pv" class:active={previewOpen} onclick={() => (previewOpen = !previewOpen)}>
         {previewOpen ? t('pe.hidePreview') : t('pe.preview')}
       </button>
@@ -1528,6 +1590,7 @@
       <PackAccess {packId} canGrant={canOwn} canModerate={canEdit} />
     {:else if tab === 'build'}
       <BuildConsole
+        onHistoryMoved={() => (historyTick += 1)}
         {packId}
         {historyTick}
         {buildFrom}
@@ -1600,6 +1663,35 @@
     {:else if reportTab === 'validate'}
       {@render validateReport()}
     {/if}
+  </FloatDock>
+{/if}
+
+{#if logOpen}
+  <!-- A tool, not a place: it opens over whatever is being worked on and the
+       editor underneath never reflows. Its own dock id, so it remembers where it
+       was left and can sit beside the report dock rather than fight it. -->
+  <FloatDock
+    id="pack-log"
+    title={t('hist.title')}
+    subtitle={packId}
+    width={560}
+    onClose={() => (logOpen = false)}
+  >
+    <PackLog
+      {packId}
+      {log}
+      busy={buildBusy}
+      hasMore={!!logNext}
+      failed={logFailed}
+      loadingMore={logBusy}
+      onMore={moreLog}
+      onChanged={() => (historyTick += 1)}
+      onBuildCommit={(id) => {
+        buildFrom = id;
+        tab = 'build';
+        logOpen = false;
+      }}
+    />
   </FloatDock>
 {/if}
 

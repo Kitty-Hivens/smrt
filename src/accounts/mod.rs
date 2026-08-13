@@ -835,6 +835,56 @@ impl Accounts {
         Ok(rows)
     }
 
+    /// The address key for somebody's own feed, minting one if they have none.
+    /// Blocking; wrap in `spawn_blocking`.
+    pub fn feed_key(&self, github_uid: i64) -> Result<String> {
+        if github_uid == BREAK_GLASS_UID {
+            anyhow::bail!("uid 0 is reserved");
+        }
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let existing: Option<String> = guard
+            .query_row(
+                "SELECT key FROM feed_keys WHERE github_uid = ?1",
+                params![github_uid],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(key) = existing {
+            return Ok(key);
+        }
+        let key = random_token();
+        guard.execute(
+            "INSERT INTO feed_keys (github_uid, key, created_at) VALUES (?1, ?2, ?3)",
+            params![github_uid, key, unix_now()],
+        )?;
+        Ok(key)
+    }
+
+    /// Mint a new key, retiring whatever was handed out before.
+    pub fn rotate_feed_key(&self, github_uid: i64) -> Result<String> {
+        {
+            let guard = self.conn.lock().expect("accounts mutex poisoned");
+            guard.execute(
+                "DELETE FROM feed_keys WHERE github_uid = ?1",
+                params![github_uid],
+            )?;
+        }
+        self.feed_key(github_uid)
+    }
+
+    /// Whose feed a key names, or `None` for a key nobody holds.
+    pub fn uid_for_feed_key(&self, key: &str) -> Result<Option<i64>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard
+            .query_row(
+                "SELECT github_uid FROM feed_keys WHERE key = ?1",
+                params![key],
+                |r| r.get(0),
+            )
+            .optional()
+            .context("read feed key")
+    }
+
     /// Forget what somebody was told about one pack. Called when their access to
     /// it is taken away: a notification carries the thread's title, read live, so
     /// a list left behind would keep showing a private discussion to somebody who

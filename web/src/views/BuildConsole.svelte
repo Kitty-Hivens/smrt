@@ -2,7 +2,7 @@
   import { api } from '../lib/api';
   import { notifyFail, toasts } from '../lib/toasts.svelte';
   import { t, LOCALES, type Locale } from '../lib/i18n.svelte';
-  import type { CommitLogEntry, CommitStatus, JobStatus } from '../lib/types';
+  import type { CommitStatus, JobStatus } from '../lib/types';
   import JobLog from './JobLog.svelte';
   import PackHistory from './PackHistory.svelte';
 
@@ -11,11 +11,14 @@
     historyTick = 0,
     buildFrom = null,
     onBuildStarted = () => {},
+    onHistoryMoved = () => {},
     jobId = $bindable(null),
     busy = $bindable(false),
   }: {
     packId: string;
     historyTick?: number;
+    /// A commit or a build happened here; whoever holds the log re-reads it.
+    onHistoryMoved?: () => void;
     /// The build in flight, held by the editor rather than by this view: the
     /// console unmounts whenever another surface opens over it, and a build
     /// does not stop because somebody opened a commit.
@@ -27,57 +30,20 @@
     onBuildStarted?: () => void;
   } = $props();
 
-  // The history, read here because a build is made from a commit (#122) -- the
-  // state that decides whether the build button can do anything is the same
-  // state the history shows.
+  // Read here because a build is made from a commit (#122): the state that
+  // decides whether the build button can do anything is the same state the
+  // commit box shows. The list of past commits is the editor's, because it is
+  // consulted from tabs this console is not on.
   let status = $state<CommitStatus | null>(null);
-  let log = $state<CommitLogEntry[]>([]);
-  // Where the next page of the log starts, or null at the end of the history.
-  let logNext = $state<string | null>(null);
-  let logFailed = $state(false);
-  let logBusy = $state(false);
-  // Which read of the log is the current one. A page fetched against an older
-  // cursor must not be appended to a list that has since been replaced -- the
-  // paging is keyset, so the row the stale cursor started after is no longer
-  // where the new list ends, and the join would leave a gap in the history.
-  let logGeneration = 0;
 
   async function refreshHistory() {
-    const generation = ++logGeneration;
     try {
-      const [s, page] = await Promise.all([api.commitStatus(packId), api.commits(packId)]);
-      if (generation !== logGeneration) return;
-      status = s;
-      log = page.rows;
-      logNext = page.next;
-      logFailed = false;
+      status = await api.commitStatus(packId);
     } catch {
       // a pack with no history yet answers nothing useful; the console still
-      // works, and the history view says it could not read rather than
-      // pretending the pack has none
-      logFailed = true;
+      // works and says so rather than pretending the pack has none
     }
-  }
-
-  /// The next page, appended. Reading further back is a step someone takes, not
-  /// something the editor does on its own on a pack with hundreds of them.
-  async function moreHistory() {
-    if (!logNext || logBusy) return;
-    const generation = logGeneration;
-    logBusy = true;
-    try {
-      const page = await api.commitsPage(logNext);
-      // A refresh that landed meanwhile owns the list now; this page was read
-      // against the state before it.
-      if (generation !== logGeneration) return;
-      const seen = new Set(log.map((c) => c.id));
-      log = [...log, ...page.rows.filter((c) => !seen.has(c.id))];
-      logNext = page.next;
-    } catch (e) {
-      notifyFail(e);
-    } finally {
-      logBusy = false;
-    }
+    onHistoryMoved();
   }
 
   $effect(() => {
@@ -197,15 +163,9 @@
   <PackHistory
     {packId}
     {status}
-    {log}
     {busy}
     onChanged={refreshHistory}
-    onBuildCommit={(id) => build(false, id)}
     bind:working={historyBusy}
-    hasMore={!!logNext}
-    failed={logFailed}
-    loadingMore={logBusy}
-    onMore={moreHistory}
     bind:message={commitMessage}
     bind:body={commitBody}
   />
