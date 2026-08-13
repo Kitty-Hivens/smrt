@@ -87,16 +87,14 @@ fn authoring_router(state: AppState) -> Router {
             get(get_pack_doc).post(post_pack_doc),
         )
         .route("/v1/authoring/packs/{pack_id}", delete(delete_pack))
-        .route(
-            "/v1/authoring/packs/{pack_id}/issues",
-            get(list_threads).post(open_issue),
-        )
+        // Reading a discussion is not an authoring act -- it is as public as the
+        // pack it is about, and lives on the public router. What is here is the
+        // writing.
+        .route("/v1/authoring/packs/{pack_id}/issues", post(open_issue))
         .route(
             "/v1/authoring/packs/{pack_id}/proposals",
-            get(list_threads).post(open_proposal),
+            post(open_proposal),
         )
-        .route("/v1/authoring/threads/{id}", get(read_thread))
-        .route("/v1/authoring/threads/{id}/diff", get(thread_diff))
         .route("/v1/authoring/threads/{id}/comments", post(post_comment))
         .route("/v1/authoring/comments/{id}/hidden", put(moderate_comment))
         .route("/v1/authoring/threads/{id}/merge", post(merge_proposal))
@@ -106,9 +104,18 @@ fn authoring_router(state: AppState) -> Router {
             "/v1/authoring/packs/{pack_id}/access",
             get(list_access).post(grant_access),
         )
+        .route("/v1/authoring/packs/{pack_id}/access/mine", get(my_level))
         .route(
             "/v1/authoring/packs/{pack_id}/access/{uid}",
             delete(revoke_access),
+        )
+        .route(
+            "/v1/authoring/packs/{pack_id}/blocks",
+            get(list_blocks).post(block_from_pack),
+        )
+        .route(
+            "/v1/authoring/packs/{pack_id}/blocks/{uid}",
+            delete(unblock_from_pack),
         )
         .route(
             "/v1/authoring/packs/{pack_id}/visibility",
@@ -1850,7 +1857,7 @@ struct DiffParams {
 }
 
 /// Two states of one pack, and every difference between them.
-#[derive(serde::Serialize, ts_rs::TS)]
+#[derive(serde::Serialize, ts_rs::TS, utoipa::ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct CommitDiff {
     /// The left side: a commit id, the literal `live`, or absent on a first
@@ -2069,6 +2076,7 @@ async fn delete_pack(
     let gone = pack_id.clone();
     let _ = tokio::task::spawn_blocking(move || {
         acc.forget_pack_access(&gone)?;
+        acc.forget_pack_blocks(&gone)?;
         acc.forget_pack_threads(&gone)
     })
     .await;
@@ -2195,6 +2203,152 @@ async fn revoke_access(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(serde::Serialize)]
+struct MyLevel {
+    /// The caller's level here, or absent when they have none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    level: Option<PackLevel>,
+}
+
+/// What the caller may do to this pack, answered by the same gate that enforces
+/// it.
+///
+/// The panel used to guess this from the pack id and the caller's role, which
+/// got two of the three answers right and hid merge, moderation and the block
+/// list from everybody who reached a pack by grant -- the one case grants exist
+/// for. Asking is one call when the editor opens, and it cannot drift from what
+/// the writes will actually allow.
+async fn my_level(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+) -> Json<MyLevel> {
+    let mut level = None;
+    for step in [PackLevel::Own, PackLevel::Edit, PackLevel::View] {
+        if super::auth::may(&state, &identity, &pack_id, step).await {
+            level = Some(step);
+            break;
+        }
+    }
+    Json(MyLevel { level })
+}
+
+// ── blocking somebody from a pack's discussion ──────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct BlockReq {
+    #[serde(alias = "uid")]
+    github_uid: i64,
+    /// The keepers' note to themselves; never served to the person blocked.
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+/// Who a pack has stopped from writing on it. Readable by whoever moderates it,
+/// because a moderator who cannot see the list cannot undo one of its rows.
+async fn list_blocks(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+) -> Result<Json<Vec<crate::accounts::PackBlock>>, ApiError> {
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Edit).await?;
+    let acc = state.accounts.clone();
+    let pack = pack_id.clone();
+    let rows = tokio::task::spawn_blocking(move || acc.list_pack_blocks(&pack))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("block task: {e}")))??;
+    Ok(Json(rows))
+}
+
+/// Stop somebody writing on this pack. Moderation-level, like hiding a comment:
+/// the two are the same job, one answering what was said and one what would be
+/// said next.
+async fn block_from_pack(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path(pack_id): Path<String>,
+    Json(req): Json<BlockReq>,
+) -> Result<StatusCode, ApiError> {
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Edit).await?;
+    // Blocking the people who keep the pack would be a way to lock them out of
+    // their own discussion, so the gate refuses it rather than storing a row
+    // that the write path would have to learn to ignore.
+    if super::auth::may_uid(&state, &pack_id, req.github_uid, PackLevel::Edit).await {
+        return Err(ApiError::BadRequest(
+            "that person keeps this pack; take their access away first".into(),
+        ));
+    }
+    let acc = state.accounts.clone();
+    let (pack, by, uid) = (pack_id.clone(), identity.uid, req.github_uid);
+    let reason = req
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .map(str::to_string);
+    let note = reason.clone();
+    tokio::task::spawn_blocking(move || acc.block_from_pack(&pack, uid, note.as_deref(), by))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("block task: {e}")))?
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    audit(
+        &state,
+        &identity,
+        "pack.block",
+        Some(&pack_id),
+        Some(&match &reason {
+            Some(r) => format!("{uid}: {r}"),
+            None => uid.to_string(),
+        }),
+    )
+    .await;
+    state.events.pack(&pack_id, "access");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Let somebody write here again.
+async fn unblock_from_pack(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Path((pack_id, uid)): Path<(String, i64)>,
+) -> Result<StatusCode, ApiError> {
+    super::auth::authorize(&state, &identity, &pack_id, PackLevel::Edit).await?;
+    let acc = state.accounts.clone();
+    let pack = pack_id.clone();
+    let lifted = tokio::task::spawn_blocking(move || acc.unblock_from_pack(&pack, uid))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("block task: {e}")))??;
+    if lifted {
+        audit(
+            &state,
+            &identity,
+            "pack.unblock",
+            Some(&pack_id),
+            Some(&uid.to_string()),
+        )
+        .await;
+        state.events.pack(&pack_id, "access");
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Refuse a write from somebody this pack has blocked.
+///
+/// A store that cannot be read blocks nobody: a discussion that stops taking
+/// comments because sqlite hiccupped is a worse failure than one spam message.
+async fn not_blocked(state: &AppState, pack_id: &str, uid: i64) -> Result<(), ApiError> {
+    let acc = state.accounts.clone();
+    let pack = pack_id.to_string();
+    let blocked = tokio::task::spawn_blocking(move || acc.is_blocked(&pack, uid))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("block task: {e}")))?
+        .unwrap_or(false);
+    if blocked {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(())
+}
+
 /// How much somebody may say in a window, before the mirror asks them to slow
 /// down. Public writing without a ceiling is an invitation; these are set where
 /// a person never notices them and a script does.
@@ -2260,6 +2414,7 @@ async fn open_issue(
     if !is_published(&state, &pack_id).await {
         super::auth::authorize(&state, &identity, &pack_id, PackLevel::View).await?;
     }
+    not_blocked(&state, &pack_id, identity.uid).await?;
     within_rate(&state, "threads", identity.uid).await?;
     let title = trimmed(&req.title, "an issue needs a title")?;
     let id = open_thread(
@@ -2289,6 +2444,8 @@ async fn open_proposal(
             "a pack cannot propose to itself; commit instead".into(),
         ));
     }
+    not_blocked(&state, &pack_id, identity.uid).await?;
+    within_rate(&state, "threads", identity.uid).await?;
     let title = trimmed(&req.title, "a proposal needs a title")?;
     let commit = match req.source_commit {
         Some(id) => state.storage.load_commit(&req.source_pack, &id).await?.id,
@@ -2388,75 +2545,6 @@ async fn may_read_threads(state: &AppState, identity: &Identity, pack_id: &str) 
 }
 
 #[derive(serde::Deserialize)]
-struct ThreadListParams {
-    /// `issue` | `proposal`; absent lists both.
-    kind: Option<String>,
-    /// `?all=true` includes the settled ones; the default is what is still open.
-    #[serde(default)]
-    all: bool,
-}
-
-async fn list_threads(
-    State(state): State<AppState>,
-    Extension(identity): Extension<Identity>,
-    Path(pack_id): Path<String>,
-    Query(p): Query<ThreadListParams>,
-) -> Result<Json<Vec<crate::accounts::Thread>>, ApiError> {
-    if !may_read_threads(&state, &identity, &pack_id).await {
-        return Err(ApiError::Forbidden);
-    }
-    let acc = state.accounts.clone();
-    let (pack, kind) = (pack_id.clone(), p.kind.clone());
-    let rows = tokio::task::spawn_blocking(move || acc.threads_for(&pack, kind.as_deref(), !p.all))
-        .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
-    Ok(Json(rows))
-}
-
-async fn read_thread(
-    State(state): State<AppState>,
-    Extension(identity): Extension<Identity>,
-    Path(id): Path<i64>,
-) -> Result<Json<crate::accounts::ThreadView>, ApiError> {
-    let thread = load_thread(&state, id).await?;
-    if !may_read_threads(&state, &identity, &thread.pack_id).await {
-        return Err(ApiError::Forbidden);
-    }
-    let acc = state.accounts.clone();
-    let comments = tokio::task::spawn_blocking(move || acc.comments_on(id))
-        .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
-    Ok(Json(crate::accounts::ThreadView { thread, comments }))
-}
-
-/// What a proposal would change, read against the target as it stands now --
-/// not against the fork's parent. A review answers "what happens to my pack if
-/// I take this", and that question moves as the pack moves.
-async fn thread_diff(
-    State(state): State<AppState>,
-    Extension(identity): Extension<Identity>,
-    Path(id): Path<i64>,
-) -> Result<Json<CommitDiff>, ApiError> {
-    let t = load_thread(&state, id).await?;
-    if !may_read_threads(&state, &identity, &t.pack_id).await {
-        return Err(ApiError::Forbidden);
-    }
-    let (Some(source_pack), Some(source_commit)) = (&t.source_pack, &t.source_commit) else {
-        return Err(ApiError::BadRequest("this thread offers no state".into()));
-    };
-    let offered = state
-        .storage
-        .load_commit_config(source_pack, source_commit)
-        .await?;
-    let current = state.storage.load_pack_config(&t.pack_id).await?;
-    Ok(Json(CommitDiff {
-        from: Some(t.pack_id.clone()),
-        to: source_commit.clone(),
-        changes: crate::authoring::diff_configs(&current, &offered),
-    }))
-}
-
-#[derive(serde::Deserialize)]
 struct CommentReq {
     body: String,
 }
@@ -2472,6 +2560,7 @@ async fn post_comment(
     if !may_read_threads(&state, &identity, &t.pack_id).await {
         return Err(ApiError::Forbidden);
     }
+    not_blocked(&state, &t.pack_id, identity.uid).await?;
     within_rate(&state, "comments", identity.uid).await?;
     let body = trimmed(&req.body, "an empty comment says nothing")?;
     if body.chars().count() > 4000 {

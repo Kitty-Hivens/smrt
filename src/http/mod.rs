@@ -214,6 +214,32 @@ mod tests {
         }
     }
 
+    /// The same request as [`call`], with what came back -- for the handlers
+    /// whose answer is the point rather than their status.
+    async fn read(
+        app: &axum::Router,
+        uri: &str,
+        session: Option<&str>,
+    ) -> (axum::http::StatusCode, String) {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let mut req = Request::builder().method("GET").uri(uri);
+        if let Some(sid) = session {
+            req = req.header(axum::http::header::COOKIE, format!("smrt_session={sid}"));
+        }
+        let resp = app
+            .clone()
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
     async fn call(
         app: &axum::Router,
         method: &str,
@@ -362,6 +388,146 @@ mod tests {
             )
             .await,
             StatusCode::NO_CONTENT
+        );
+
+        // and the panel is told the same answer the gate just gave, rather than
+        // guessing it from the pack id: a granted keeper is a keeper.
+        assert_eq!(
+            read(&app, "/v1/authoring/packs/Create/access/mine", Some(&sid)).await,
+            (StatusCode::OK, r#"{"level":"own"}"#.to_string())
+        );
+        let stranger = state.accounts.sign_in_github(99, "stranger", None).unwrap();
+        assert_eq!(
+            read(
+                &app,
+                "/v1/authoring/packs/Create/access/mine",
+                Some(&stranger)
+            )
+            .await,
+            (StatusCode::OK, "{}".to_string()),
+            "no level is an answer, not an error"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_block_stops_the_next_message_not_the_record() {
+        use axum::http::StatusCode;
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path());
+        let cfg = sample_pack("Create", crate::domain::Visibility::Published);
+        state
+            .storage
+            .save_pack_config("Create", &cfg)
+            .await
+            .unwrap();
+        state
+            .storage
+            .save_pack_summary(&crate::authoring::make_pack_summary(&cfg, "0.1.0"))
+            .await
+            .unwrap();
+        let loud = state.accounts.sign_in_github(42, "loud", None).unwrap();
+        let keeper = state.accounts.sign_in_github(43, "keeper", None).unwrap();
+        state
+            .accounts
+            .grant_pack_access("Create", 43, PackLevel::Edit, 1)
+            .unwrap();
+        let app = router(state.clone());
+
+        call(
+            &app,
+            "POST",
+            "/v1/authoring/packs/Create/issues",
+            Some(&loud),
+            Some(r#"{"title":"first"}"#),
+        )
+        .await;
+
+        // moderation, not ownership: the same rung that hides a comment
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/packs/Create/blocks",
+                Some(&loud),
+                Some(r#"{"github_uid":43}"#)
+            )
+            .await,
+            StatusCode::FORBIDDEN,
+            "a speaker does not get to block the pack's keepers"
+        );
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/packs/Create/blocks",
+                Some(&keeper),
+                Some(r#"{"github_uid":42,"reason":"flooding"}"#)
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+
+        // what was blocked is the writing
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/threads/1/comments",
+                Some(&loud),
+                Some(r#"{"body":"again"}"#)
+            )
+            .await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/packs/Create/issues",
+                Some(&loud),
+                Some(r#"{"title":"second"}"#)
+            )
+            .await,
+            StatusCode::FORBIDDEN
+        );
+        // and what stays is the record: a block is not a way to unsay something
+        assert_eq!(read(&app, "/v1/threads/1", None).await.0, StatusCode::OK);
+
+        // the keepers cannot be blocked out of their own pack
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/packs/Create/blocks",
+                Some(&keeper),
+                Some(r#"{"github_uid":43}"#)
+            )
+            .await,
+            StatusCode::BAD_REQUEST
+        );
+
+        // lifting it puts the person back where they were
+        assert_eq!(
+            call(
+                &app,
+                "DELETE",
+                "/v1/authoring/packs/Create/blocks/42",
+                Some(&keeper),
+                None
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                "/v1/authoring/threads/1/comments",
+                Some(&loud),
+                Some(r#"{"body":"again"}"#)
+            )
+            .await,
+            StatusCode::CREATED
         );
     }
 

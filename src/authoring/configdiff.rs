@@ -33,9 +33,10 @@ use crate::domain::{DeclaredAsset, DeclaredMod, Display, PackConfig, SourceDecl}
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 /// Which part of the config a row belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 #[serde(rename_all = "snake_case")]
 #[ts(export, export_to = "bindings/")]
 pub enum ChangeGroup {
@@ -45,7 +46,7 @@ pub enum ChangeGroup {
 }
 
 /// What happened to the row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 #[serde(rename_all = "snake_case")]
 #[ts(export, export_to = "bindings/")]
 pub enum ChangeOp {
@@ -58,7 +59,7 @@ pub enum ChangeOp {
 /// which of `from`/`to` are present: a view that has to guess renders "edited"
 /// for everything it does not recognise, and "edited" is what the old list said
 /// where it should have said "renamed".
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 #[serde(rename_all = "snake_case")]
 #[ts(export, export_to = "bindings/")]
 pub enum ChangeField {
@@ -80,7 +81,7 @@ pub enum ChangeField {
 }
 
 /// One difference between two configs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export, export_to = "bindings/")]
 pub struct ConfigChange {
     pub group: ChangeGroup,

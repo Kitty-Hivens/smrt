@@ -11,6 +11,7 @@ import type {
   CommunityPack,
   Commit,
   CommitDiff,
+  PackBlock,
   PackGrant,
   PackLevel,
   Thread,
@@ -318,8 +319,7 @@ export const api = {
       })}`,
     ),
   thread: (threadId: number) => getJson<ThreadView>(`/v1/threads/${threadId}`),
-  threadDiff: (threadId: number) =>
-    getJson<CommitDiff>(`/v1/authoring/threads/${threadId}/diff`),
+  threadDiff: (threadId: number) => getJson<CommitDiff>(`/v1/threads/${threadId}/diff`),
   openIssue: (id: string, title: string, body: string) =>
     postJson<Thread>(`/v1/authoring/packs/${encodeURIComponent(id)}/issues`, { title, body }),
   openProposal: (id: string, sourcePack: string, title: string, body: string) =>
@@ -344,6 +344,24 @@ export const api = {
   // gate knows without a row, so they are never in it.
   packAccess: (id: string) =>
     getJson<PackGrant[]>(`/v1/authoring/packs/${encodeURIComponent(id)}/access`),
+  // What the caller may do here, from the gate that enforces it rather than
+  // guessed from the pack id -- the panel used to hide merge and moderation
+  // from everybody who reached a pack by grant.
+  myPackLevel: (id: string) =>
+    getJson<{ level?: PackLevel }>(
+      `/v1/authoring/packs/${encodeURIComponent(id)}/access/mine`,
+    ),
+  // Who this pack has stopped from writing on it. Hiding a comment answers what
+  // was said; this answers what would be said next.
+  packBlocks: (id: string) =>
+    getJson<PackBlock[]>(`/v1/authoring/packs/${encodeURIComponent(id)}/blocks`),
+  blockFromPack: (id: string, githubUid: number, reason?: string) =>
+    send('POST', `/v1/authoring/packs/${encodeURIComponent(id)}/blocks`, {
+      github_uid: githubUid,
+      reason: reason ?? null,
+    }),
+  unblockFromPack: (id: string, githubUid: number) =>
+    send('DELETE', `/v1/authoring/packs/${encodeURIComponent(id)}/blocks/${githubUid}`),
   grantPackAccess: (id: string, githubUid: number, level: PackLevel) =>
     send('POST', `/v1/authoring/packs/${encodeURIComponent(id)}/access`, {
       github_uid: githubUid,

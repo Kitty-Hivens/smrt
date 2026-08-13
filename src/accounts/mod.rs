@@ -127,8 +127,40 @@ pub struct PackGrant {
     pub level: PackLevel,
     #[ts(type = "number")]
     pub granted_by: i64,
+    /// Who decided it, by name where the mirror knows it. A bare uid in a list
+    /// of who is answerable for an access tells the reader nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub granted_by_login: Option<String>,
     #[ts(type = "number")]
     pub granted_at: i64,
+}
+
+/// Somebody a pack's keepers have stopped from writing on it.
+///
+/// The reason is the keepers' note to themselves and is never served to the
+/// person it names -- a block is a decision about a pack, not a verdict handed
+/// to somebody.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "bindings/")]
+pub struct PackBlock {
+    #[ts(type = "number")]
+    pub github_uid: i64,
+    /// Absent for a uid that has never signed in here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub login: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reason: Option<String>,
+    #[ts(type = "number")]
+    pub blocked_by: i64,
+    /// Who decided it, by name where the mirror knows it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub blocked_by_login: Option<String>,
+    #[ts(type = "number")]
+    pub blocked_at: i64,
 }
 
 /// Something said about a pack: a report, or a fork offered back.
@@ -459,8 +491,10 @@ impl Accounts {
     pub fn list_pack_access(&self, pack_id: &str) -> Result<Vec<PackGrant>> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
         let mut stmt = guard.prepare(
-            "SELECT a.github_uid, u.login, a.level, a.granted_by, a.granted_at
-             FROM pack_access a LEFT JOIN users u ON u.github_uid = a.github_uid
+            "SELECT a.github_uid, u.login, a.level, a.granted_by, g.login, a.granted_at
+             FROM pack_access a
+             LEFT JOIN users u ON u.github_uid = a.github_uid
+             LEFT JOIN users g ON g.github_uid = a.granted_by
              WHERE a.pack_id = ?1
              ORDER BY CASE a.level WHEN 'own' THEN 0 WHEN 'edit' THEN 1 ELSE 2 END,
                       a.granted_at",
@@ -477,7 +511,8 @@ impl Accounts {
                         .and_then(PackLevel::parse)
                         .unwrap_or(PackLevel::View),
                     granted_by: r.get(3)?,
-                    granted_at: r.get(4)?,
+                    granted_by_login: r.get(4)?,
+                    granted_at: r.get(5)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -512,6 +547,113 @@ impl Accounts {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
         guard.execute(
             "DELETE FROM pack_access WHERE pack_id = ?1",
+            params![pack_id],
+        )?;
+        Ok(())
+    }
+
+    /// Who somebody is by uid, for a decision about a third person rather than
+    /// about the caller. `None` for a uid that has never signed in here -- which
+    /// is a real case (access can be granted ahead of a first login), so the
+    /// caller decides what an unknown person counts as. Blocking; wrap in
+    /// `spawn_blocking`.
+    pub fn identity_of(&self, github_uid: i64) -> Result<Option<Identity>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let row: Option<(String, String)> = guard
+            .query_row(
+                "SELECT login, role FROM users WHERE github_uid = ?1",
+                params![github_uid],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .context("read user by uid")?;
+        Ok(row.map(|(login, role)| Identity {
+            uid: github_uid,
+            login,
+            role: Role::from_db(&role),
+        }))
+    }
+
+    /// Stop somebody writing on a pack, or re-stamp an existing block with a
+    /// fresh reason and decider. Refuses the reserved break-glass uid, which is
+    /// never a person. Blocking; wrap in `spawn_blocking`.
+    pub fn block_from_pack(
+        &self,
+        pack_id: &str,
+        github_uid: i64,
+        reason: Option<&str>,
+        blocked_by: i64,
+    ) -> Result<()> {
+        if github_uid == BREAK_GLASS_UID {
+            anyhow::bail!("uid 0 is reserved");
+        }
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard.execute(
+            "INSERT INTO pack_blocks (pack_id, github_uid, reason, blocked_by, blocked_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(pack_id, github_uid) DO UPDATE SET
+                 reason = excluded.reason,
+                 blocked_by = excluded.blocked_by,
+                 blocked_at = excluded.blocked_at",
+            params![pack_id, github_uid, reason, blocked_by, unix_now()],
+        )?;
+        Ok(())
+    }
+
+    /// Let somebody write here again. `false` when they were not blocked.
+    pub fn unblock_from_pack(&self, pack_id: &str, github_uid: i64) -> Result<bool> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let gone = guard.execute(
+            "DELETE FROM pack_blocks WHERE pack_id = ?1 AND github_uid = ?2",
+            params![pack_id, github_uid],
+        )?;
+        Ok(gone > 0)
+    }
+
+    /// Whether this person is blocked from writing on this pack. A store that
+    /// cannot be read blocks nobody -- the caller treats the error as its own.
+    pub fn is_blocked(&self, pack_id: &str, github_uid: i64) -> Result<bool> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let n: i64 = guard.query_row(
+            "SELECT COUNT(*) FROM pack_blocks WHERE pack_id = ?1 AND github_uid = ?2",
+            params![pack_id, github_uid],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Everyone a pack has blocked, newest first. Blocking; wrap in
+    /// `spawn_blocking`.
+    pub fn list_pack_blocks(&self, pack_id: &str) -> Result<Vec<PackBlock>> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        let mut stmt = guard.prepare(
+            "SELECT b.github_uid, u.login, b.reason, b.blocked_by, d.login, b.blocked_at
+             FROM pack_blocks b
+             LEFT JOIN users u ON u.github_uid = b.github_uid
+             LEFT JOIN users d ON d.github_uid = b.blocked_by
+             WHERE b.pack_id = ?1 ORDER BY b.blocked_at DESC",
+        )?;
+        let rows = stmt
+            .query_map(params![pack_id], |r| {
+                Ok(PackBlock {
+                    github_uid: r.get(0)?,
+                    login: r.get(1)?,
+                    reason: r.get(2)?,
+                    blocked_by: r.get(3)?,
+                    blocked_by_login: r.get(4)?,
+                    blocked_at: r.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Forget a deleted pack's blocks, for the same reason its access list is
+    /// forgotten: a pack id minted again later starts with nobody's history.
+    pub fn forget_pack_blocks(&self, pack_id: &str) -> Result<()> {
+        let guard = self.conn.lock().expect("accounts mutex poisoned");
+        guard.execute(
+            "DELETE FROM pack_blocks WHERE pack_id = ?1",
             params![pack_id],
         )?;
         Ok(())

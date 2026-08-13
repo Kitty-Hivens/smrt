@@ -98,16 +98,13 @@ async fn my_authoring(
     State(state): State<AppState>,
     Extension(identity): Extension<Identity>,
 ) -> Result<Json<Vec<String>>, ApiError> {
-    // One membership question per pack rather than a rule applied to the list:
-    // a grant is a row, so "which packs can I reach" cannot be derived from the
-    // id alone any more.
-    let mut mine = Vec::new();
-    for id in state.storage.list_authoring_packs().await? {
-        if super::auth::may(&state, &identity, &id, PackLevel::View).await {
-            mine.push(id);
-        }
-    }
-    Ok(Json(mine))
+    // A grant is a row, so "which packs can I reach" is no longer derivable from
+    // the id alone -- but it is still one question, asked once against the
+    // caller's whole access list rather than once per pack on the mirror.
+    let all = state.storage.list_authoring_packs().await?;
+    Ok(Json(
+        super::auth::filter_may(&state, &identity, all, PackLevel::View).await,
+    ))
 }
 
 #[derive(Deserialize)]

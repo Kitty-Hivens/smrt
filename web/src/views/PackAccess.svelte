@@ -9,11 +9,22 @@
   import { notifyFail, toasts } from '../lib/toasts.svelte';
   import { t } from '../lib/i18n.svelte';
   import { dialogs } from '../lib/dialogs.svelte';
-  import type { PackGrant, PackLevel } from '../lib/types';
+  import type { PackBlock, PackGrant, PackLevel } from '../lib/types';
 
-  let { packId, canGrant = false }: { packId: string; canGrant?: boolean } = $props();
+  let {
+    packId,
+    canGrant = false,
+    canModerate = false,
+  }: {
+    packId: string;
+    /// Hand out and take back access -- the owner's call.
+    canGrant?: boolean;
+    /// Moderate: see who was stopped from writing here, and let them back.
+    canModerate?: boolean;
+  } = $props();
 
   let rows = $state<PackGrant[]>([]);
+  let blocks = $state<PackBlock[]>([]);
   let loading = $state(true);
   let failed = $state(false);
   let working = $state(false);
@@ -39,6 +50,26 @@
       notifyFail(e);
     } finally {
       loading = false;
+    }
+    // A moderator who cannot see the list cannot undo a row in it. Read
+    // separately: a pack with nobody blocked is the normal case, and failing to
+    // read an empty list must not take the access list down with it.
+    if (canModerate) {
+      blocks = await api.packBlocks(pack).catch(() => []);
+    }
+  }
+
+  async function unblock(row: PackBlock) {
+    const who = row.login ?? String(row.github_uid);
+    if (!(await dialogs.confirm(t('acc.unblockAsk', { who }), { title: t('acc.unblock') }))) return;
+    working = true;
+    try {
+      await api.unblockFromPack(packId, row.github_uid);
+      await load(packId);
+    } catch (e) {
+      notifyFail(e);
+    } finally {
+      working = false;
     }
   }
 
@@ -76,6 +107,14 @@
     }
   }
 
+  /// Who decided a row, by name where the mirror knows it. Uid 0 is the
+  /// mirror's own break-glass hand rather than a person, and a bare number in a
+  /// list of who is answerable reads like a bug.
+  function decidedBy(uid: number, login?: string): string {
+    if (login) return login;
+    return uid === 0 ? t('common.operator') : t('acc.unknownUser', { uid });
+  }
+
   function when(at: number): string {
     const d = new Date(at * 1000);
     return Number.isNaN(d.getTime()) ? String(at) : d.toLocaleDateString();
@@ -97,12 +136,30 @@
         <li>
           <span class="who">{r.login ?? t('acc.unknownUser', { uid: r.github_uid })}</span>
           <span class="lvl" data-level={r.level}>{t(`acc.level.${r.level}`)}</span>
-          <span class="muted meta">{t('acc.grantedBy', { by: r.granted_by, at: when(r.granted_at) })}</span>
+          <span class="muted meta">{t('acc.grantedBy', { by: decidedBy(r.granted_by, r.granted_by_login), at: when(r.granted_at) })}</span>
           {#if canGrant}
             <button class="link danger" onclick={() => revoke(r)} disabled={working}>
               {t('acc.revoke')}
             </button>
           {/if}
+        </li>
+      {/each}
+    </ul>
+  {/if}
+
+  {#if canModerate && blocks.length}
+    <!-- The same question from the other side: the list above is who may reach
+         this pack, this one is who may no longer write on it. -->
+    <p class="muted lead blocked">{t('acc.blockedLead')}</p>
+    <ul class="rows">
+      {#each blocks as b (b.github_uid)}
+        <li>
+          <span class="who">{b.login ?? t('acc.unknownUser', { uid: b.github_uid })}</span>
+          {#if b.reason}<span class="muted">{b.reason}</span>{/if}
+          <span class="muted meta">{t('acc.blockedBy', { by: decidedBy(b.blocked_by, b.blocked_by_login), at: when(b.blocked_at) })}</span>
+          <button class="link" onclick={() => unblock(b)} disabled={working}>
+            {t('acc.unblock')}
+          </button>
         </li>
       {/each}
     </ul>
@@ -136,18 +193,21 @@
     font-size: var(--fs-sm);
     margin: 0 0 12px;
   }
+  .blocked {
+    margin-top: 4px;
+  }
   .rows {
     list-style: none;
     margin: 0 0 14px;
     padding: 0;
-    border-top: 1px solid var(--line);
+    border-top: 1px solid var(--seam);
   }
   .rows li {
     display: flex;
     align-items: baseline;
     gap: 12px;
     padding: 8px 0;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid var(--seam);
     font-size: var(--fs-sm);
   }
   .who {
@@ -178,21 +238,6 @@
   .hint {
     font-size: var(--fs-sm);
     margin: 8px 0 0;
-  }
-  .link {
-    background: none;
-    border: 0;
-    padding: 0;
-    font: inherit;
-    color: var(--accent, var(--fg));
-    cursor: pointer;
-  }
-  .link.danger {
-    color: var(--danger, var(--fg));
-  }
-  .link:disabled {
-    opacity: 0.5;
-    cursor: default;
   }
   @container view (max-width: 560px) {
     .rows li {

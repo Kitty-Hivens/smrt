@@ -11,6 +11,7 @@
   import Browse from './views/Browse.svelte';
   import PublicBrowse from './views/PublicBrowse.svelte';
   import ModPage from './views/ModPage.svelte';
+  import ThreadPage from './views/ThreadPage.svelte';
   import Profile from './views/Profile.svelte';
   import MyPacks from './views/MyPacks.svelte';
   import Settings from './views/Settings.svelte';
@@ -55,7 +56,12 @@
   <Login onClose={() => (showLogin = false)} />
 {:else}
   <AppShell me={me ?? null} onSignIn={() => (showLogin = true)} onLogout={logout}>
-    {#if route.mod != null}
+    {#if route.thread != null && route.pack == null}
+      <!-- A discussion with no editor under it: the catalog's way in, and the
+           only one a guest has. Above the section switch because it is a place
+           of its own, the way a mod page is. -->
+      <ThreadPage threadId={route.thread} />
+    {:else if route.mod != null}
       <ModPage modRef={route.mod} me={me ?? null} onBack={() => route.closeMod()} />
     {:else if route.section === 'mods' && me}
       <!-- read-only for a member, full authoring for an operator; the view gates

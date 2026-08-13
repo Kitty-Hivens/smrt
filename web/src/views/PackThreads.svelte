@@ -14,12 +14,21 @@
     packId,
     tick = 0,
     forkOf = null,
+    standalone = false,
+    canWrite = true,
   }: {
     packId: string;
     tick?: number;
     /// The pack this one was forked from, if any. Its presence is what makes
     /// offering the work back possible at all -- there is somewhere to offer it.
     forkOf?: string | null;
+    /// Read from the catalog rather than from inside the pack's editor: a
+    /// discussion opened here is a place of its own, not a pane over an editor
+    /// the reader may not even be allowed to open.
+    standalone?: boolean;
+    /// Whether the reader can say anything at all. A guest reads the whole
+    /// list and writes nothing.
+    canWrite?: boolean;
   } = $props();
 
   let rows = $state<Thread[]>([]);
@@ -63,7 +72,8 @@
       title = '';
       body = '';
       opening = false;
-      route.openThread(packId, opened.id);
+      if (standalone) route.readThread(opened.id);
+      else route.openThread(packId, opened.id);
     } catch (e) {
       notifyFail(e);
     } finally {
@@ -91,10 +101,15 @@
     }
   }
 
+  function address(row: Thread): string {
+    return standalone ? href.discussion(row.id) : href.thread(packId, row.id);
+  }
+
   function open(e: MouseEvent, row: Thread) {
     if (!plainClick(e)) return;
     e.preventDefault();
-    route.openThread(packId, row.id);
+    if (standalone) route.readThread(row.id);
+    else route.openThread(packId, row.id);
   }
 
   function when(at: number): string {
@@ -108,7 +123,9 @@
     <button class="link" onclick={() => (showAll = !showAll)}>
       {showAll ? t('thr.showOpen') : t('thr.showAll')}
     </button>
-    <button class="link" onclick={() => (opening = !opening)}>{t('thr.report')}</button>
+    {#if canWrite}
+      <button class="link" onclick={() => (opening = !opening)}>{t('thr.report')}</button>
+    {/if}
     {#if forkOf}
       <button class="link" onclick={() => (proposing = !proposing)}>
         {t('thr.propose', { pack: forkOf })}
@@ -116,7 +133,7 @@
     {/if}
   </div>
 
-  {#if opening}
+  {#if opening && canWrite}
     <div class="form">
       <input bind:value={title} placeholder={t('thr.titlePlaceholder')} disabled={working} />
       <textarea rows="3" bind:value={body} placeholder={t('thr.bodyPlaceholder')} disabled={working}
@@ -147,7 +164,7 @@
         <li>
           <div class="line">
             <span class="kind" data-kind={r.kind}>{t(`thr.kind.${r.kind}` as 'thr.kind.issue')}</span>
-            <a href={href.thread(packId, r.id)} onclick={(e) => open(e, r)}>{r.title}</a>
+            <a href={address(r)} onclick={(e) => open(e, r)}>{r.title}</a>
             <span class="status" data-status={r.status}>{t(`thr.status.${r.status}` as 'thr.status.open')}</span>
           </div>
           <div class="meta muted">
@@ -194,11 +211,11 @@
     list-style: none;
     margin: 0;
     padding: 0;
-    border-top: 1px solid var(--line);
+    border-top: 1px solid var(--seam);
   }
   .list li {
     padding: 8px 0;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid var(--seam);
   }
   .line {
     display: flex;
@@ -242,13 +259,5 @@
   .empty,
   .small {
     font-size: var(--fs-sm);
-  }
-  .link {
-    background: none;
-    border: 0;
-    padding: 0;
-    font: inherit;
-    color: var(--accent, var(--fg));
-    cursor: pointer;
   }
 </style>

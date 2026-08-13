@@ -8,6 +8,38 @@ version section when a release is tagged.
 
 ### Fixed
 
+- A pack's discussion was invisible to the people it is for. The reads were
+  public and nothing in the browser used them: the catalog showed a pack's
+  description and its mods and said nothing about what was being asked of it,
+  and a thread could only be opened from inside an editor, which is a surface a
+  reader has no business being in. A pack in the catalog now carries its
+  discussion, folded away until wanted, and a thread has an address that works
+  with no session behind it -- so "see the report" is a link anybody can follow,
+  and signing in is what saying something needs, not what reading it needs.
+- The panel guessed what the viewer was allowed to do here, from the pack id and
+  the caller's role. That answers correctly for the pack's owner and for an
+  admin, and wrongly for everybody who reached a pack by grant -- the one case
+  grants exist for -- so a granted keeper saw no merge button, no moderation and
+  no access list, while the mirror would have accepted all three from them. The
+  panel now asks the gate that enforces it.
+- Every hairline in the history, commit, access and discussion views was drawn
+  in a colour that does not exist. `--line` was never a token in the stylesheet,
+  so each of those borders resolved to nothing: comment blocks ran together, the
+  rule under a report's text was absent, and rows in a list had no separators.
+- A button that reads as a line of text was still wearing a card: the panel's
+  shared control style gives every button a shadow and a hover fill, and the six
+  views that hand-rolled a "link" reset the background and the border and forgot
+  those two, so "show settled too" sat on a faint tile that lit up under the
+  cursor. The reset now lives once, next to the style it undoes.
+- A pack's access list named whoever decided a row by number. `uid 0` is the
+  mirror's own break-glass hand rather than a person, and a bare uid beside
+  "granted by" tells a reader nothing; both now resolve to a name where there is
+  one.
+- Opening proposals had no ceiling. The rate window covered reports and comments
+  and left the third way of writing to a pack open, so the one write that costs
+  a reviewer the most attention was the one nothing limited.
+- Listing the packs somebody may reach asked the access store once per pack on
+  the mirror. It now asks once.
 - "47 changes since the last commit" and the list under it were two different
   answers, computed twice from different rules. The count came from a JSON walk
   that compared arrays by position, so adding one mod to an alphabetically
@@ -177,6 +209,21 @@ version section when a release is tagged.
 
 ### Added
 
+- A pack's keepers can stop somebody writing on it. Anyone signed in may report
+  something on a published pack -- which is what makes a report worth having --
+  so the only thing standing between a pack and a flood was a rate window and
+  hiding messages one at a time, which answers what was already said and nothing
+  about the next one. A block refuses that person's reports, proposals and
+  comments on that pack, carries the keepers' own note about why, and touches
+  reading not at all: what they said before stays where it is, because a block
+  is not a way to unsay something. It sits at the moderation level rather than
+  the owner's, beside taking a comment down, and the gate refuses to block
+  anybody who keeps the pack.
+- What a proposal offers can be read by anyone who can read the proposal. The
+  diff was the one part of a discussion that still needed a session, so a
+  stranger could see that an offer had been declined and not what was declined.
+  Offering a commit to a pack publishes that commit's content to the pack's
+  readers -- the offer is the act of publication.
 - The discussion surface is gated where it is written, not only where it is
   read: the levels are now pinned by tests that drive the real router with a
   real session, so a handler that forgets to gate, or gates at the wrong level,
@@ -358,6 +405,12 @@ version section when a release is tagged.
 
 ### Changed
 
+- Reading a discussion has one home. The list, a thread and a proposal's diff
+  each had two implementations -- one public, one behind the session gate --
+  answering the same question with two slightly different rules: the
+  authenticated copy refused an unlisted pack's discussion that the public one
+  served. The authenticated copies are gone, and the panel reads what a stranger
+  reads.
 - A view reflows against its own column, not against the window. Every
   responsive rule in the panel asked the viewport, which is the same question
   only while a view is the whole screen -- so a narrow window and a narrow

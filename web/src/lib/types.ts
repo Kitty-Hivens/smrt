@@ -77,6 +77,7 @@ export type { Thread } from './bindings/Thread';
 export type { ThreadComment } from './bindings/ThreadComment';
 export type { ThreadView } from './bindings/ThreadView';
 export type { PackGrant } from './bindings/PackGrant';
+export type { PackBlock } from './bindings/PackBlock';
 export type { PackLevel } from './bindings/PackLevel';
 export type { Commit } from './bindings/Commit';
 export type { CommitLogEntry } from './bindings/CommitLogEntry';

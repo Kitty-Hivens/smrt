@@ -117,11 +117,13 @@ function commitFromPath(path: string): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-/// The discussion being read, out of `/packs/<id>/thread/<n>`. A thread is a
-/// place for the same reason a commit is: it is what somebody links to when
-/// they say "see the report".
+/// The discussion being read, out of `/packs/<id>/thread/<n>` inside an editor,
+/// or `/thread/<n>` on its own. A thread is a place for the same reason a commit
+/// is: it is what somebody links to when they say "see the report" -- and the
+/// bare form is the one that can be handed to somebody who has no account here,
+/// which is the whole point of a discussion being public.
 function threadFromPath(path: string): number | null {
-  const m = path.match(/^\/(?:packs|mypacks)\/.+\/thread\/(\d+)$/);
+  const m = path.match(/^(?:\/(?:packs|mypacks)\/.+)?\/thread\/(\d+)$/);
   return m ? Number(m[1]) : null;
 }
 
@@ -212,8 +214,13 @@ if (typeof window !== 'undefined') {
       }
     }
   });
-  // a bare `/` restores the last section without leaving an extra entry behind
-  if (!sectionFromPath(location.pathname) && !modFromPath(location.pathname)) {
+  // a bare `/` restores the last section without leaving an extra entry behind;
+  // a deep link to a mod or a discussion is the address it already is
+  if (
+    !sectionFromPath(location.pathname) &&
+    !modFromPath(location.pathname) &&
+    threadFromPath(location.pathname) === null
+  ) {
     pushPath(`/${section}`, true);
   }
   remember(section);
@@ -232,6 +239,9 @@ export const href = {
     `/${from}/${encodeURIComponent(id)}/commit/${encodeURIComponent(commitId)}`,
   thread: (id: string, threadId: number, from: Section = section) =>
     `/${from}/${encodeURIComponent(id)}/thread/${threadId}`,
+  /// A discussion with no editor under it -- what the catalog links to, and
+  /// what a guest can be handed.
+  discussion: (threadId: number) => `/thread/${threadId}`,
 };
 
 /// True for a click the app should handle itself. A modified or middle click is
@@ -318,15 +328,25 @@ export const route = {
     focusThread = threadId;
     pushPath(href.thread(packId, threadId));
   },
+  /// Read a discussion on its own, without opening the pack behind it -- the
+  /// catalog's way in, and the only one a guest has.
+  readThread(threadId: number) {
+    editPack = null;
+    focusCommit = null;
+    focusMod = null;
+    focusThread = threadId;
+    pushPath(href.discussion(threadId));
+  },
   /// Leave it the way back does, falling back to the pack when this session
-  /// pushed nothing to go back to (a shared link, a reload).
+  /// pushed nothing to go back to (a shared link, a reload) -- or to the
+  /// section, when the discussion was standing on its own.
   closeThread() {
-    if (threadFromPath(location.pathname) && pushed > 0) {
+    if (threadFromPath(location.pathname) !== null && pushed > 0) {
       history.back();
       return;
     }
     focusThread = null;
-    if (editPack !== null) pushPath(href.pack(editPack), true);
+    pushPath(editPack !== null ? href.pack(editPack) : `/${section}`, true);
   },
   closeCommit() {
     if (commitFromPath(location.pathname) && pushed > 0) {

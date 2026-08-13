@@ -368,6 +368,54 @@ pub(crate) async fn may(
     authorize(state, identity, pack_id, need).await.is_ok()
 }
 
+/// Whether somebody who is not the caller may do `need` here -- for a decision
+/// about a third person, such as whether they are one of the pack's keepers and
+/// so not somebody to block. A uid nobody has ever signed in as is treated as a
+/// plain member, which is what they would be on their first login.
+pub(crate) async fn may_uid(state: &AppState, pack_id: &str, uid: i64, need: PackLevel) -> bool {
+    let acc = state.accounts.clone();
+    let known = tokio::task::spawn_blocking(move || acc.identity_of(uid))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten();
+    let identity = known.unwrap_or(Identity {
+        uid,
+        login: String::new(),
+        role: Role::Member,
+    });
+    may(state, &identity, pack_id, need).await
+}
+
+/// Which of `packs` this caller may reach at `need`, with one read of the access
+/// list rather than one per pack. The rule is the same one [`authorize`]
+/// applies; only the number of round trips differs, which is what makes it worth
+/// having for a listing that asks about every pack on the mirror.
+pub(crate) async fn filter_may(
+    state: &AppState,
+    identity: &Identity,
+    packs: Vec<String>,
+    need: PackLevel,
+) -> Vec<String> {
+    let acc = state.accounts.clone();
+    let uid = identity.uid;
+    let granted: std::collections::HashMap<String, PackLevel> =
+        tokio::task::spawn_blocking(move || acc.packs_granted_to(uid))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+    packs
+        .into_iter()
+        .filter(|id| match inherent_level(identity, id) {
+            Some(level) => level >= need,
+            None => granted.get(id).is_some_and(|level| *level >= need),
+        })
+        .collect()
+}
+
 /// Gate member content creation on rules-of-use acceptance: `Forbidden` until the
 /// user has accepted. The panel accepts on their behalf via `/v1/me/accept-terms`.
 pub(crate) async fn require_terms(state: &AppState, uid: i64) -> Result<(), ApiError> {

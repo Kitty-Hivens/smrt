@@ -1,6 +1,6 @@
 # 0006. Access is a grant on a pack, not a rung on the mirror
 
-Status: accepted, not yet built
+Status: shipped (PR #171, #172)
 
 ## Context
 
@@ -61,6 +61,28 @@ between two states and the conditional write all exist (#122), so a proposal is
 those parts plus a request and a decision. This record does not design it; it
 makes it possible, and deliberately does not smuggle it in early.
 
+**A discussion is as public as the pack it is about.** Reading one -- the list,
+a thread, and what a proposal offers -- is not an authoring act and does not sit
+behind the gate: a published pack's reports and decisions answer without a
+session, and an unpublished pack's stay with whoever may `view` it. A decision
+nobody can find is indistinguishable from one nobody made, and the record of
+what was asked for and refused is the part that outlives everyone involved.
+Writing is the other half: it is signed, which is why it needs an account.
+
+Offering a commit to a pack publishes that commit's content to the pack's
+readers. The offer is the act of publication, so a fork that is not ready to be
+read is not ready to be proposed.
+
+**Access has a negative, and it is not the absence of a grant.** Anybody signed
+in may report something on a published pack -- that is what makes a report worth
+having -- so the pack's keepers need a way to say "not you" that outlasts the
+message they just took down. A block is stored beside the access list, refuses
+writes (a report, a proposal, a comment) and nothing else, and never touches
+reading: it cannot be used to erase somebody from a record they are already part
+of. It is moderation, so it sits at `edit` rather than `own`, next to hiding a
+comment; the gate refuses to block anybody who keeps the pack, so it can never
+become a way to lock the keepers out of their own discussion.
+
 ## Rejected
 
 - **Keeping roles as the only answer.** Making a helper an admin of the whole
@@ -88,3 +110,9 @@ makes it possible, and deliberately does not smuggle it in early.
 - The panel needs a place to see and change this -- an access list on the pack,
   with the two rules (owner, admin) stated rather than hidden, so it is clear
   why a name is on the list without being in the table.
+- The panel must ask what it may do rather than derive it. Guessing from the
+  pack id and the caller's role answers for the owner and the admin and gets the
+  granted keeper wrong, which is the one case grants exist for, so the gate
+  answers for itself at `GET /v1/authoring/packs/{id}/access/mine`.
+- A block is a row that outlives the thread it was provoked by, so it is
+  forgotten with the pack, like the access list.

@@ -1,4 +1,5 @@
 use super::ApiError;
+use super::admin::CommitDiff;
 use super::page::{PageQuery, next_link};
 use crate::accounts::{PackLevel, Thread, ThreadView};
 use crate::authoring::jar_icon;
@@ -35,6 +36,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/packs/{pack_id}/diff", get(get_pack_diff))
         .route("/v1/packs/{pack_id}/threads", get(public_threads))
         .route("/v1/threads/{id}", get(public_thread))
+        .route("/v1/threads/{id}/diff", get(public_thread_diff))
         .route(
             "/v1/packs/{pack_id}/static/{*rel_path}",
             get(get_pack_static),
@@ -560,6 +562,53 @@ pub(crate) async fn public_thread(
         .await
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??;
     Ok(Json(crate::accounts::ThreadView { thread, comments }))
+}
+
+/// What a proposal would change, read against the target as it stands now --
+/// not against the fork's parent. The review question is "what happens to this
+/// pack if the offer is taken", and that answer moves as the pack moves.
+///
+/// As readable as the thread it belongs to, which is what makes a decision
+/// checkable: "they turned this down" means nothing to a reader who cannot see
+/// what was turned down. Offering a commit to a pack publishes that commit's
+/// content to the pack's readers -- the offer is the act of publication, so a
+/// fork that is not ready to be read is not ready to be proposed.
+#[utoipa::path(
+    get,
+    path = "/v1/threads/{id}/diff",
+    tag = "public",
+    params(("id" = i64, Path, description = "Thread id of a proposal")),
+    responses(
+        (status = 200, description = "What taking the offer would change", body = CommitDiff),
+        (status = 400, description = "That thread is a report and offers no state"),
+        (status = 404, description = "No such thread, or its pack is not yours to read")
+    )
+)]
+pub(crate) async fn public_thread_diff(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Result<Json<CommitDiff>, ApiError> {
+    let acc = state.accounts.clone();
+    let thread = tokio::task::spawn_blocking(move || acc.thread(id))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("thread task: {e}")))??
+        .ok_or(ApiError::NotFound)?;
+    gate_pack_read(&state, &headers, &thread.pack_id).await?;
+    let (Some(source_pack), Some(source_commit)) = (&thread.source_pack, &thread.source_commit)
+    else {
+        return Err(ApiError::BadRequest("this thread offers no state".into()));
+    };
+    let offered = state
+        .storage
+        .load_commit_config(source_pack, source_commit)
+        .await?;
+    let current = state.storage.load_pack_config(&thread.pack_id).await?;
+    Ok(Json(CommitDiff {
+        from: Some(thread.pack_id.clone()),
+        to: source_commit.clone(),
+        changes: crate::authoring::diff_configs(&current, &offered),
+    }))
 }
 
 // ── /v1/servers ────────────────────────────────────────────────────────────

@@ -134,6 +134,26 @@ CREATE TABLE IF NOT EXISTS pack_threads (
 CREATE INDEX IF NOT EXISTS idx_threads_pack ON pack_threads(pack_id, status);
 CREATE INDEX IF NOT EXISTS idx_threads_by ON pack_threads(by_uid);
 
+-- Who a pack's keepers have asked to stop. Hiding a comment answers what was
+-- already said; this answers the next one, which is the difference between
+-- cleaning up after somebody and not hosting them. It sits beside `pack_access`
+-- because it is the same question from the other side -- that list says who may
+-- reach a pack, this one who may no longer write on it.
+--
+-- A block bars writing (a report, a proposal, a comment) and nothing else: a
+-- published pack's discussion stays readable, so a block can never quietly
+-- erase somebody from a record they are already part of. `reason` is for the
+-- person deciding, not for the blocked -- it is never served to them.
+CREATE TABLE IF NOT EXISTS pack_blocks (
+    pack_id    TEXT NOT NULL,
+    github_uid INTEGER NOT NULL,
+    reason     TEXT,
+    blocked_by INTEGER NOT NULL,
+    blocked_at INTEGER NOT NULL,
+    PRIMARY KEY (pack_id, github_uid)
+);
+CREATE INDEX IF NOT EXISTS idx_pack_blocks_uid ON pack_blocks(github_uid);
+
 -- What people said on a thread. Hidden rather than deleted when moderated: the
 -- fact that something was said and taken down is itself part of the record, and
 -- a hole in a numbered discussion is worse than a marked gap. `hidden_by` is the

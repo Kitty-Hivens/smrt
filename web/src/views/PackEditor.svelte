@@ -13,12 +13,13 @@
   import { changedPaths, createTouches } from '../lib/touched.svelte';
   import type { LoaderVersions, MinecraftVersions, SpoofReport } from '../lib/types';
   import { detailOf, notifyFail, toasts } from '../lib/toasts.svelte';
-  import { isDebug, isOperator } from '../lib/roles';
+  import { isDebug } from '../lib/roles';
   import type {
     DeclaredAsset,
     JobStatus,
     PackConfig,
     PackEvent,
+    PackLevel,
     ResolveReport,
     SourceDecl,
     ValidateReport,
@@ -196,21 +197,21 @@
   // commit -- but this is where the pack's event stream is read, so the fact
   // that it moved is passed down rather than subscribed to twice.
   let historyTick = $state(0);
-  // Whether this viewer may hand out access: the two rules the mirror's gate
-  // knows without a lookup (ADR 0006) -- an admin, or the owner of the
-  // namespace this pack sits in. A granted `own` also qualifies, and the server
-  // is the one that decides; this only shows or hides the controls.
-  let canOwn = $state(false);
+  // What this viewer may do here, asked of the gate that enforces it (ADR
+  // 0006). It used to be guessed from the pack id and the caller's role, which
+  // got the admin and the namespace owner right and hid merging, moderation and
+  // the access list from everybody who reached the pack by grant -- the one case
+  // grants exist for.
+  let level = $state<PackLevel | null>(null);
+  const canOwn = $derived(level === 'own');
+  const canEdit = $derived(level === 'own' || level === 'edit');
   $effect(() => {
     const pack = packId;
     void (async () => {
-      try {
-        const m = await api.me();
-        const mine = pack.startsWith(`u/${m?.uid}/`);
-        canOwn = isOperator(m?.role) || mine;
-      } catch {
-        canOwn = false;
-      }
+      level = await api
+        .myPackLevel(pack)
+        .then((r) => r.level ?? null)
+        .catch(() => null);
     })();
   });
 
@@ -1188,12 +1189,7 @@
       <div class="muted mono">{t('common.loading')}</div>
     {:else if route.thread !== null}
       <!-- A discussion is a place of its own, over the pack it belongs to. -->
-      <ThreadPage
-        {packId}
-        threadId={route.thread}
-        canEdit={canOwn}
-        onChanged={() => (threadTick += 1)}
-      />
+      <ThreadPage threadId={route.thread} onChanged={() => (threadTick += 1)} />
     {:else if route.commit}
       <!-- A checkpoint is a place of its own (ADR 0005): it has an address, and
            the editor it was opened from is still underneath when it closes. -->
@@ -1529,7 +1525,7 @@
     {:else if tab === 'access'}
       <!-- Granting is the owner's act; everyone who can open the pack may read
            who else is in it, which is what makes the list worth having. -->
-      <PackAccess {packId} canGrant={canOwn} />
+      <PackAccess {packId} canGrant={canOwn} canModerate={canEdit} />
     {:else if tab === 'build'}
       <BuildConsole
         {packId}

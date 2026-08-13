@@ -103,6 +103,12 @@ grants or moves one, `DELETE .../access/{uid}` takes it away; the last two need
 its owner's to change. Every grant and revocation lands in the audit log, and
 a deleted pack forgets its list so a re-minted id inherits nobody.
 
+`GET .../access/mine` answers what the caller may do here (`{"level":"edit"}`,
+or `{}` for nobody in particular). It exists so a client asks the gate instead
+of deriving the answer from the pack id and the caller's role -- a derivation
+that is right for the owner and the admin and wrong for exactly the person a
+grant was written for.
+
 ### Discussions: reports and proposals
 
 Everything said about a pack that is not the pack itself is a thread on it: an
@@ -111,10 +117,13 @@ back, naming the commit it offers). One shape for both, because they differ in
 what opens them and how they settle and in nothing else, and because a
 discussion belongs to both.
 
-Reading is as public as the pack: `GET /v1/packs/{id}/threads` and
-`GET /v1/threads/{id}` answer without a session for a published pack, and stay
-private for a draft. A decision nobody can see is indistinguishable from one
-nobody made, which is the whole reason the read is public.
+Reading is as public as the pack, and it is the only read on the public router
+that is not about pack content: `GET /v1/packs/{id}/threads`,
+`GET /v1/threads/{id}` and `GET /v1/threads/{id}/diff` answer without a session
+for a published pack, and stay private for a draft. A decision nobody can see is
+indistinguishable from one nobody made, which is the whole reason the read is
+public. There is no second, authenticated copy of these reads: one home, so the
+panel and a stranger with a link are looking at the same answer.
 
 Writing needs a session. Anyone signed in may open an issue on a published pack
 and join any discussion they can read; `edit` on the pack closes, declines,
@@ -125,6 +134,18 @@ while keeping the gap visible with who took it down. Closed issues reopen;
 proposals do not, because their offer was a commit and offering again is a new
 proposal.
 
+Writing has a ceiling and a stop. The ceiling is a rate window counted from the
+rows themselves -- twenty comments or five threads per ten minutes per account,
+set where a person never notices it and a script does, and a restart hands
+nobody a fresh allowance. The stop is a block: `POST .../packs/{id}/blocks`
+(`{github_uid, reason?}`) refuses that person's next report, proposal or comment
+on this pack, `DELETE .../packs/{id}/blocks/{uid}` lifts it, and
+`GET .../packs/{id}/blocks` lists who is on it -- all at `edit`, because
+blocking and hiding a comment are the same job. A block never touches reading,
+so it cannot be used to erase somebody from a record they are already in, and
+the gate refuses to block anybody who keeps the pack. Both decisions are audit
+entries.
+
 ### Proposing a change to somebody else's pack
 
 A fork can be offered back. `POST .../packs/{target}/proposals`
@@ -134,18 +155,20 @@ all beyond a session when the target is published, which is what makes an
 unsolicited proposal possible.
 
 What is offered is a **commit**, not "whatever that fork says today", so what a
-reviewer reads cannot move while they read it. `GET .../proposals/{id}/diff`
+reviewer reads cannot move while they read it. `GET /v1/threads/{id}/diff`
 answers what taking it would do to the target **as it stands now** rather than
 against the fork's parent: a review answers "what happens to my pack if I take
-this", and that question moves as the pack moves.
+this", and that question moves as the pack moves. It is as readable as the
+thread, which means offering a commit publishes its content to the target's
+readers -- a fork that is not ready to be read is not ready to be proposed.
 
-`POST .../proposals/{id}/merge` (needs `edit` on the target) writes the offered
+`POST .../threads/{id}/merge` (needs `edit` on the target) writes the offered
 authored content in as an ordinary commit, so what a merge did is readable
 afterwards by the same history everything else uses. Ownership does not travel:
 the pack id, owner, tier, visibility and `fork_of` stay the target's, and a
 proposal that could move them would be a rename away from a takeover.
-`POST .../proposals/{id}/decline` says no; the proposer hitting the same
-endpoint withdraws instead. Settled proposals keep their row -- "we said no in
+`POST .../threads/{id}/close` says no; the proposer hitting the same endpoint
+withdraws instead. Settled proposals keep their row -- "we said no in
 March" is what somebody looks for in April -- and settling is a one-time write,
 so two reviewers pressing at once cannot both decide it.
 
