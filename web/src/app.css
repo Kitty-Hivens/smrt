@@ -380,6 +380,42 @@ button:disabled {
 button:disabled:hover {
   background: var(--panel-2);
 }
+/* A control that reads as a line of text is still a button, and half a dozen
+   views were each writing their own reset for it -- every one of them
+   remembering the background and the border, none of them the card shadow or
+   the hover fill, so a plain "show settled too" sat on a faint tile of its own.
+   One rule, so the next one inherits it instead of forgetting the same two
+   properties. Padding and colour stay the view's to set; the tap-target floor
+   above stays, because a link in a row of controls is still something a finger
+   has to hit. */
+button.link {
+  /* text among text: it takes the size and weight of the line it sits in */
+  font: inherit;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  color: var(--accent);
+}
+button.link:hover:not(:disabled) {
+  background: none;
+  text-decoration: underline;
+}
+button.link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button.link:focus-visible {
+  box-shadow: var(--ring);
+}
+button.link.danger {
+  color: var(--danger);
+}
+button.link.danger:hover:not(:disabled) {
+  background: none;
+}
+
 /* the inverted solid: the panel's one filled emphasis */
 button.primary {
   color: var(--on-solid);

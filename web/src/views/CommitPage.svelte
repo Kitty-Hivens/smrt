@@ -272,7 +272,7 @@
     cursor: pointer;
   }
   .modes button.on {
-    border-color: var(--line);
+    border-color: var(--seam);
     color: var(--fg);
   }
   .lead {

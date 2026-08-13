@@ -316,7 +316,7 @@
     cursor: pointer;
   }
   .lang.on {
-    border-color: var(--line);
+    border-color: var(--seam);
     color: var(--fg);
   }
   .notes textarea {
