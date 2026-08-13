@@ -177,6 +177,14 @@ version section when a release is tagged.
 
 ### Added
 
+- The panel can hold a discussion. A pack gains a Discussion tab -- reports and
+  proposals in one list, because to a reader they are one thing: somebody asking
+  the pack's keepers for something, and a proposal hidden in its own tab is a
+  request nobody stumbles over. A thread has an address of its own, so "see the
+  report" is a link. A proposal's page carries what taking it would do to the
+  pack as it stands, drawn by the same component the commit box uses, and the
+  keeper's buttons -- take it, decline, close, reopen, take a comment down -- sit
+  under the discussion they belong to.
 - Packs have discussions, in the open. Two kinds of thread: an issue (a report)
   and a proposal (a fork offered back, which is the same thread with a commit
   attached). Reading is as public as the pack -- a published pack's reports,

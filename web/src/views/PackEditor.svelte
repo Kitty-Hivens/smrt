@@ -26,6 +26,8 @@
   import BuildConsole from './BuildConsole.svelte';
   import CommitPage from './CommitPage.svelte';
   import PackAccess from './PackAccess.svelte';
+  import PackThreads from './PackThreads.svelte';
+  import ThreadPage from './ThreadPage.svelte';
   import BrandingEditor from './BrandingEditor.svelte';
   import PackGraph from './PackGraph.svelte';
   import JobLog from './JobLog.svelte';
@@ -137,7 +139,7 @@
     }
   }
 
-  type Tab = 'config' | 'branding' | 'graph' | 'build' | 'access';
+  type Tab = 'config' | 'branding' | 'graph' | 'build' | 'threads' | 'access';
   let tab = $state<Tab>('config');
   let previewOpen = $state(false);
   let previewToken = $state(0);
@@ -217,6 +219,8 @@
   // The build in flight. Held here because the console is one surface among
   // several in this editor: opening a commit over it must not lose a running
   // build, re-enable the button, and let a second one start.
+  // Bumped when a discussion moves, so the list behind it re-reads.
+  let threadTick = $state(0);
   let buildJobId = $state<string | null>(null);
   let buildBusy = $state(false);
   // Who else has this pack open, from the stream. Names, not a count: "bo is
@@ -1098,6 +1102,7 @@
     { value: 'branding', label: t('pe.tab.branding') },
     { value: 'graph', label: t('pe.tab.graph') },
     { value: 'build', label: t('pe.tab.build') },
+    { value: 'threads', label: t('pe.tab.threads') },
     { value: 'access', label: t('pe.tab.access') },
   ]);
 </script>
@@ -1173,6 +1178,14 @@
   <div class="editcol">
     {#if loading}
       <div class="muted mono">{t('common.loading')}</div>
+    {:else if route.thread !== null}
+      <!-- A discussion is a place of its own, over the pack it belongs to. -->
+      <ThreadPage
+        {packId}
+        threadId={route.thread}
+        canEdit={canOwn}
+        onChanged={() => (threadTick += 1)}
+      />
     {:else if route.commit}
       <!-- A checkpoint is a place of its own (ADR 0005): it has an address, and
            the editor it was opened from is still underneath when it closes. -->
@@ -1503,6 +1516,8 @@
       {/if}
     {:else if tab === 'graph'}
       <PackGraph {packId} />
+    {:else if tab === 'threads'}
+      <PackThreads {packId} tick={threadTick} />
     {:else if tab === 'access'}
       <!-- Granting is the owner's act; everyone who can open the pack may read
            who else is in it, which is what makes the list worth having. -->

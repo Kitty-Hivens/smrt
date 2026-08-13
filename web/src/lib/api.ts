@@ -13,6 +13,9 @@ import type {
   CommitDiff,
   PackGrant,
   PackLevel,
+  Thread,
+  ThreadComment,
+  ThreadView,
   CommitLogEntry,
   CommitStatus,
   DeclaredAsset,
@@ -132,6 +135,22 @@ async function getJson<T>(path: string): Promise<T> {
     const r = await fetch(path, {
       credentials: 'include',
       headers: { Accept: 'application/json' },
+    });
+    if (!r.ok) throw await toError(r);
+    return (await r.json()) as T;
+  } finally {
+    activity.end();
+  }
+}
+
+async function postJson<T>(path: string, jsonBody: unknown): Promise<T> {
+  activity.begin();
+  try {
+    const r = await fetch(path, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(jsonBody),
     });
     if (!r.ok) throw await toError(r);
     return (await r.json()) as T;
@@ -286,6 +305,39 @@ export const api = {
     if (!r.ok) throw await toError(r);
     return { config: (await r.json()) as PackConfig, rev: revisionOf(r) };
   },
+  // ── discussions on a pack: reports and proposals ──
+  //
+  // Reading is as public as the pack, so a signed-out reader uses the same
+  // shapes through the public routes; the authoring ones are what a member
+  // needs to write.
+  threads: (id: string, kind?: 'issue' | 'proposal', all = false) =>
+    getJson<Thread[]>(
+      `/v1/packs/${encodeURIComponent(id)}/threads?${new URLSearchParams({
+        ...(kind ? { kind } : {}),
+        ...(all ? { all: 'true' } : {}),
+      })}`,
+    ),
+  thread: (threadId: number) => getJson<ThreadView>(`/v1/threads/${threadId}`),
+  threadDiff: (threadId: number) =>
+    getJson<CommitDiff>(`/v1/authoring/threads/${threadId}/diff`),
+  openIssue: (id: string, title: string, body: string) =>
+    postJson<Thread>(`/v1/authoring/packs/${encodeURIComponent(id)}/issues`, { title, body }),
+  openProposal: (id: string, sourcePack: string, title: string, body: string) =>
+    postJson<Thread>(`/v1/authoring/packs/${encodeURIComponent(id)}/proposals`, {
+      source_pack: sourcePack,
+      title,
+      body,
+    }),
+  comment: (threadId: number, body: string) =>
+    postJson<ThreadComment>(`/v1/authoring/threads/${threadId}/comments`, { body }),
+  closeThread: (threadId: number) => postJson<Thread>(`/v1/authoring/threads/${threadId}/close`, {}),
+  reopenThread: (threadId: number) =>
+    postJson<Thread>(`/v1/authoring/threads/${threadId}/reopen`, {}),
+  mergeProposal: (threadId: number, message?: string) =>
+    postJson<Thread>(`/v1/authoring/threads/${threadId}/merge`, { message: message ?? null }),
+  hideComment: (commentId: number, hidden: boolean) =>
+    send('PUT', `/v1/authoring/comments/${commentId}/hidden`, { hidden }),
+
   // ── authoring: who may reach a pack (ADR 0006) ──
   //
   // The list holds grants only: ownership and the admin rung are answers the

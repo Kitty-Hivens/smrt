@@ -103,7 +103,7 @@ function packFromPath(path: string): string | null {
   // A commit sits under the pack that declared it, so the pack is still open
   // behind it -- and an id written out unencoded (an older link) still resolves,
   // which is why this reads the commit form first rather than tightening the id.
-  const c = path.match(/^\/(?:packs|mypacks)\/(.+)\/commit\/[^/]+$/);
+  const c = path.match(/^\/(?:packs|mypacks)\/(.+)\/(?:commit\/[^/]+|thread\/\d+)$/);
   if (c) return decodeURIComponent(c[1]);
   const m = path.match(/^\/(?:packs|mypacks)\/(.+)$/);
   return m ? decodeURIComponent(m[1]) : null;
@@ -115,6 +115,14 @@ function packFromPath(path: string): string | null {
 function commitFromPath(path: string): string | null {
   const m = path.match(/^\/(?:packs|mypacks)\/.+\/commit\/([^/]+)$/);
   return m ? decodeURIComponent(m[1]) : null;
+}
+
+/// The discussion being read, out of `/packs/<id>/thread/<n>`. A thread is a
+/// place for the same reason a commit is: it is what somebody links to when
+/// they say "see the report".
+function threadFromPath(path: string): number | null {
+  const m = path.match(/^\/(?:packs|mypacks)\/.+\/thread\/(\d+)$/);
+  return m ? Number(m[1]) : null;
 }
 
 function initial(): Section {
@@ -138,6 +146,7 @@ let editPack = $state<string | null>(packFromPath(location.pathname));
 // The commit open over the editor. Same reasoning as the pack itself: it is a
 // location, so it survives a reload and can be linked to.
 let focusCommit = $state<string | null>(commitFromPath(location.pathname));
+let focusThread = $state<number | null>(threadFromPath(location.pathname));
 
 // What the editor wants asked before it is left with edits the server has not
 // accepted. It lives on the route rather than on the Close button, because
@@ -192,6 +201,7 @@ if (typeof window !== 'undefined') {
     }
     editPack = pack;
     focusCommit = commitFromPath(location.pathname);
+    focusThread = threadFromPath(location.pathname);
     const mod = modFromPath(location.pathname);
     focusMod = mod;
     if (!mod) {
@@ -220,6 +230,8 @@ export const href = {
   pack: (id: string, from: Section = section) => `/${from}/${encodeURIComponent(id)}`,
   commit: (id: string, commitId: string, from: Section = section) =>
     `/${from}/${encodeURIComponent(id)}/commit/${encodeURIComponent(commitId)}`,
+  thread: (id: string, threadId: number, from: Section = section) =>
+    `/${from}/${encodeURIComponent(id)}/thread/${threadId}`,
 };
 
 /// True for a click the app should handle itself. A modified or middle click is
@@ -244,6 +256,10 @@ export const route = {
   get commit(): string | null {
     return focusCommit;
   },
+  /// The discussion open over the editor, or null.
+  get thread(): number | null {
+    return focusThread;
+  },
   /// `replace` is for a correction rather than a navigation -- landing on a
   /// section your role cannot see should not leave a step to go back to.
   async go(s: Section, replace = false) {
@@ -251,6 +267,7 @@ export const route = {
     focusMod = null; // picking a section leaves any open mod page
     editPack = null;
     focusCommit = null;
+    focusThread = null;
     section = s;
     remember(s);
     pushPath(`/${s}`, replace);
@@ -260,6 +277,7 @@ export const route = {
   openPack(id: string) {
     editPack = id;
     focusCommit = null;
+    focusThread = null;
     pushPath(`/${section}/${encodeURIComponent(id)}`);
   },
   /// Open a pack's editor from another section (the overview's recent list), as
@@ -271,6 +289,7 @@ export const route = {
     remember(s);
     editPack = id;
     focusCommit = null;
+    focusThread = null;
     pushPath(href.pack(id, s));
   },
   /// Close the editor the same way the back button does, so both routes through
@@ -292,6 +311,23 @@ export const route = {
     pushPath(href.commit(packId, commitId));
   },
   /// Leave a commit the same way back does, so both routes are one route.
+  /// Open a discussion over the pack it belongs to.
+  openThread(packId: string, threadId: number) {
+    editPack = packId;
+    focusCommit = null;
+    focusThread = threadId;
+    pushPath(href.thread(packId, threadId));
+  },
+  /// Leave it the way back does, falling back to the pack when this session
+  /// pushed nothing to go back to (a shared link, a reload).
+  closeThread() {
+    if (threadFromPath(location.pathname) && pushed > 0) {
+      history.back();
+      return;
+    }
+    focusThread = null;
+    if (editPack !== null) pushPath(href.pack(editPack), true);
+  },
   closeCommit() {
     if (commitFromPath(location.pathname) && pushed > 0) {
       history.back();
