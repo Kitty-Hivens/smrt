@@ -138,9 +138,10 @@ pub struct PackGrant {
 
 /// Somebody a pack's keepers have stopped from writing on it.
 ///
-/// The reason is the keepers' note to themselves and is never served to the
-/// person it names -- a block is a decision about a pack, not a verdict handed
-/// to somebody.
+/// The reason is written for the person it names: a door that shuts with no
+/// word is one they can only argue with, while a refusal that says why is one
+/// they can answer or accept. It is shown to them when they try to write, and
+/// to whoever moderates the pack.
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "bindings/")]
 pub struct PackBlock {
@@ -638,16 +639,32 @@ impl Accounts {
         Ok(gone > 0)
     }
 
-    /// Whether this person is blocked from writing on this pack. A store that
-    /// cannot be read blocks nobody -- the caller treats the error as its own.
-    pub fn is_blocked(&self, pack_id: &str, github_uid: i64) -> Result<bool> {
+    /// This person's block on this pack, with the reason it names, or `None`.
+    /// A store that cannot be read blocks nobody -- the caller treats the error
+    /// as its own.
+    pub fn block_on(&self, pack_id: &str, github_uid: i64) -> Result<Option<PackBlock>> {
         let guard = self.conn.lock().expect("accounts mutex poisoned");
-        let n: i64 = guard.query_row(
-            "SELECT COUNT(*) FROM pack_blocks WHERE pack_id = ?1 AND github_uid = ?2",
-            params![pack_id, github_uid],
-            |r| r.get(0),
-        )?;
-        Ok(n > 0)
+        guard
+            .query_row(
+                "SELECT b.github_uid, u.login, b.reason, b.blocked_by, d.login, b.blocked_at
+                 FROM pack_blocks b
+                 LEFT JOIN users u ON u.github_uid = b.github_uid
+                 LEFT JOIN users d ON d.github_uid = b.blocked_by
+                 WHERE b.pack_id = ?1 AND b.github_uid = ?2",
+                params![pack_id, github_uid],
+                |r| {
+                    Ok(PackBlock {
+                        github_uid: r.get(0)?,
+                        login: r.get(1)?,
+                        reason: r.get(2)?,
+                        blocked_by: r.get(3)?,
+                        blocked_by_login: r.get(4)?,
+                        blocked_at: r.get(5)?,
+                    })
+                },
+            )
+            .optional()
+            .context("read pack block")
     }
 
     /// Everyone a pack has blocked, newest first. Blocking; wrap in

@@ -425,6 +425,14 @@ version section when a release is tagged.
 
 ### Changed
 
+- A block says why. The reason a pack's keepers write when they stop somebody
+  writing was a note to themselves, and the person it named got a bare refusal:
+  the panel could only show a generic failure, which is a door that shuts with
+  no word through it. It is served to them now -- in the refusal itself, and
+  before that in what the panel asks about its own standing, so the reply box is
+  replaced by a line saying writing here is suspended and what for, instead of
+  offering a box that cannot work.
+
 - Reading a discussion has one home. The list, a thread and a proposal's diff
   each had two implementations -- one public, one behind the session gate --
   answering the same question with two slightly different rules: the

@@ -240,6 +240,36 @@ mod tests {
         (status, String::from_utf8_lossy(&bytes).into_owned())
     }
 
+    /// A write, with what came back -- for the refusals that are worth reading.
+    async fn write(
+        app: &axum::Router,
+        method: &str,
+        uri: &str,
+        session: Option<&str>,
+        body: Option<&str>,
+    ) -> (axum::http::StatusCode, String) {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let mut req = Request::builder().method(method).uri(uri);
+        if let Some(sid) = session {
+            req = req.header(axum::http::header::COOKIE, format!("smrt_session={sid}"));
+        }
+        let req = match body {
+            Some(json) => req
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json.to_string()))
+                .unwrap(),
+            None => req.body(Body::empty()).unwrap(),
+        };
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
     async fn call(
         app: &axum::Router,
         method: &str,
@@ -579,18 +609,21 @@ mod tests {
             StatusCode::NO_CONTENT
         );
 
-        // what was blocked is the writing
-        assert_eq!(
-            call(
-                &app,
-                "POST",
-                "/v1/authoring/threads/1/comments",
-                Some(&loud),
-                Some(r#"{"body":"again"}"#)
-            )
-            .await,
-            StatusCode::FORBIDDEN
-        );
+        // what was blocked is the writing, and the refusal says why rather than
+        // shutting a door with no word through it
+        let (status, body) = write(
+            &app,
+            "POST",
+            "/v1/authoring/threads/1/comments",
+            Some(&loud),
+            Some(r#"{"body":"again"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(body.contains("flooding"), "the reason reaches them: {body}");
+        // and the panel can learn it before offering a box that cannot work
+        let (_, mine) = read(&app, "/v1/authoring/packs/Create/access/mine", Some(&loud)).await;
+        assert!(mine.contains("flooding"), "{mine}");
         assert_eq!(
             call(
                 &app,

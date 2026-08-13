@@ -449,6 +449,8 @@ export const en = {
   'thr.signInToReply': 'Sign in to join this discussion.',
   'thr.withdraw': 'Withdraw',
   'thr.block': 'block',
+  'thr.suspended': 'Writing in this discussion is suspended.',
+  'thr.suspendedWhy': 'Writing in this discussion is suspended. Reason: {reason}',
   'thr.blockAsk': 'Stop {who} writing on this pack? What they have already said stays where it is.',
   'thr.blockReason': 'Why (optional, for the keepers)',
   'thr.blocked': '{who} can no longer write here',
