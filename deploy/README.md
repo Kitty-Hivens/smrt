@@ -74,7 +74,7 @@ curl -s https://smrt.hivens.dev/v1/health | jq
 Expected:
 
 ```json
-{"schema_version":1,"status":"ok","version":"0.1.0"}
+{"schema_version":2,"status":"ok","version":"2026.388"}
 ```
 
 ## Logs

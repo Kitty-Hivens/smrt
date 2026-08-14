@@ -181,7 +181,7 @@ pub(crate) async fn health() -> Json<Health> {
     Json(Health {
         schema_version: SCHEMA_VERSION,
         status: "ok",
-        // crate version + git short sha, stamped by build.rs -- moves with the code
+        // calendar version stamped by build.rs -- moves with the code
         version: env!("SMRT_BUILD_VERSION"),
     })
 }

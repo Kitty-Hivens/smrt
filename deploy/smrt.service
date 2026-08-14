@@ -1,6 +1,6 @@
 [Unit]
 Description=smrt mirror backend
-Documentation=https://github.com/Kitty-Hivens/smrt
+Documentation=https://github.com/Kitty-Hivens/smrt-mirror
 After=network-online.target
 Wants=network-online.target
 

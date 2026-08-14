@@ -25,6 +25,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # build.rs derives the version from the commit height, which a
+          # shallow checkout doesn't have.
+          fetch-depth: 0
 
       # The smrt binary embeds the built panel (web/dist) via rust-embed, so
       # the frontend must be built before any cargo step compiles the crate.
@@ -84,6 +88,10 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The shipped binary reports this commit's height as its version;
+          # a shallow checkout would stamp `unknown`.
+          fetch-depth: 0
 
       # Build the embedded panel before cargo (the release binary embeds it).
       - uses: pnpm/action-setup@v6
