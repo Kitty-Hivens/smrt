@@ -1,25 +1,44 @@
-//! Stamp the build with the current git commit so the running mirror reports a
-//! version that actually moves when the code does, instead of a frozen
-//! `Cargo.toml` number. `SMRT_BUILD_VERSION` = `<crate version>+<short sha>`
-//! (or `+unknown` when git is unavailable), surfaced via /v1/health.
+//! Stamp the build with a calendar version taken from git -- the year of the
+//! HEAD commit plus the commit height (`2026.388`) -- so the running mirror
+//! reports a version that actually moves when the code does, instead of a
+//! frozen `Cargo.toml` number. `SMRT_BUILD_VERSION` is what /v1/health, the
+//! panel footer and `smrt-pack --version` show.
+//!
+//! Without git the answer is `unknown`, and a shallow clone counts as "without
+//! git": its commit height is a small number that looks like a real version,
+//! so stamping it would be worse than admitting the build doesn't know.
 
 use std::process::Command;
 
 fn main() {
-    let sha = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "unknown".to_string());
+    // re-run when HEAD moves so the embedded version follows the checked-out commit
+    println!("cargo::rerun-if-changed=.git/HEAD");
+    println!("cargo::rerun-if-changed=.git/refs");
 
-    let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
-    println!("cargo:rustc-env=SMRT_BUILD_VERSION={version}+{sha}");
+    let version = calendar_version().unwrap_or_else(|| "unknown".to_string());
+    println!("cargo::rustc-env=SMRT_BUILD_VERSION={version}");
+}
 
-    // re-run when HEAD moves so the embedded sha follows the checked-out commit
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-changed=.git/refs");
+fn calendar_version() -> Option<String> {
+    if git(&["rev-parse", "--is-shallow-repository"])? == "true" {
+        println!(
+            "cargo::warning=shallow clone: commit height is not the real one, version stamped as `unknown`"
+        );
+        return None;
+    }
+
+    // The commit's own recorded offset, not the builder's clock -- two machines
+    // building the same commit across a new year still agree on the year.
+    let year = git(&["log", "-1", "--format=%cI"])?.get(..4)?.to_string();
+    let height = git(&["rev-list", "--count", "HEAD"])?;
+    Some(format!("{year}.{height}"))
+}
+
+fn git(args: &[&str]) -> Option<String> {
+    let out = Command::new("git").args(args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(out.stdout).ok()?.trim().to_string();
+    (!text.is_empty()).then_some(text)
 }

@@ -31,6 +31,19 @@ TS_RS_EXPORT_DIR=web/src/lib cargo test
 cd web && npm run build            # and: npx svelte-check --threshold error
 ```
 
+## Versioning
+
+There is one version, and git is its source: `build.rs` stamps
+`SMRT_BUILD_VERSION` as `<year of the HEAD commit>.<commit height>` --
+`2026.388`. It is what `/v1/health` returns, what the panel footer shows,
+and what `smrt-pack --version` prints. The `Cargo.toml` number is inert;
+don't bump it and don't read it.
+
+The height comes from `git rev-list --count HEAD`, so a build needs the full
+history: CI checks out with `fetch-depth: 0`. A shallow clone (or no git at
+all) stamps `unknown` rather than a small number that would pass for a real
+version.
+
 ## TypeScript bindings
 
 Wire structs derive `ts_rs::TS`; `cargo test` (with `TS_RS_EXPORT_DIR`)

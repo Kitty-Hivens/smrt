@@ -1,5 +1,7 @@
 [package]
 name = "smrt"
+# Cargo needs a version; the one users see is the calendar version build.rs
+# derives from git (see docs/development.md). Nothing reads this number.
 version = "0.1.0"
 edition = "2024"  # Rust language edition, NOT calendar year. Latest is 2024 (stabilized in 1.85, Feb 2025).
 description = "Mirror backend for SmartyCraft. HTTP service serving pack manifests, server metadata, and self-hosted mod jars."

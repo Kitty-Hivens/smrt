@@ -14,7 +14,11 @@ use tracing::{info, warn};
 const DEFAULT_MIRROR_BASE: &str = "https://smrt.hivens.dev";
 
 #[derive(Parser, Debug)]
-#[command(name = "smrt-pack", version, about = "Authoring CLI for smrt packs")]
+#[command(
+    name = "smrt-pack",
+    version = env!("SMRT_BUILD_VERSION"),
+    about = "Authoring CLI for smrt packs"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,

@@ -452,6 +452,16 @@ version section when a release is tagged.
 
 ### Changed
 
+- The version the mirror reports means something now. `0.1.0` had not moved
+  since the first commit and never would -- it recorded only that somebody had
+  typed a number once -- so the panel footer, `/v1/health` and `smrt-pack
+  --version` all agreed on a fact about nothing. The version is taken from git
+  at build time instead: the year of the commit and its height, `2026.389`. It
+  rises with every commit, so an operator can see at a glance how far behind
+  `main` a running binary is, and the height names exactly one commit. A build
+  with no history behind it -- a source archive, a shallow clone -- says
+  `unknown` rather than a small number that would pass for a real version.
+
 - The repository is `smrt-mirror`. The crate metadata and the systemd unit's
   documentation link follow it; GitHub redirects the old address, so a clone
   already on disk keeps working.
