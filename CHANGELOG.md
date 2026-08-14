@@ -452,6 +452,10 @@ version section when a release is tagged.
 
 ### Changed
 
+- The repository is `smrt-mirror`. The crate metadata and the systemd unit's
+  documentation link follow it; GitHub redirects the old address, so a clone
+  already on disk keeps working.
+
 - A block says why. The reason a pack's keepers write when they stop somebody
   writing was a note to themselves, and the person it named got a bare refusal:
   the panel could only show a generic failure, which is a door that shuts with

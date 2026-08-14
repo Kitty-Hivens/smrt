@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"  # Rust language edition, NOT calendar year. Latest is 2024 (stabilized in 1.85, Feb 2025).
 description = "Mirror backend for SmartyCraft. HTTP service serving pack manifests, server metadata, and self-hosted mod jars."
 license = "Apache-2.0"
-repository = "https://github.com/Kitty-Hivens/smrt"
+repository = "https://github.com/Kitty-Hivens/smrt-mirror"
 
 [dependencies]
 axum = "0.8"
