@@ -35,6 +35,15 @@
   let removed = $state<string[]>([]);
   let loading = $state(true);
   let q = $state('');
+  // The index only grows, and every row carries an icon and its facets, so the
+  // browser reads it a page at a time rather than laying the whole mirror out on
+  // each open. The two facet inputs narrow the same query server-side, the way
+  // the mirror picker already filters.
+  const PAGE = 60;
+  let loaderF = $state('');
+  let mcF = $state('');
+  // the address of the next page, or null once the index runs out
+  let more = $state<string | null>(null);
 
   // the expanded mod and its lazily-loaded releases
   // More than one mod may be open: comparing two mods' builds is the reason to
@@ -59,7 +68,14 @@
   async function load() {
     loading = true;
     try {
-      mods = await api.registryMods(q.trim() || undefined);
+      const page = await api.registryMods(
+        q.trim() || undefined,
+        loaderF.trim() || undefined,
+        mcF.trim() || undefined,
+        PAGE,
+      );
+      mods = page.rows;
+      more = page.next;
       // the needs-identity bucket and the takedown list are operator-only reads
       if (canOperate) {
         const [u, rm] = await Promise.all([api.unassigned(), api.removed()]);
@@ -87,9 +103,29 @@
   init();
 
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  // any change to the query or the facets is a different listing, so it starts
+  // the walk over rather than continuing the old one
   function onSearch() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(load, 250);
+  }
+
+  // Walk further into the index. Paging is keyset, so rows arriving while the
+  // walk is open land outside the page being read rather than shifting it --
+  // which is what makes appending safe. A registry event still reloads from the
+  // top, because a rename or a merge changes what the pages already read said.
+  async function loadMore() {
+    if (!more || loading) return;
+    loading = true;
+    try {
+      const page = await api.registryModsPage(more);
+      mods = [...mods, ...page.rows];
+      more = page.next;
+    } catch (e) {
+      notifyFail(e);
+    } finally {
+      loading = false;
+    }
   }
 
   // The list avatar's icon source: prefer the Modrinth project icon, else the
@@ -368,7 +404,11 @@
     </section>
   {/if}
 
-  <input class="search" bind:value={q} oninput={onSearch} placeholder={t('mm.search')} aria-label={t('mm.search')} />
+  <div class="filters">
+    <input class="grow" bind:value={q} oninput={onSearch} placeholder={t('mm.search')} aria-label={t('mm.search')} />
+    <input class="sm" bind:value={loaderF} oninput={onSearch} placeholder={t('mirror.loader')} aria-label={t('mirror.loader')} />
+    <input class="sm" bind:value={mcF} oninput={onSearch} placeholder={t('mirror.mc')} aria-label={t('mirror.mc')} />
+  </div>
 
   <div class="panel modlist">
     {#each mods as m, i (m.mod_id)}
@@ -537,6 +577,9 @@
       <div class="muted empty">{t('mm.noMods')}</div>
     {/if}
   </div>
+  {#if more}
+    <button class="sm more" onclick={loadMore} disabled={loading}>{t('mm.more')}</button>
+  {/if}
 
   {#if canOperate && removed.length}
     <h2 class="sec">{t('cache.removedTitle')}</h2>
@@ -615,8 +658,19 @@
     gap: var(--space-3);
     font-size: var(--fs-sm);
   }
-  .search {
-    max-width: 420px;
+  .filters {
+    display: flex;
+    gap: var(--space-2);
+    max-width: 640px;
+  }
+  .filters .grow {
+    flex: 1;
+  }
+  .filters .sm {
+    width: 110px;
+  }
+  .more {
+    align-self: center;
   }
   .modlist {
     overflow: hidden;

@@ -47,7 +47,7 @@
       ]);
       packs = p;
       servers = s.servers;
-      mods = md;
+      mods = md.rows;
       unassigned = u;
       authoring = a.packs;
       removed = rm.removed;

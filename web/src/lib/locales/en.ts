@@ -741,6 +741,7 @@ export const en = {
   'mm.uploading': 'Uploading...',
   'mm.uploaded': 'Uploaded {count}',
   'mm.search': 'Search mods...',
+  'mm.more': 'More mods',
   'mm.noMods': 'No mods yet. Drop a jar and assign it, or harvest a build.',
   'mm.filesN': '{n} files',
   'mm.rename': 'rename',
