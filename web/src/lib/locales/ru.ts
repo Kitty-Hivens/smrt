@@ -740,6 +740,7 @@ export const ru: Dict = {
   'mm.uploading': 'Загрузка...',
   'mm.uploaded': 'Загружено: {count}',
   'mm.search': 'Поиск модов...',
+  'mm.more': 'Ещё моды',
   'mm.noMods': 'Модов пока нет. Кинь jar и назначь его, или собери харвест билда.',
   'mm.filesN': 'файлов: {n}',
   'mm.rename': 'переименовать',

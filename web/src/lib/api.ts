@@ -677,14 +677,20 @@ export const api = {
   // Same per-project lookup the launcher's ModIconResolver does; cached.
 
   // ── registry browser (the mirror's own mods + builds) ──
-  registryMods: (q?: string, loader?: string, mc?: string) => {
+  // The index only grows, so a caller that renders all of it reads it a page at
+  // a time: `limit` opts into paging and `registryModsPage` follows the address
+  // the page comes back with. Without a limit the mirror answers whole, which is
+  // what a picker already narrowed to a handful wants.
+  registryMods: (q?: string, loader?: string, mc?: string, limit?: number) => {
     const p = new URLSearchParams();
     if (q) p.set('q', q);
     if (loader) p.set('loader', loader);
     if (mc) p.set('mc', mc);
+    if (limit) p.set('limit', String(limit));
     const qs = p.toString();
-    return getJson<ModSummary[]>(`/v1/registry/mods${qs ? `?${qs}` : ''}`);
+    return getPage<ModSummary>(`/v1/registry/mods${qs ? `?${qs}` : ''}`);
   },
+  registryModsPage: (url: string) => getPage<ModSummary>(url),
   registryModVersions: (modId: number) =>
     getJson<VersionRow[]>(`/v1/registry/mod-versions/${modId}`),
   // a mod's files grouped by release (version node) for the management view

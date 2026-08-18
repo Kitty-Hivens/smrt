@@ -129,7 +129,9 @@
     modsLoading = true;
     err = '';
     try {
-      mods = await api.registryMods(q.trim() || undefined, loaderF.trim() || undefined, mcF.trim() || undefined);
+      mods = (
+        await api.registryMods(q.trim() || undefined, loaderF.trim() || undefined, mcF.trim() || undefined)
+      ).rows;
     } catch (e) {
       fail(e);
     } finally {
